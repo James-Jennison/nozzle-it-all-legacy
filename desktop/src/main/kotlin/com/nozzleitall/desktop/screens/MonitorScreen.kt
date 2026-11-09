@@ -100,6 +100,9 @@ fun MonitorScreen(state: AppState) {
                     Column(Modifier.weight(1f)) {
                         Txt(it.projectName, Nz.type.title)
                         Txt("${it.state.label} · ${it.fileName}", Nz.type.bodySmall, Nz.colors.textMuted)
+                        it.plate?.let { plate ->
+                            Txt("${plate.plateName} · ${plate.machine} · ${plate.nozzles} · ${plate.bed}", Nz.type.bodySmall, Nz.colors.textMuted)
+                        }
                     }
                     if (it.state == com.nozzleitall.desktop.MonitorHandoffState.QUEUED)
                         NzButton("Open Jobs", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.PRIMARY)

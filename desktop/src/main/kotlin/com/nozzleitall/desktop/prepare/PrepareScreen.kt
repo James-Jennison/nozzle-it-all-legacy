@@ -1996,6 +1996,16 @@ private fun SendDrawer(
     val c = Nz.colors
     val st = s.result.stats
     if (showSetupContext) WorkspaceSetupStack(state, Drawer.SEND, setDrawer)
+    s.plateContext?.let { plate ->
+        Txt(plate.plateName, Nz.type.title, modifier = Modifier.semantics { testTag = "send-plate-name" })
+        Txt("${plate.machine} · ${plate.nozzles} · ${plate.bed}", Nz.type.bodySmall, c.textMuted)
+    }
+    if (s.materials.isNotEmpty()) {
+        Txt(s.materials.joinToString(" · ") { material ->
+            "${material.slot}: " + listOfNotNull(material.vendor, material.subType, material.type)
+                .distinct().joinToString(" ").ifBlank { "Unspecified" }
+        }, Nz.type.bodySmall, c.textMuted)
+    }
     if (Nz.textScale >= 1.5f) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Metric("Time", formatDuration(st.seconds))
         Metric("Material", st.grams?.let { "%.1f g".format(it) } ?: "–")
@@ -2016,7 +2026,8 @@ private fun SendDrawer(
             runCatching {
                 state.fleet.enqueue(p.name, s.result.printFile, printer?.config?.identity?.id, toolMap,
                     s.savedProjectId, s.savedProjectRevision, s.savedPlateId, s.targetProfileId,
-                    s.result.engineSha256, s.result.inputSha256, materialPlan = s.materialPlan)
+                    s.result.engineSha256, s.result.inputSha256,
+                    draftPlateId = s.plateContext?.plateId?.takeIf { s.savedProjectId == null }, materialPlan = s.materialPlan)
             }.onSuccess { p.notice = "Added to the print queue on the Jobs page." }
                 .onFailure { p.notice = "Queue records need recovery: ${it.message}" }
         }, kind = ButtonKind.QUIET, enabled = outside.isEmpty(), testTag = "add-to-queue")
@@ -3175,7 +3186,7 @@ private fun SendPanel(state: AppState) {
     val sendIdentity = PreparedSendIdentity(entry.config.identity.id, preparedDigest,
         done.savedProjectId, done.savedProjectRevision, done.savedPlateId, done.targetProfileId,
         done.result.inputSha256, done.result.engineSha256,
-        if (done.savedProjectId == null) p.plateIds.getOrNull(p.currentPlate) else null)
+        if (done.savedProjectId == null) done.plateContext?.plateId ?: p.plateIds.getOrNull(p.currentPlate) else null)
     fun sameQueued(item: com.nozzleitall.desktop.queue.QueueItem) = isSameQueuedPrint(item, sendIdentity)
     val alreadyQueued = state.fleet.queue.value.any(::sameQueued)
     val uncertainDuplicate = done.savedProjectId == null && state.fleet.queue.value.any { item ->
@@ -3220,7 +3231,7 @@ private fun SendPanel(state: AppState) {
             queuedThisSlice = true
             state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
                 entry.config.identity.id, p.name, done.result.printFile.name,
-                com.nozzleitall.desktop.MonitorHandoffState.QUEUED))
+                com.nozzleitall.desktop.MonitorHandoffState.QUEUED, done.plateContext))
         }
             .onFailure { problem = "The prepared job could not be queued: ${it.message}" }
     }
@@ -3292,7 +3303,7 @@ private fun SendPanel(state: AppState) {
                         uploaded = r.remotePath
                         state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
                             entry.config.identity.id, p.name, r.remotePath.substringAfterLast('/').substringAfterLast('\\'),
-                            com.nozzleitall.desktop.MonitorHandoffState.UPLOADED))
+                            com.nozzleitall.desktop.MonitorHandoffState.UPLOADED, done.plateContext))
                     }
                     is UploadResult.Interrupted -> problem = "The transfer was interrupted: ${r.reason} The file on the printer may be incomplete. Send it again before printing."
                     is UploadResult.Failed -> problem = r.reason

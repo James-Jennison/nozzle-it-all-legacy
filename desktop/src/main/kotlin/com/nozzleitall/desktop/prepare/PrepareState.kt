@@ -131,13 +131,22 @@ class PrepItem(val id: Int, name: String, val mesh: Mesh, x: Float, y: Float, ro
     }
 }
 
+data class SlicedPlateContext(
+    val plateId: String,
+    val plateName: String,
+    val machine: String,
+    val nozzles: String,
+    val bed: String,
+)
+
 sealed class SliceState {
     object Idle : SliceState()
     data class Running(val progress: Float, val stage: String) : SliceState()
     data class Done(val result: SliceOutcome.Done, val preview: GcodePreview?,
                     val savedProjectId: String? = null, val savedProjectRevision: Long? = null,
                     val savedPlateId: String? = null, val targetProfileId: String? = null,
-                    val materials: List<ProjectManifest.MaterialSlot> = emptyList()) : SliceState() {
+                    val materials: List<ProjectManifest.MaterialSlot> = emptyList(),
+                    val plateContext: SlicedPlateContext? = null) : SliceState() {
         val materialPlan by lazy { materialPlanFor(this) }
     }
     data class Failed(val message: String, val cause: GuidanceFailureKind = GuidanceFailureKind.SLICE) : SliceState() {
@@ -2166,6 +2175,9 @@ class PrepareState(private val app: AppState) {
         val saved = manifest?.takeIf { !dirty }
         val selectedProfileId = profileId
         val calibrationAtStart = calibration
+        val machineLabel = slicingMachineLabel
+        val nozzleLabel = nozzleToolheadLabel
+        val surfaceLabel = effectiveBedType()
         val targets = runCatching {
             plates.associate { plate ->
                 val project = toProject(forSlice = true, slicePlate = plate)
@@ -2217,7 +2229,8 @@ class PrepareState(private val app: AppState) {
                                     .takeIf { it.layers.isNotEmpty() } }.getOrNull()
                                 SliceState.Done(outcome.copy(inputSha256 = completeInput), preview,
                                     saved?.projectId, saved?.revision, id.takeIf { saved != null }, selectedProfileId,
-                                    input.materials.sortedBy { it.slot })
+                                    input.materials.sortedBy { it.slot },
+                                    SlicedPlateContext(id, plateName, machineLabel, nozzleLabel, surfaceLabel))
                             }
                             is SliceOutcome.Failed -> SliceState.Failed(outcome.message)
                             SliceOutcome.Cancelled -> SliceState.Cancelled
