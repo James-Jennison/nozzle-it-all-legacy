@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.nozzleitall.design.NozzleTokens
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
@@ -1473,6 +1474,9 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
     val c = Nz.colors
     var open by remember { mutableStateOf(false) }
     val current = ProfileCatalog.byId(p.profileId)
+    val viewport = LocalWindowInfo.current.containerSize
+    val popupWidth = with(LocalDensity.current) { minOf(320.dp, viewport.width.takeIf { it > 0 }?.toDp() ?: 320.dp) }
+    val popupHeight = with(LocalDensity.current) { minOf(330.dp, viewport.height.takeIf { it > 0 }?.toDp() ?: 330.dp) }
     val position = remember {
         object : PopupPositionProvider {
             override fun calculatePosition(
@@ -1506,10 +1510,10 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                 if (query.isBlank()) listOfNotNull(current) + ProfileCatalog.search("").filter { it.id != current?.id }.take(7)
                 else ProfileCatalog.search(query).take(20)
             }
-            Column(Modifier.width(320.dp).heightIn(max = 330.dp).clip(RoundedCornerShape(10.dp)).background(c.surfaceRaised)
+            Column(Modifier.width(popupWidth).height(popupHeight).clip(RoundedCornerShape(10.dp)).background(c.surfaceRaised)
                 .border(1.dp, c.lineStrong, RoundedCornerShape(10.dp)).padding(5.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Txt("Saved printers", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
                     Txt("Choose a matching slicing profile separately.", Nz.type.bodySmall, c.textMuted,
@@ -1559,7 +1563,7 @@ private fun PrinterPickerOption(label: String, selected: Boolean, tag: String, o
     Txt((if (selected) "✓  " else "") + label, Nz.type.bodySmall, if (selected) c.accent else c.text,
         maxLines = 1, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
             .background(if (selected) c.accent.copy(alpha = 0.14f) else Color.Transparent)
-            .clickable(onClick = onSelect).semantics { testTag = tag }.padding(horizontal = 10.dp, vertical = 7.dp))
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect).semantics { testTag = tag }.padding(horizontal = 10.dp, vertical = 7.dp))
 }
 
 @Composable
