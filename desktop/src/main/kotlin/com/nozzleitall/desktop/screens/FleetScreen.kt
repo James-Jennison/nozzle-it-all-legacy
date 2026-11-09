@@ -77,7 +77,7 @@ fun FleetScreen(state: AppState) {
             LazyVerticalGrid(GridCells.Adaptive(380.dp), Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(ids, key = { it }) { id -> fleet.printers[id]?.let {
                     PrinterCard(it, onEdit = { editing = id }, onRemove = { removeError = null; removing = id },
-                        onPrepare = { state.prepare.choosePrinter(id); state.destination = com.nozzleitall.desktop.Destination.PREPARE }) { state.openPrinter(id) }
+                        onPrepare = { state.requestWorkspacePrinter(id); state.destination = com.nozzleitall.desktop.Destination.PREPARE }) { state.openPrinter(id) }
                 } }
             }
         }

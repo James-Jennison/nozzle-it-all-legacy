@@ -22,6 +22,8 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.nozzleitall.desktop.prepare.PrepareScreen
 import com.nozzleitall.desktop.prepare.PrepareState
+import com.nozzleitall.desktop.prepare.ProfileCatalog
+import com.nozzleitall.desktop.prepare.WorkspaceMachineReview
 import com.nozzleitall.desktop.prepare.WorkspaceSliceAction
 import com.nozzleitall.desktop.projects.ProjectLibrary
 import com.nozzleitall.desktop.projects.ProjectsScreen
@@ -191,6 +193,19 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         cancelProjectReplacement()
         action()
     }
+    internal var pendingMachineSelection by mutableStateOf<Pair<String?, String?>?>(null)
+
+    internal fun requestWorkspacePrinter(id: String?) {
+        if (id == null) {
+            prepare.choosePrinter(null)
+            return
+        }
+        val entry = fleet.printers[id] ?: return
+        val associated = ProfileCatalog.byId(entry.config.identity.profileId)
+        if (associated?.id == prepare.profileId || id == prepare.printerId && associated == null) prepare.choosePrinter(id)
+        else pendingMachineSelection = id to associated?.id
+    }
+
     fun selectPrinter(id: String) {
         monitorHandoff = null
         selectedPrinter = id
@@ -402,6 +417,7 @@ private fun runApp(open: List<File>) = application {
 
 @Composable
 fun App(state: AppState) {
+    WorkspaceMachineReview(state)
     val c = Nz.colors
     Column(Modifier.fillMaxSize().background(c.background).semantics { paneTitle = state.destination.label }) {
         AppHeader(state)

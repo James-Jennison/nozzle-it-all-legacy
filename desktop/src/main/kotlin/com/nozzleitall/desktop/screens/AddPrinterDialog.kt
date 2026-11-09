@@ -241,7 +241,7 @@ fun AddPrinterDialog(state: AppState, autoScan: Boolean = false, compatibilityPr
                         NzButton("Add printer", {
                             val cfg = draft()
                             if (fleet.add(cfg)) {
-                                if (state.prepare.printerId == null) state.prepare.choosePrinter(cfg.identity.id)
+                                if (state.prepare.printerId == null) state.requestWorkspacePrinter(cfg.identity.id)
                                 onDone(cfg.identity.id)
                             } else error = "This printer could not be saved. Check that your Nozzle It All settings folder is writable, then try again."
                         }, kind = ButtonKind.PRIMARY, enabled = ready, testTag = "save-printer")

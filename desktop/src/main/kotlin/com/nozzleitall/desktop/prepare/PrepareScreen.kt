@@ -1520,14 +1520,11 @@ private fun PrinterCardField(label: String, modifier: Modifier, content: @Compos
 }
 
 @Composable
-private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
+internal fun WorkspaceMachineReview(state: AppState) {
     val p = state.prepare
     val c = Nz.colors
-    var open by remember { mutableStateOf(false) }
     val current = ProfileCatalog.byId(p.profileId)
-    var pending by remember(p.profileId, p.printerId) { mutableStateOf<Pair<String?, String?>?>(null) }
-    val printerName = p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel()
-    pending?.let { (destinationId, profileId) ->
+    state.pendingMachineSelection?.let { (destinationId, profileId) ->
         val target = ProfileCatalog.byId(profileId)
         val entry = destinationId?.let { state.fleet.printers[it] }
         val unknown = profileId == null
@@ -1565,11 +1562,20 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                 } else {
                     p.notice = "The saved printer or its machine profile changed. Open the printer picker and review it again."
                 }
-                pending = null
+                state.pendingMachineSelection = null
             },
-            onDismiss = { pending = null },
+            onDismiss = { state.pendingMachineSelection = null },
         )
     }
+}
+
+@Composable
+private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
+    val p = state.prepare
+    val c = Nz.colors
+    var open by remember { mutableStateOf(false) }
+    val current = ProfileCatalog.byId(p.profileId)
+    val printerName = p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel()
     val viewport = LocalWindowInfo.current.containerSize
     val popupWidth = with(LocalDensity.current) { minOf(320.dp, viewport.width.takeIf { it > 0 }?.toDp() ?: 320.dp) }
     val popupHeight = with(LocalDensity.current) { minOf(330.dp, viewport.height.takeIf { it > 0 }?.toDp() ?: 330.dp) }
@@ -1616,12 +1622,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                     Txt("Saved printers", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
                     state.fleet.order.value.mapNotNull { state.fleet.printers[it]?.config?.identity }.forEach { printer ->
                         PrinterPickerOption(printer.displayName, p.printerId == printer.id, "saved-printer-${printer.id}") {
-                            val associated = printer.profileId?.let(ProfileCatalog::byId)
-                            if (associated?.id != p.profileId && (associated != null || printer.id != p.printerId)) {
-                                pending = printer.id to associated?.id
-                            } else {
-                                p.choosePrinter(printer.id)
-                            }
+                            state.requestWorkspacePrinter(printer.id)
                             open = false
                         }
                     }
@@ -1636,7 +1637,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                     profiles.forEach { profile ->
                         PrinterPickerOption("${profile.vendor} · ${profile.model}", profile.id == p.profileId,
                             "slicing-profile-${profile.id}") {
-                            if (profile.id != p.profileId) pending = null to profile.id
+                            if (profile.id != p.profileId) state.pendingMachineSelection = null to profile.id
                             open = false
                         }
                     }
@@ -2166,14 +2167,14 @@ private fun StepPrinter(state: AppState) {
         preferred?.let { entry ->
             Txt("Preferred: ${entry.config.identity.displayName} · last reported ${entry.status.value.state.label}",
                 Nz.type.bodySmall, c.textMuted)
-            if (p.printerId != savedPreferredId) NzButton("Use preferred printer", { p.choosePrinter(savedPreferredId) },
+            if (p.printerId != savedPreferredId) NzButton("Use preferred printer", { state.requestWorkspacePrinter(savedPreferredId) },
                 kind = ButtonKind.SECONDARY)
             NzButton(if (showAlternatives) "Hide alternatives" else "Show alternatives",
                 { showAlternatives = !showAlternatives }, kind = ButtonKind.QUIET)
         }
         if (preferred == null || showAlternatives || preferred.status.value.state != PrinterState.READY)
             com.nozzleitall.desktop.settings.DenseSelect("Printer", choices, p.printerId ?: "", Modifier.fillMaxWidth()) {
-                v -> p.choosePrinter(v.ifBlank { null })
+                v -> state.requestWorkspacePrinter(v.ifBlank { null })
             }
         // Slicing needs only a profile. It is independent of the connection, so any printer can be prepared for, offline.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2185,7 +2186,7 @@ private fun StepPrinter(state: AppState) {
             com.nozzleitall.desktop.settings.DenseInput(query, { query = it }, "Search printer models", Modifier.fillMaxWidth(), placeholder = "Snapmaker, Prusa, Bambu, Voron…")
             ProfileCatalog.search(query).take(8).forEach { pr ->
                 Txt("${pr.vendor} · ${pr.model}", Nz.type.bodySmall, if (p.profileId == pr.id) c.accent else c.text, maxLines = 1,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).clickable { p.profileId = pr.id; p.changed(); choosing = false }.padding(horizontal = 6.dp, vertical = 5.dp))
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).clickable { if (p.profileId != pr.id) state.pendingMachineSelection = null to pr.id; choosing = false }.padding(horizontal = 6.dp, vertical = 5.dp))
             }
             Txt("${ProfileCatalog.all.size} printer profiles. A profile means Nozzle can slice for that printer; it doesn't mean the printer has been tested.",
                 Nz.type.bodySmall, c.textMuted)
