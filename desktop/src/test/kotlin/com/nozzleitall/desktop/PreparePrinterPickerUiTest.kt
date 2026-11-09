@@ -83,6 +83,19 @@ class PreparePrinterPickerUiTest {
                     }
                     openPicker()
                     onNodeWithTag("saved-printer-cc1").performClick()
+                    val original = requireNotNull(app.fleet.printers[cc1.id])
+                    runOnIdle {
+                        app.fleet.printers[cc1.id] = PrinterEntry(PrinterConfig(cc1.copy(profileId = profile), "moonraker"))
+                    }
+                    onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
+                    onNodeWithText("The saved printer or its machine profile changed. Open the printer picker and review it again.").assertIsDisplayed()
+                    runOnIdle {
+                        assertEquals(u1.id, app.prepare.printerId)
+                        app.fleet.printers[cc1.id] = original
+                        app.prepare.notice = null
+                    }
+                    openPicker()
+                    onNodeWithTag("saved-printer-cc1").performClick()
                     onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
                 }
                 onNodeWithTag("setup-printer").assertTextContains(printer.displayName)

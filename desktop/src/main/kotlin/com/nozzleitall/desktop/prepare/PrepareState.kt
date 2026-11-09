@@ -605,7 +605,7 @@ class PrepareState(private val app: AppState) {
         nozzleFlows.clear()
         presetSnapshot = null
         presetSnapshotProblem = null
-        applySlicingSetup(setup)
+        applySlicingSetup(setup, clearToolheadPresets = false)
         if (destinationId != null) printerId = destinationId
         changed()
     }
@@ -631,13 +631,15 @@ class PrepareState(private val app: AppState) {
     /** The process preset chosen in the Print header (a library id), or null for the machine's default. */
     var processId by mutableStateOf<String?>(null)
     /** Applies the user's installed offline slicing setup without creating or requiring a physical printer. */
-    fun applySlicingSetup(setup: SlicingSetup) {
+    fun applySlicingSetup(setup: SlicingSetup) = applySlicingSetup(setup, clearToolheadPresets = true)
+
+    private fun applySlicingSetup(setup: SlicingSetup, clearToolheadPresets: Boolean) {
         installedSetup = setup
         machineCache = null
         profileId = setup.profileId
         nozzle = setup.nozzle
         processId = setup.processId
-        headProfiles.clear()
+        if (clearToolheadPresets) headProfiles.clear()
         manualSlots.indices.forEach { i ->
             val slot = i + 1
             manualSlots[i] = manualSlots[i].copy(filamentProfile = setup.filamentProfiles[slot])

@@ -1360,7 +1360,8 @@ private fun WorkspaceSetupStack(
                 PrinterCardField("Bed", Modifier.weight(0.34f)) {
                     com.nozzleitall.desktop.settings.DenseSelect("Bed type",
                         beds.choices.map { com.nozzleitall.desktop.settings.Choice(it.value, it.label) },
-                        bed, Modifier.fillMaxWidth(), enabled = beds.enabled && beds.choices.size > 1, labelLines = 2) { value ->
+                        bed, Modifier.fillMaxWidth(), enabled = beds.enabled && beds.choices.size > 1,
+                        compactLabel = { it.removeSuffix(" Plate") }) { value ->
                         p.bedType = value
                         p.changed()
                     }
@@ -1526,7 +1527,6 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
     pending?.let { (destinationId, profileId) ->
         val target = ProfileCatalog.byId(profileId)
         val entry = destinationId?.let { state.fleet.printers[it] }
-        val associationValid = destinationId == null || entry?.config?.identity?.profileId == profileId
         val unknown = profileId == null
         val mismatched = destinationId == null && p.printer()?.config?.identity?.profileId?.let { it != profileId } == true
         ConfirmDialog(
@@ -1539,7 +1539,6 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
             },
             confirmLabel = if (unknown) "Select printer" else "Switch profile",
             destructive = false,
-            confirmEnabled = if (unknown) entry != null else target != null && associationValid,
             extraContent = {
                 val detail = when {
                     unknown -> "Verify compatibility before sending."
@@ -1550,7 +1549,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
             },
             onConfirm = {
                 val latest = destinationId?.let { state.fleet.printers[it] }
-                if (unknown && latest === entry && entry != null) {
+                if (unknown && latest != null && ProfileCatalog.byId(latest.config.identity.profileId) == null) {
                     p.choosePrinter(destinationId)
                 } else if (target != null && (destinationId == null || latest?.config?.identity?.profileId == target.id)) {
                     val availableIds = FilamentLibrary.forProfile(target.id).mapTo(linkedSetOf()) { it.id }
@@ -1560,6 +1559,8 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                     }.toMap()
                     p.switchWorkspaceMachine(SlicingSetup(target.id, target.name, toolheads = target.tools,
                         filamentProfiles = compatible, installedFilamentProfiles = availableIds), destinationId)
+                } else {
+                    p.notice = "The saved printer or its machine profile changed. Open the printer picker and review it again."
                 }
                 pending = null
             },
@@ -1589,6 +1590,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                 testTag = "setup-printer"
                 contentDescription = "Printer: $printerName"
                 role = Role.DropdownList
+                stateDescription = if (open) "Expanded" else "Collapsed"
             },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Txt(printerName, Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
@@ -1612,7 +1614,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                     state.fleet.order.value.mapNotNull { state.fleet.printers[it]?.config?.identity }.forEach { printer ->
                         PrinterPickerOption(printer.displayName, p.printerId == printer.id, "saved-printer-${printer.id}") {
                             val associated = printer.profileId?.let(ProfileCatalog::byId)
-                            if (printer.id != p.printerId && associated?.id != p.profileId) {
+                            if (associated?.id != p.profileId && (associated != null || printer.id != p.printerId)) {
                                 pending = printer.id to associated?.id
                             } else {
                                 p.choosePrinter(printer.id)
