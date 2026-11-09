@@ -525,7 +525,12 @@ class PrepareState(private val app: AppState) {
     /** Shows plate [i]; a slice result belongs to the plate it was made for. */
     fun showPlate(i: Int) { if (i in plateNames.indices) {
         showPlateOverview = false
-        if (i != currentPlate) { currentPlate = i; selected = null; invalidateSlice() }
+        if (i != currentPlate) {
+            currentPlate = i
+            selected = null
+            val prepared = batchSlices[plateIds[i]]
+            if (prepared == null) invalidateSlice() else showCompletedSlice(prepared)
+        }
     } }
 
     fun addPlate() { plateNames += "Plate ${plateNames.size + 1}"; plateIds += UUID.randomUUID().toString(); currentPlate = plateNames.lastIndex; selected = null; changed() }
@@ -1379,8 +1384,27 @@ class PrepareState(private val app: AppState) {
             if (i.layerProfile.toList() != src.layerProfile.toList()) { i.layerProfile.clear(); i.layerProfile.addAll(src.layerProfile) }
         }
     }
-    private var sliceGeneration = 0L
-    private fun invalidateSlice() { discardMeshEditPreview(); sliceGeneration++; if (slice !is SliceState.Running) { slice = SliceState.Idle; showPreview = false } }
+    @Volatile private var sliceGeneration = 0L
+    @Volatile private var sliceCancelRequested = false
+    private var batchSlices: Map<String, SliceState.Done> = emptyMap()
+
+    private fun invalidateSlice() {
+        discardMeshEditPreview()
+        sliceGeneration++
+        batchSlices = emptyMap()
+        if (slice !is SliceState.Running) {
+            slice = SliceState.Idle
+            showPreview = false
+        }
+    }
+
+    private fun showCompletedSlice(completed: SliceState.Done) {
+        slice = completed
+        previewFirstLayer = 0
+        previewLayer = ((completed.preview?.layers?.size ?: 1) - 1).coerceAtLeast(0)
+        previewMove = Int.MAX_VALUE
+        showPreview = true
+    }
 
     /** Shelf packing by footprint, largest first, with a 6 mm gap, centred on the bed. Objects that can't fit are reported. */
     // --- Plate tools (PlateOps): Orca's Arrange, Auto orient, Split and Cut, run on the engine off the UI thread.
@@ -2019,17 +2043,17 @@ class PrepareState(private val app: AppState) {
         }
     }
 
-    fun outOfBounds(): List<PrepItem> { val (bw, bd) = bed
-        return plateItems().filter { val r = it.reach; it.x + r[0] < 0 || it.y + r[2] < 0 || it.x + r[1] > bw || it.y + r[3] > bd || it.height > (activeCustomSetup?.heightMm ?: profile?.height ?: 250f) } }
+    fun outOfBounds(plate: Int = currentPlate): List<PrepItem> { val (bw, bd) = bed
+        return plateItems(plate).filter { val r = it.reach; it.x + r[0] < 0 || it.y + r[2] < 0 || it.x + r[1] > bw || it.y + r[3] > bd || it.height > (activeCustomSetup?.heightMm ?: profile?.height ?: 250f) } }
 
     /**
      * The project as saved (every plate, objects placed where Orca lays plates side by side, plates recorded for other
      * slicers too), or [forSlice]: the current plate alone, on its own bed.
      */
-    fun toProject(forSlice: Boolean = false): Project3mf {
+    fun toProject(forSlice: Boolean = false, slicePlate: Int = currentPlate): Project3mf {
         check(presetSnapshotProblem == null) { presetSnapshotProblem ?: "The saved preset needs review." }
         val (bw, bd) = bed
-        val plates = if (forSlice) listOf(currentPlate) else plateNames.indices.toList()
+        val plates = if (forSlice) listOf(slicePlate) else plateNames.indices.toList()
         // Sliced for a printer that offers no mixing, an object or painted area on a mixed filament prints with the
         // default slot.
         val unoffered = if (forSlice && offeredMixed().isEmpty()) mixed.indices.map { mixedSlot(it) }.toSet() else emptySet()
@@ -2114,86 +2138,128 @@ class PrepareState(private val app: AppState) {
             metadata = project.metadata + ("Title" to copyName))
     }
 
-    fun slice(scope: kotlinx.coroutines.CoroutineScope) {
+    fun slice(scope: kotlinx.coroutines.CoroutineScope) = slicePlates(scope, listOf(currentPlate), batch = false)
+
+    fun sliceAll(scope: kotlinx.coroutines.CoroutineScope) =
+        slicePlates(scope, plateNames.indices.filter { plateItems(it).isNotEmpty() }, batch = true)
+
+    private fun slicePlates(scope: kotlinx.coroutines.CoroutineScope, plates: List<Int>, batch: Boolean) {
         if (slice is SliceState.Running) return
+        batchSlices = emptyMap()
         presetSnapshotProblem?.let { slice = SliceState.Failed(it, GuidanceFailureKind.PRESET); return }
-        val bin = SliceEngine.locateEngine() ?: run { slice = SliceState.Failed("The slicing engine is missing, invalid, or cannot run. Check the Desktop installation and engine permissions.", GuidanceFailureKind.ENGINE_UNAVAILABLE); return }
-        if (plateItems().isEmpty()) { slice = SliceState.Failed("Add a model to ${plateNames.getOrNull(currentPlate) ?: "the plate"} first.", GuidanceFailureKind.EMPTY_PLATE); return }
-        outOfBounds().takeIf { it.isNotEmpty() }?.let { slice = SliceState.Failed("${it.joinToString { o -> o.name }} is off the plate. Move it or use Arrange.", GuidanceFailureKind.OUT_OF_BOUNDS); return }
-        val e = SliceEngine(bin, app.paths.slices).also { engine = it }
+        val bin = SliceEngine.locateEngine() ?: run {
+            slice = SliceState.Failed("The slicing engine is missing, invalid, or cannot run. Check the Desktop installation and engine permissions.", GuidanceFailureKind.ENGINE_UNAVAILABLE)
+            return
+        }
+        if (plates.isEmpty() || plates.any { plateItems(it).isEmpty() }) {
+            slice = SliceState.Failed("Add a model to the plate before slicing.", GuidanceFailureKind.EMPTY_PLATE)
+            return
+        }
+        for (plate in plates) {
+            val outside = outOfBounds(plate)
+            if (outside.isNotEmpty()) {
+                slice = SliceState.Failed("${plateNames[plate]}: ${outside.joinToString { it.name }} is off the plate. Move it or use Arrange.", GuidanceFailureKind.OUT_OF_BOUNDS)
+                return
+            }
+        }
         val generation = sliceGeneration
         val saved = manifest?.takeIf { !dirty }
-        val savedPlateId = saved?.let { plateIds[currentPlate] }
         val selectedProfileId = profileId
         val calibrationAtStart = calibration
+        val targets = runCatching {
+            plates.associate { plate ->
+                val project = toProject(forSlice = true, slicePlate = plate)
+                plateIds[plate] to (plateNames[plate] to SliceInputSnapshot(project, preset, supports, infill,
+                    project.manifest?.materials.orEmpty(), library() == null, editedFlush()?.toList(),
+                    printerOverrides() + (effectiveOverrides() - FLUSH_KEY), offeredMixed(), typedPhysical(), mixSublayers, presetSelection()))
+            }
+        }.getOrElse { error ->
+            slice = SliceState.Failed("The slice inputs could not be prepared: ${error.message}", GuidanceFailureKind.INPUTS)
+            return
+        }
+        sliceCancelRequested = false
         slice = SliceState.Running(0f, "Starting")
-        scope.launch {
-            val input = runCatching { withContext(Dispatchers.Main.immediate) {
-                val project = toProject(forSlice = true)
-                SliceInputSnapshot(project, preset, supports, infill, project.manifest?.materials.orEmpty(),
-                    library() == null, editedFlush()?.toList(), printerOverrides() + (effectiveOverrides() - FLUSH_KEY),
-                    offeredMixed(), typedPhysical(), mixSublayers, presetSelection())
-            } }.getOrElse { error ->
-                slice = SliceState.Failed("The slice inputs could not be prepared: ${error.message}", GuidanceFailureKind.INPUTS)
-                return@launch
-            }
-            if (generation != sliceGeneration) { slice = SliceState.Idle; showPreview = false; return@launch }
-            val outcome = withContext(Dispatchers.IO) {
-                // The engine works out the per-filament settings of the mixed filaments (colours, components, ratios, gradients).
-                val mixSettings = if (input.mixRows.isEmpty()) Result.success(emptyMap()) else runCatching {
-                    MixedFilament.sliceOverrides(input.physical, input.mixRows, input.mixSublayers)
-                }
-                mixSettings.fold({ settings ->
-                    val (profileDirectory, selectedPreset) = resolvedPreset(input.presetSelection)
-                    val bambuBundle = runCatching {
-                        JSONObject(File(profileDirectory, "machine.json").readText())
-                            .optString("printer_model").startsWith("Bambu Lab ")
-                    }.getOrDefault(false)
-                    val req = SliceRequest(input.project, profileDirectory, input.preset, input.supports, input.infill,
-                        input.materials, applyPreset = input.applyPreset, flushMatrix = input.flush,
-                        savedFilamentProfiles = selectedPreset?.filamentProfiles.orEmpty(),
-                        extraOverrides = input.overrides + settings,
-                        bambuBundle = bambuBundle && calibrationAtStart == null)
-                    if (generation != sliceGeneration) SliceOutcome.Failed("The project changed before slicing began.", "")
-                    else e.slice(req) { p, s -> slice = SliceState.Running(p, s) }
-                }, { SliceOutcome.Failed(it.message ?: "Mixed filaments could not be set up.", "") })
-            }
-            if (generation != sliceGeneration) { slice = SliceState.Idle; showPreview = false; return@launch }
-            val completed = when (outcome) {
-                is SliceOutcome.Done -> {
-                    val applied = withContext(Dispatchers.IO) { runCatching {
-                        calibrationAtStart?.let { net.jamesjennison.klippercompanion.Calibration.applyToFile(outcome.gcode, it) }
-                    } }
-                    if (applied.isFailure) SliceState.Failed("Calibration instructions could not be applied: ${applied.exceptionOrNull()?.message}", GuidanceFailureKind.CALIBRATION)
-                    else {
-                        val completeInput = if (calibrationAtStart == null || outcome.inputSha256 == null) outcome.inputSha256
-                            else java.security.MessageDigest.getInstance("SHA-256").digest(
-                                "slice-input-and-calibration-v1\n${outcome.inputSha256}\n${calibrationAtStart.encode()}".toByteArray(Charsets.UTF_8)
-                            ).joinToString("") { "%02x".format(it) }
-                        SliceState.Done(outcome.copy(inputSha256 = completeInput), withContext(Dispatchers.IO) {
-                            runCatching {
-                                (PlannerPreview.read(outcome.gcode) ?: GcodePreview.parse(outcome.gcode))
-                                    .takeIf { it.layers.isNotEmpty() }
-                            }.getOrNull()
-                        }, saved?.projectId, saved?.revision, savedPlateId, selectedProfileId,
-                            input.materials.sortedBy { it.slot })
+        val results = linkedMapOf<String, SliceState.Done>()
+        scope.launch(Dispatchers.Main) {
+            for ((id, target) in targets) {
+                val (plateName, input) = target
+                val worker = SliceEngine(bin, app.paths.slices).also { engine = it }
+                val completed = try {
+                    withContext(Dispatchers.IO) {
+                        val settings = if (input.mixRows.isEmpty()) emptyMap()
+                            else MixedFilament.sliceOverrides(input.physical, input.mixRows, input.mixSublayers)
+                        val (profileDirectory, selectedPreset) = resolvedPreset(input.presetSelection)
+                        val bambuBundle = runCatching {
+                            JSONObject(File(profileDirectory, "machine.json").readText())
+                                .optString("printer_model").startsWith("Bambu Lab ")
+                        }.getOrDefault(false)
+                        val request = SliceRequest(input.project, profileDirectory, input.preset, input.supports, input.infill,
+                            input.materials, applyPreset = input.applyPreset, flushMatrix = input.flush,
+                            savedFilamentProfiles = selectedPreset?.filamentProfiles.orEmpty(),
+                            extraOverrides = input.overrides + settings, bambuBundle = bambuBundle && calibrationAtStart == null)
+                        if (sliceCancelRequested || generation != sliceGeneration) return@withContext SliceState.Cancelled
+                        val index = results.size
+                        when (val outcome = worker.slice(request) { progress, stage ->
+                            if (generation == sliceGeneration) slice = SliceState.Running((index + progress) / targets.size,
+                                if (batch) "$plateName · $stage" else stage)
+                        }) {
+                            is SliceOutcome.Done -> {
+                                try {
+                                    calibrationAtStart?.let { net.jamesjennison.klippercompanion.Calibration.applyToFile(outcome.gcode, it) }
+                                } catch (error: Exception) {
+                                    return@withContext SliceState.Failed("Calibration instructions could not be applied: ${error.message}", GuidanceFailureKind.CALIBRATION)
+                                }
+                                val completeInput = if (calibrationAtStart == null || outcome.inputSha256 == null) outcome.inputSha256
+                                    else MessageDigest.getInstance("SHA-256").digest(
+                                        "slice-input-and-calibration-v1\n${outcome.inputSha256}\n${calibrationAtStart.encode()}".toByteArray(Charsets.UTF_8)
+                                    ).joinToString("") { "%02x".format(it) }
+                                val preview = runCatching { (PlannerPreview.read(outcome.gcode) ?: GcodePreview.parse(outcome.gcode))
+                                    .takeIf { it.layers.isNotEmpty() } }.getOrNull()
+                                SliceState.Done(outcome.copy(inputSha256 = completeInput), preview,
+                                    saved?.projectId, saved?.revision, id.takeIf { saved != null }, selectedProfileId,
+                                    input.materials.sortedBy { it.slot })
+                            }
+                            is SliceOutcome.Failed -> SliceState.Failed(outcome.message)
+                            SliceOutcome.Cancelled -> SliceState.Cancelled
+                        }
                     }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    SliceState.Failed(error.message ?: "The plate could not be sliced.")
                 }
-                is SliceOutcome.Failed -> SliceState.Failed(outcome.message)
-                SliceOutcome.Cancelled -> SliceState.Cancelled
+                if (generation != sliceGeneration) {
+                    slice = SliceState.Idle
+                    showPreview = false
+                    return@launch
+                }
+                if (sliceCancelRequested) {
+                    slice = SliceState.Cancelled
+                    showPreview = false
+                    return@launch
+                }
+                if (completed !is SliceState.Done) {
+                    slice = if (batch && completed is SliceState.Failed) SliceState.Failed("$plateName: ${completed.message}", completed.cause)
+                        else completed
+                    return@launch
+                }
+                results[id] = completed
             }
-            if (generation != sliceGeneration) { slice = SliceState.Idle; showPreview = false; return@launch }
-            slice = completed
-            if (completed is SliceState.Done) {
-                previewFirstLayer = 0
-                previewLayer = ((completed.preview?.layers?.size ?: 1) - 1).coerceAtLeast(0)
-                previewMove = Int.MAX_VALUE
-                showPreview = true
+            if (batch) batchSlices = results.toMap()
+            val selectedId = plateIds[currentPlate].takeIf { it in results } ?: results.keys.first()
+            if (plateIds[currentPlate] != selectedId) {
+                currentPlate = plateIds.indexOf(selectedId)
+                selected = null
             }
+            showCompletedSlice(results.getValue(selectedId))
         }
     }
 
-    fun cancelSlice() { engine?.cancel() }
+    fun cancelSlice() {
+        if (slice !is SliceState.Running) return
+        sliceCancelRequested = true
+        engine?.cancel()
+    }
 
     /** Uploads the sliced plate to the printer. Starting the print is a separate, confirmed action. */
     suspend fun upload(entry: PrinterEntry, session: PrinterSession, expectedDigest: String): UploadResult {

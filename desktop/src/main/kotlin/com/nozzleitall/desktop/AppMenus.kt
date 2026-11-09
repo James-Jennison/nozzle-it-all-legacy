@@ -125,7 +125,11 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Show every setting", ctrl(Key.Period, ".")) { p.advancedSettings = true; p.settingsScope = com.nozzleitall.desktop.settings.Scope.PROCESS; state.destination = Destination.PREPARE },
         )),
         AppMenu("Plate", Key.P, listOf(
-            MenuAction("Slice plate", ctrl(Key.R, "R"), enabled = p.items.isNotEmpty(), commandId = "slice") { state.destination = Destination.PREPARE; p.slice(state.scope) },
+            MenuAction("Slice plate", ctrl(Key.R, "R"), enabled = p.plateItems().isNotEmpty() && p.hasSlicingSetup && p.slice !is SliceState.Running, commandId = "slice") { state.destination = Destination.PREPARE; p.slice(state.scope) },
+            MenuAction("Slice all plates", enabled = p.items.isNotEmpty() && p.hasSlicingSetup && p.slice !is SliceState.Running) {
+                state.destination = Destination.PREPARE
+                p.sliceAll(state.scope)
+            },
             null,
             MenuAction("Add plate", commandId = "add-plate") { p.addPlate(); state.destination = Destination.PREPARE },
             MenuAction("Duplicate plate", enabled = p.toolBusy == null, commandId = "duplicate-plate") { p.duplicateCurrentPlate() },

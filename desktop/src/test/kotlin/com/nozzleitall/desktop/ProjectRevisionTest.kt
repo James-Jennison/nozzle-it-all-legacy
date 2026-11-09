@@ -1,6 +1,15 @@
 package com.nozzleitall.desktop
 
 import com.nozzleitall.desktop.prepare.PrepItem
+import com.nozzleitall.desktop.prepare.SliceEngine
+import com.nozzleitall.desktop.prepare.SliceState
+import com.nozzleitall.project.MeshIO
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import org.junit.Assume.assumeNotNull
 import com.nozzleitall.desktop.projects.compareRecovery
 import com.nozzleitall.desktop.projects.ProjectLibrary
 import com.nozzleitall.desktop.projects.KeepChoiceReviewReason
@@ -20,6 +29,48 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class ProjectRevisionTest {
+    @Test fun sliceAllRetainsExactPlateResultsUntilTheSetupChanges() {
+        assumeNotNull(SliceEngine.locateEngine())
+        val root = Files.createTempDirectory("slice-all-plates").toFile()
+        val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val app = AppState(paths, scope)
+        try {
+            val repo = generateSequence(File("").absoluteFile) { it.parentFile }
+                .first { File(it, "settings.gradle.kts").isFile }
+            val mesh = MeshIO.readStl(File(repo, "site-src/assets/test-cube-20mm.stl").readBytes())
+            runBlocking {
+                withContext(Dispatchers.Main) {
+                    val prepare = app.prepare
+                    prepare.items += PrepItem(1, "First plate cube", mesh, 90f, 90f)
+                    prepare.addPlate()
+                    prepare.items += PrepItem(2, "Second plate cube", mesh, 140f, 140f, plate = 1).apply { sz = 0.5f }
+                    prepare.changed()
+                    prepare.save()
+                    val plateIds = prepare.plateIds.toList()
+                    prepare.sliceAll(scope)
+                    withTimeout(120_000) { while (prepare.slice is SliceState.Running) delay(25) }
+                    assertTrue(prepare.slice.toString(), prepare.slice is SliceState.Done)
+                    val second = prepare.slice as SliceState.Done
+                    assertEquals(plateIds[1], second.savedPlateId)
+                    prepare.showPlate(0)
+                    val first = prepare.slice as SliceState.Done
+                    assertEquals(plateIds[0], first.savedPlateId)
+                    assertNotEquals(first.result.inputSha256, second.result.inputSha256)
+                    assertNotEquals(first.result.stats.layers, second.result.stats.layers)
+                    prepare.changed()
+                    prepare.showPlate(1)
+                    assertSame(SliceState.Idle, prepare.slice)
+                    assertFalse(prepare.showPreview)
+                }
+            }
+        } finally {
+            scope.cancel()
+            app.fleet.shutdown()
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun cleanProjectReplacementAdvancesEditorGeneration() {
         val root = Files.createTempDirectory("project-editor-generation").toFile()
         val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()
