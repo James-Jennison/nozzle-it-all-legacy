@@ -37,7 +37,12 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.nozzleitall.desktop.AppState
 import com.nozzleitall.desktop.Destination
@@ -1340,6 +1345,7 @@ private fun WorkspaceSetupStack(
             val connected = p.printer()
             val status = connected?.status?.value?.state
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
+                .clickable(onClickLabel = "Set up printer connection") { state.startPrinterSetup(autoScan = true) }
                 .padding(horizontal = 6.dp, vertical = 5.dp).semantics { testTag = "setup-connection" },
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(status?.let { Nz.status.forState(it.glossaryId) } ?: c.textMuted))
@@ -1467,6 +1473,18 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
     val c = Nz.colors
     var open by remember { mutableStateOf(false) }
     val current = ProfileCatalog.byId(p.profileId)
+    val position = remember {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize,
+            ): IntOffset {
+                val maxX = (windowSize.width - popupContentSize.width).coerceAtLeast(0)
+                val maxY = (windowSize.height - popupContentSize.height).coerceAtLeast(0)
+                val top = if (anchorBounds.bottom <= maxY) anchorBounds.bottom else anchorBounds.top - popupContentSize.height
+                return IntOffset(anchorBounds.left.coerceIn(0, maxX), top.coerceIn(0, maxY))
+            }
+        }
+    }
     Box(modifier) {
         Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(6.dp)).background(c.surfaceSunken)
             .border(1.dp, if (open) c.focus else c.line, RoundedCornerShape(6.dp))
@@ -1480,7 +1498,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
             Txt("▾", Nz.type.bodySmall, c.textMuted)
         }
         if (open) Popup(
-            offset = androidx.compose.ui.unit.IntOffset(0, with(androidx.compose.ui.platform.LocalDensity.current) { 32.dp.roundToPx() }),
+            popupPositionProvider = position,
             onDismissRequest = { open = false }, properties = PopupProperties(focusable = true),
         ) {
             var query by remember { mutableStateOf("") }
@@ -1494,6 +1512,8 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Txt("Saved printers", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                    Txt("Choose a matching slicing profile separately.", Nz.type.bodySmall, c.textMuted,
+                        Modifier.padding(horizontal = 10.dp, vertical = 3.dp))
                     state.fleet.order.value.mapNotNull { state.fleet.printers[it]?.config?.identity }.forEach { printer ->
                         PrinterPickerOption(printer.displayName, p.printerId == printer.id, "saved-printer-${printer.id}") {
                             p.choosePrinter(printer.id)
