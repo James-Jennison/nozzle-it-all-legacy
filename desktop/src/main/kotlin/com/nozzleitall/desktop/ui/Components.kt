@@ -321,7 +321,12 @@ fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive
                   alternativeAction: (@Composable () -> Unit)? = null) {
     DialogWindow(onCloseRequest = onDismiss, title = title,
         state = rememberDialogState(width = 460.dp,
-            height = if (extraContent != null) 490.dp else if (acknowledgement == null) 300.dp else 390.dp), resizable = false,
+            height = when {
+                extraContent != null -> 490.dp
+                acknowledgement != null -> 390.dp
+                alternativeAction != null && Nz.textScale >= 1.75f -> 340.dp
+                else -> 300.dp
+            }), resizable = false,
         onPreviewKeyEvent = { if (it.key == Key.Escape && it.type == KeyEventType.KeyDown) { onDismiss(); true } else false }) {
         val c = Nz.colors
         val cancelFocus = remember { FocusRequester() }
@@ -344,7 +349,8 @@ fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.focusRequester(cancelFocus).focusable()) { NzButton(cancelLabel, onDismiss, kind = ButtonKind.SECONDARY) }
                 alternativeAction?.invoke()
                 NzButton(confirmLabel, onConfirm, kind = if (destructive) ButtonKind.DANGER else ButtonKind.PRIMARY,

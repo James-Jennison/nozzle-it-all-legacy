@@ -424,6 +424,8 @@ private fun runApp(open: List<File>) = application {
             minOf(640, (initialHeight * 3 / 4).coerceAtLeast(240)))
         DisposableEffect(window) {
             if (osName.startsWith("Linux")) {
+                // One main window owns this interception for its process lifetime. Popping it on Compose disposal
+                // would allow a pending native close to reach Skiko while the surface is being torn down.
                 Toolkit.getDefaultToolkit().systemEventQueue.push(LinuxCloseEventQueue(window, closeWindow))
             }
             val listener = com.nozzleitall.desktop.environment.DesktopMonitoringWindowListener(state.environment::foreground)
