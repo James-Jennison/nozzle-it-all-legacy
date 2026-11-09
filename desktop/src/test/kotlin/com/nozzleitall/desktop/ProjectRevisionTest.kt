@@ -71,6 +71,38 @@ class ProjectRevisionTest {
         }
     }
 
+    @Test fun printProjectResolvesItsArchivedRevisionAndRejectsAnotherPlate() {
+        val root = Files.createTempDirectory("history-print-project").toFile()
+        val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val app = AppState(paths, scope)
+        try {
+            val prepare = app.prepare
+            prepare.addPlate()
+            prepare.save()
+            val id = requireNotNull(prepare.manifest).projectId
+            val plate = prepare.plateIds.last()
+            prepare.renamePlate(1, "Renamed plate")
+            prepare.save()
+
+            val (archived, project) = app.library.readPrintProject(id, 1, plate)
+            assertNotEquals(prepare.file, archived)
+            assertEquals("Plate 2", project.manifest!!.plates.last().name)
+            assertTrue(runCatching { app.library.readPrintProject(id, 1, "wrong-plate") }.isFailure)
+            prepare.openProject(archived, project)
+            assertEquals(1L, prepare.manifest!!.revision)
+            prepare.renamePlate(1, "Edited from print")
+            val copy = prepare.save()
+            assertNotEquals(archived, copy)
+            assertNotEquals(id, prepare.manifest!!.projectId)
+            assertEquals("Plate 2", ThreeMf.read(archived).manifest!!.plates.last().name)
+        } finally {
+            scope.cancel()
+            app.fleet.shutdown()
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun cleanProjectReplacementAdvancesEditorGeneration() {
         val root = Files.createTempDirectory("project-editor-generation").toFile()
         val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()

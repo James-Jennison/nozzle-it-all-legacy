@@ -88,6 +88,7 @@ internal fun historyLoadFailure(cause: Exception): Pair<String, HistoryLoadPhase
 @Composable
 fun HistoryScreen(state: AppState) {
     val c = Nz.colors
+    var query by remember { mutableStateOf("") }
     var reprintReview by remember { mutableStateOf<Pair<JobRecord, ReprintCandidate>?>(null) }
     var reprintProblem by remember { mutableStateOf<String?>(null) }
     val requestedRecord = state.selectedHistoryRecord
@@ -190,6 +191,10 @@ fun HistoryScreen(state: AppState) {
         }
         val records = if (orphanedRecord != null) listOf(orphanedRecord)
             else state.fleet.history.value.filter { it.printerId == entry?.config?.identity?.id }
+        if (orphanedRecord == null && records.isNotEmpty()) {
+            com.nozzleitall.desktop.settings.DenseInput(query, { query = it }, "Search print history",
+                Modifier.fillMaxWidth(), placeholder = "Filename or result")
+        }
         reprintProblem?.let { Banner(it, BannerKind.WARNING, "Dismiss" to { reprintProblem = null }) }
         selectedRecord?.let { record ->
             var diagnose by remember(record) { mutableStateOf(false) }
@@ -204,6 +209,38 @@ fun HistoryScreen(state: AppState) {
             Card(Modifier.fillMaxWidth()) {
                 Txt("Print result: ${record.fileName.substringAfterLast('/')}", Nz.type.title)
                 Txt("Machine ${record.outcome}. Physical result is recorded separately.", Nz.type.bodySmall, c.textMuted)
+                selectedReview?.job?.let { job ->
+                    val projectId = job.projectId
+                    val revision = job.projectRevision
+                    val plateId = job.plateId
+                    if (projectId != null && revision != null && plateId != null) {
+                        Txt("Saved project revision $revision · Plate $plateId", Nz.type.bodySmall, c.textMuted)
+                        NzButton("Open project to edit", {
+                            state.guardProjectReplacement {
+                                val generation = state.prepare.editorGeneration
+                                state.scope.launch(Dispatchers.Main) {
+                                    try {
+                                        val (file, project) = withContext(Dispatchers.IO) {
+                                            state.library.readPrintProject(projectId, revision, plateId)
+                                        }
+                                        if (state.prepare.editorGeneration != generation || state.selectedHistoryRecord != record) {
+                                            reprintProblem = "The workspace or selected result changed. Open the project again."
+                                            return@launch
+                                        }
+                                        state.prepare.openProject(file, project)
+                                        val index = state.prepare.plateIds.indexOf(plateId)
+                                        if (index >= 0) state.prepare.showPlate(index)
+                                        state.returnToWorkspace(preview = false)
+                                    } catch (error: CancellationException) {
+                                        throw error
+                                    } catch (error: Exception) {
+                                        reprintProblem = error.message ?: "The exact project revision could not be opened."
+                                    }
+                                }
+                            }
+                        }, testTag = "history-open-print-project")
+                    }
+                }
                 if (failure != null) NzButton("AI failure diagnosis", { diagnose = true },
                     kind = ButtonKind.QUIET, testTag = "history-ai-diagnosis")
                 if (diagnose && failure != null) LocalGuidanceDialog(failure,
@@ -317,7 +354,12 @@ fun HistoryScreen(state: AppState) {
             }
             return@Column
         }
-        records.forEachIndexed { index, r ->
+        val matching = records.withIndex().filter { (_, record) ->
+            query.isBlank() || listOf(record.fileName, record.outcome, record.printerName)
+                .any { it.contains(query.trim(), ignoreCase = true) }
+        }
+        if (matching.isEmpty()) Txt("No history records match this search.", Nz.type.bodySmall, c.textMuted)
+        matching.forEach { (index, r) ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Txt(r.fileName.substringAfterLast('/'), Nz.type.title)
@@ -328,7 +370,7 @@ fun HistoryScreen(state: AppState) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         NzButton("Result details", { state.selectedHistoryRecord = r },
                             kind = ButtonKind.SECONDARY, testTag = "history-result-${r.id}-$index")
-                        NzButton("Review reprint", {
+                        NzButton("Reprint exact file…", {
                             runCatching { state.fleet.reprintCandidate(r) }
                                 .onSuccess { candidate ->
                                     if (candidate == null) reprintProblem = "This print has no retained local prepared file. Prepare a new job from its project or import a file."

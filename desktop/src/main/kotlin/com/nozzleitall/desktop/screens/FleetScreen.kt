@@ -50,6 +50,7 @@ fun temp(t: Double?) = t?.let { "%.0f °C".format(it) } ?: "–"
 fun FleetScreen(state: AppState) {
     val fleet = state.fleet
     var editing by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
     var removing by remember { mutableStateOf<String?>(null) }
     var removeError by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -74,8 +75,17 @@ fun FleetScreen(state: AppState) {
                 }
             }
         } else {
+            com.nozzleitall.desktop.settings.DenseInput(query, { query = it }, "Search printers",
+                Modifier.fillMaxWidth(), placeholder = "Printer name or model")
+            val matching = ids.filter { id ->
+                fleet.printers[id]?.config?.identity?.let { identity ->
+                    query.isBlank() || listOf(identity.displayName, identity.model, identity.family.label)
+                        .any { it.contains(query.trim(), ignoreCase = true) }
+                } == true
+            }
+            if (matching.isEmpty()) Txt("No printers match this search.", Nz.type.bodySmall, Nz.colors.textMuted)
             LazyVerticalGrid(GridCells.Adaptive(380.dp), Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(ids, key = { it }) { id -> fleet.printers[id]?.let {
+                items(matching, key = { it }) { id -> fleet.printers[id]?.let {
                     PrinterCard(it, onEdit = { editing = id }, onRemove = { removeError = null; removing = id },
                         onPrepare = { state.requestWorkspacePrinter(id); state.destination = com.nozzleitall.desktop.Destination.PREPARE }) { state.openPrinter(id) }
                 } }

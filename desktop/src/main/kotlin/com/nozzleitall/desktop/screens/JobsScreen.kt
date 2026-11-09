@@ -19,6 +19,9 @@ import com.nozzleitall.project.MeshIO
 fun JobsScreen(state: AppState) {
     val c = Nz.colors
     val fleet = state.fleet
+    var search by remember { mutableStateOf("") }
+    val query = search.trim()
+    fun matches(vararg fields: String) = query.isEmpty() || fields.any { it.contains(query, ignoreCase = true) }
     var creating by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     val active = fleet.order.value.mapNotNull { id -> fleet.printers[id]?.let { id to it } }
@@ -27,6 +30,8 @@ fun JobsScreen(state: AppState) {
         SectionHeader("Jobs", "Active prints, prepared jobs and recent machine results.") {
             NzButton("New job", { creating = !creating }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, testTag = "new-job")
         }
+        com.nozzleitall.desktop.settings.DenseInput(search, { search = it }, "Search jobs",
+            Modifier.fillMaxWidth(), placeholder = "Job name, filename or printer")
         state.historySavePending.keys.forEach { pending ->
             Banner("Saving assessment for ${historyNoticeLabel(pending)}.", BannerKind.INFO)
         }
@@ -81,7 +86,11 @@ fun JobsScreen(state: AppState) {
         Card(Modifier.fillMaxWidth()) {
             Txt("Active prints (${active.size})", Nz.type.title)
             if (active.isEmpty()) Txt("No printer reports an active print.", Nz.type.bodySmall, c.textMuted)
-            active.forEach { (id, entry) ->
+            val matching = active.filter { (_, entry) ->
+                matches(entry.config.identity.displayName, entry.status.value.job?.fileName.orEmpty())
+            }
+            if (active.isNotEmpty() && matching.isEmpty()) Txt("No active prints match this search.", Nz.type.bodySmall, c.textMuted)
+            matching.forEach { (id, entry) ->
                 val job = entry.status.value.job ?: return@forEach
                 val status = entry.status.value
                 val remaining = JobEta.remainingSeconds(job.fraction, job.elapsedSeconds)
@@ -100,12 +109,14 @@ fun JobsScreen(state: AppState) {
         if (fleet.queue.value.isEmpty() && fleet.queueRecoveryProblems.value.isEmpty()) Card(Modifier.fillMaxWidth()) {
             Txt("Prepared jobs (0)", Nz.type.title)
             Txt("A sliced file can be added here, then reviewed before Start.", Nz.type.bodySmall, c.textMuted)
-        } else QueuePanel(state)
+        } else QueuePanel(state, query)
         Card(Modifier.fillMaxWidth()) {
             Txt("Recent machine results", Nz.type.title)
-            val recent = fleet.history.value.sortedByDescending { it.endedAtMillis }.take(5)
-            if (recent.isEmpty()) Txt("No completed or stopped prints have been recorded yet.", Nz.type.bodySmall, c.textMuted)
-            recent.forEachIndexed { index, record ->
+            val results = fleet.history.value.sortedByDescending { it.endedAtMillis }
+            val recent = results.withIndex().filter { (_, record) -> matches(record.fileName, record.printerName, record.outcome) }.take(5)
+            if (recent.isEmpty()) Txt(if (results.isEmpty()) "No completed or stopped prints have been recorded yet."
+                else "No machine results match this search.", Nz.type.bodySmall, c.textMuted)
+            recent.forEach { (index, record) ->
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Txt(record.fileName.replace('\\', '/').substringAfterLast('/'), Nz.type.bodySmall)
                     Txt("${record.printerName} · ${record.outcome}", Nz.type.bodySmall, c.textMuted)

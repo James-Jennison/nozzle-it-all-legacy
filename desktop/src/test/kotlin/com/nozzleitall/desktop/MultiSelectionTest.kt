@@ -16,7 +16,10 @@ class MultiSelectionTest {
         return AppState(AppPaths(File(tmp, "c"), File(tmp, "d"), File(tmp, "k")).ensure(), CoroutineScope(SupervisorJob() + Dispatchers.Default)).also { a ->
             val p = a.prepare
             p.items.addAll(listOf(PrepItem(1, "one", cube, 40f, 50f), PrepItem(2, "two", cube, 80f, 50f), PrepItem(3, "three", cube, 120f, 50f), PrepItem(4, "other plate", cube, 40f, 50f, plate = 1)))
-            p.plateNames += "Plate 2"; p.history.reset()
+            p.addPlate()
+            p.showPlate(0)
+            p.dirty = false
+            p.history.reset()
         }
     }
     @Test fun toggleRangeAndSelectAllStayOnCurrentPlate() {

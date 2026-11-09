@@ -65,7 +65,7 @@ internal data class ReviewedQueueConnection(
  * plate is clear. A job for one printer waits for that printer; a job for "any" is offered the first free printer that can take it.
  */
 @Composable
-fun QueuePanel(state: AppState) {
+fun QueuePanel(state: AppState, query: String = "") {
     val items = state.fleet.queue.value
     val recovery = state.fleet.queueRecoveryProblems.value
     val rechecking = state.fleet.queueRechecking.value
@@ -80,7 +80,14 @@ fun QueuePanel(state: AppState) {
             NzButton(if (rechecking) "Rechecking queue…" else "Recheck queue",
                 { state.scope.launch(Dispatchers.Main) { state.fleet.recheckQueueFromUi() } },
                 kind = ButtonKind.SECONDARY, enabled = !rechecking)
-        items.forEachIndexed { i, item -> key(item.id) { QueueRow(state, item, first = i == 0, last = i == items.lastIndex) } }
+        val matching = items.withIndex().filter { (_, item) ->
+            query.isBlank() || listOfNotNull(item.name, item.fileName,
+                item.printerId?.let { state.fleet.printers[it]?.config?.identity?.displayName })
+                .any { it.contains(query, ignoreCase = true) } ||
+                state.queueRowUi[item.id]?.let { it.uploading.value != null || it.flow?.busy == true } == true
+        }
+        if (items.isNotEmpty() && matching.isEmpty()) Txt("No queued jobs match this search.", Nz.type.bodySmall, c.textMuted)
+        matching.forEach { (i, item) -> key(item.id) { QueueRow(state, item, first = i == 0, last = i == items.lastIndex) } }
     }
 }
 

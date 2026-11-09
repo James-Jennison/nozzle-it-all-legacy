@@ -1124,8 +1124,9 @@ class PrepareState(private val app: AppState) {
         history.reset()
     }
 
-    fun open(f: File) {
-        val p = ThreeMf.read(f)
+    fun open(f: File) = openProject(f, ThreeMf.read(f))
+
+    internal fun openProject(f: File, p: Project3mf) {
         // Plates: Nozzle's own from the manifest, another slicer's from its plate list. Objects are stored where that
         // slicer puts its plates side by side (Plates.origin), so each is brought back onto its own plate.
         val ownPlates = p.manifest?.plates?.sortedBy { it.index }?.takeIf { it.isNotEmpty() }

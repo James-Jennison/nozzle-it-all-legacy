@@ -395,6 +395,19 @@ class ProjectLibrary(private val paths: AppPaths) {
         } } + current
     }
 
+    /** Returns only the exact readable revision, with its plate identity checked before the editor changes. */
+    internal fun readPrintProject(projectId: String, revision: Long, plateId: String): Pair<File, Project3mf> {
+        val entry = revisions(projectId).filter { it.revision == revision && it.problem == null }.singleOrNull()
+            ?: error("The exact project revision is unavailable.")
+        check(sha256(entry.file) == entry.contentSha256) { "The project revision changed while opening." }
+        val project = ThreeMf.read(entry.file)
+        val manifest = requireNotNull(project.manifest) { "The project revision has no manifest." }
+        check(manifest.projectId == projectId && manifest.revision == revision &&
+            manifest.plates.any { (it.id ?: ProjectManifest.legacyPlateId(projectId, it.index)) == plateId } &&
+            sha256(entry.file) == entry.contentSha256) { "The exact print plate could not be verified." }
+        return entry.file to project
+    }
+
     /** A crashed save can leave its readable .part beside the still-valid head. Inspection never applies it. */
     fun pendingRecoveries(): List<ProjectRecoveryCandidate> = withLibraryLock { pendingRecoveriesUnlocked() }
 
