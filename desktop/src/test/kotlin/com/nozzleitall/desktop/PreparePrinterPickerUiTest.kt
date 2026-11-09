@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -49,12 +50,17 @@ class PreparePrinterPickerUiTest {
         try {
             setContent { NozzleTheme("dark", textScale = 1.5f) { App(app) } }
             onNodeWithTag("setup-connection").assertHasClickAction()
+            onNodeWithTag("setup-printer").assertTextContains("Export only")
+            onNodeWithContentDescription("Nozzle diameter, 0.4").assertIsDisplayed()
+            onNodeWithContentDescription("Bed type, Textured PEI Plate").assertIsDisplayed()
             fun openPicker() = onNodeWithTag("setup-printer").performClick()
             for (printer in listOf(u1, cc1)) {
                 openPicker()
                 onNodeWithTag("saved-printer-u1").assertIsDisplayed()
                 onNodeWithTag("saved-printer-cc1").assertIsDisplayed()
                 onNodeWithTag("saved-printer-${printer.id}").performClick()
+                onNodeWithTag("setup-printer").assertTextContains(printer.displayName)
+                onNodeWithTag("setup-slicing-profile").assertTextContains("Snapmaker U1")
                 runOnIdle {
                     assertEquals(printer, app.prepare.printer()?.config?.identity)
                     assertEquals(profile, app.prepare.profileId)
@@ -72,8 +78,11 @@ class PreparePrinterPickerUiTest {
                 assertEquals(cc1.id, app.prepare.printerId)
                 assertEquals(cc1Profile.id, app.prepare.profileId)
             }
+            onNodeWithTag("setup-printer").assertTextContains("CC1")
+            onNodeWithTag("setup-slicing-profile").assertTextContains(cc1Profile.model)
             openPicker()
             onNodeWithTag("saved-printer-export").performScrollTo().performClick()
+            onNodeWithTag("setup-printer").assertTextContains("Export only")
             runOnIdle {
                 assertEquals(null, app.prepare.printerId)
                 assertEquals(cc1Profile.id, app.prepare.profileId)

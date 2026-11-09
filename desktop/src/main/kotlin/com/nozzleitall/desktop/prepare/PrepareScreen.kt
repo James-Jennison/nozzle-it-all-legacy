@@ -1302,25 +1302,39 @@ private fun WorkspaceSetupStack(
     Column(modifier.verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         SetupSection(
             "Printer",
-            listOf(p.slicingMachineLabel, machine?.name ?: p.profile?.model ?: p.profileId).distinct().joinToString(" · "),
+            p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel(),
             expanded = printerKey !in collapsed,
             onExpandedChange = { state.fleet.updateSettingGroupCollapsed(printerKey, !it) },
         ) {
-            PrinterPicker(state, Modifier.fillMaxWidth())
+            val nozzle = machine?.nozzle ?: p.nozzle ?: "0.4"
+            val nozzleSizes = p.library()?.machines?.map { it.nozzle }.orEmpty()
             val beds = p.beds()
-            if (beds.enabled && beds.choices.size > 1) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Txt("Bed", Nz.type.bodySmall, c.textMuted,
-                        modifier = Modifier.width(setupRowLabelWidth(Nz.textScale)), maxLines = 1)
-                    com.nozzleitall.desktop.settings.DenseSelect(
-                        "Bed type",
+            val bed = p.effectiveBedType()
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                PrinterCardField("Printer", Modifier.weight(0.47f)) {
+                    PrinterPicker(state, Modifier.fillMaxWidth())
+                }
+                PrinterCardField("Nozzle", Modifier.weight(0.19f)) {
+                    val choices = nozzleSizes.ifEmpty { listOf(nozzle) }
+                    com.nozzleitall.desktop.settings.DenseSelect("Nozzle diameter",
+                        choices.map { com.nozzleitall.desktop.settings.Choice(it, it) },
+                        nozzle, Modifier.fillMaxWidth(), enabled = choices.size > 1, onSelect = p::chooseNozzle)
+                }
+                PrinterCardField("Bed", Modifier.weight(0.34f)) {
+                    com.nozzleitall.desktop.settings.DenseSelect("Bed type",
                         beds.choices.map { com.nozzleitall.desktop.settings.Choice(it.value, it.label) },
-                        p.effectiveBedType(), Modifier.weight(1f),
-                    ) { value -> p.bedType = value; p.changed() }
+                        bed, Modifier.fillMaxWidth(), enabled = beds.enabled && beds.choices.size > 1) { value ->
+                        p.bedType = value
+                        p.changed()
+                    }
                 }
             }
-            val nozzle = machine?.nozzle ?: p.nozzle ?: "0.4"
+            val profile = p.profile?.model ?: p.slicingMachineLabel
+            Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Txt("Slicing profile", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                Txt(profile, Nz.type.bodySmall, modifier = Modifier.weight(1f).semantics { testTag = "setup-slicing-profile" }, maxLines = 1)
+            }
             val toolCount = (p.profile?.tools ?: slots.size.coerceAtLeast(1)).coerceAtLeast(1)
             val highFlow = runCatching { PrinterSetup.supportsHighFlow(p.machineJson()) }.getOrDefault(false)
             (1..toolCount).chunked(2).forEach { tools ->
@@ -1352,9 +1366,8 @@ private fun WorkspaceSetupStack(
                 Box(Modifier.size(8.dp).clip(CircleShape).background(status?.let { Nz.status.forState(it.glossaryId) } ?: c.textMuted))
                 Txt("Connection", Nz.type.bodySmall, c.textMuted,
                     modifier = Modifier.width(setupRowLabelWidth(Nz.textScale)), maxLines = 1)
-                Txt(connected?.config?.identity?.displayName ?: disconnectedConnectionLabel(), Nz.type.bodySmall,
+                Txt(status?.label ?: disconnectedConnectionLabel(), Nz.type.bodySmall,
                     modifier = Modifier.weight(1f), maxLines = 1)
-                Txt(status?.label ?: "Export only", Nz.type.bodySmall, c.textMuted, maxLines = 1)
             }
         }
         val filamentExpanded = filamentExpandedOverride ?: (filamentKey !in collapsed && !foldFilamentByDefault)
@@ -1469,6 +1482,14 @@ internal fun FoldedFilamentBadges(
 }
 
 @Composable
+private fun PrinterCardField(label: String, modifier: Modifier, content: @Composable () -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Txt(label, Nz.type.bodySmall, Nz.colors.textMuted, Modifier.padding(horizontal = 6.dp), maxLines = 1)
+        content()
+    }
+}
+
+@Composable
 private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
     val p = state.prepare
     val c = Nz.colors
@@ -1490,14 +1511,12 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
         }
     }
     Box(modifier) {
-        Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(6.dp)).background(c.surfaceSunken)
+        Row(Modifier.fillMaxWidth().height(28.dp).clip(RoundedCornerShape(6.dp)).background(c.surfaceSunken)
             .border(1.dp, if (open) c.focus else c.line, RoundedCornerShape(6.dp))
             .clickable(onClickLabel = "Choose printer or slicing profile") { open = !open }
             .padding(horizontal = 8.dp).semantics { testTag = "setup-printer" },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Txt("Printer", Nz.type.bodySmall, c.textMuted,
-                modifier = Modifier.width(setupRowLabelWidth(Nz.textScale)), maxLines = 1)
-            Txt(current?.let { "${it.vendor} · ${it.model}" } ?: p.slicingMachineLabel,
+            Txt(p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel(),
                 Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
             Txt("▾", Nz.type.bodySmall, c.textMuted)
         }
