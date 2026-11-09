@@ -792,7 +792,9 @@ fun PrepareScreen(state: AppState) {
                 if (previewRealistic) Floating(Modifier) {
                     Txt("Realistic View · recorded extrusion widths", Nz.type.bodySmall, c.textMuted)
                 } else PreviewLegend(p, done.preview, p.previewView ?: if (done.preview.toolsUsed.size > 1) PreviewView.TOOL else PreviewView.LINE_TYPE,
-                    slots, done.result.stats, overlayHeight = minOf(230.dp, maxHeight * 0.36f))
+                    slots, done.result.stats,
+                    overlayWidth = minOf(340.dp, viewportWidth * 0.42f),
+                    overlayHeight = minOf(130.dp, maxHeight * 0.20f))
             }
             if (p.showPreview && done != null && done.preview == null) Box(Modifier.align(Alignment.TopStart).padding(12.dp)) {
                 Banner("The sliced file has no available toolpath preview. Return to Plate or slice again before reviewing it.", BannerKind.WARNING)
@@ -1111,16 +1113,19 @@ private fun WorkspaceInspector(
 @Composable
 private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewView,
                           slots: List<com.nozzleitall.project.ProjectManifest.MaterialSlot>, stats: SliceStats,
-                          overlayHeight: Dp? = null) {
+                          overlayWidth: Dp? = null, overlayHeight: Dp? = null) {
     val c = Nz.colors
     val shape = RoundedCornerShape(14.dp)
-    var showDetails by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(true) }
     val warnings = previewWarningMessages(preview)
     val expanded = overlayHeight == null || showDetails
     val showsTimeBreakdown = view == PreviewView.LINE_TYPE || view == PreviewView.TOOL
     val baseLegendWidth = if (Nz.textScale >= 1.5f) 390.dp else 300.dp
     val legendWidth = baseLegendWidth + if (showsTimeBreakdown) 40.dp else 0.dp
-    val width = if (expanded) Modifier.width(legendWidth) else Modifier.widthIn(max = 330.dp)
+    val width = when {
+        expanded -> Modifier.width(overlayWidth ?: legendWidth)
+        else -> Modifier.widthIn(max = overlayWidth ?: legendWidth)
+    }
     Column(width.clip(shape).background(c.surface.copy(alpha = 0.94f)).border(1.dp, c.line, shape)
         .padding(if (expanded) 10.dp else 5.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         var viewMenuOpen by remember { mutableStateOf(false) }
@@ -1178,8 +1183,8 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
             ) {
                 Spacer(Modifier.width(12.dp))
                 Txt("Type", Nz.type.bodySmall, c.textMuted, modifier = Modifier.weight(1f), maxLines = 1)
-                Txt("Est. time", Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                Txt(if (preview.plannerBacked) "Filament %" else "Path %", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                Txt("Time", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                Txt("%", Nz.type.bodySmall, c.textMuted, maxLines = 1)
                 Txt(if (preview.plannerBacked) "Filament" else "Path", Nz.type.bodySmall, c.textMuted, maxLines = 1)
                 Spacer(Modifier.width(18.dp))
             }
