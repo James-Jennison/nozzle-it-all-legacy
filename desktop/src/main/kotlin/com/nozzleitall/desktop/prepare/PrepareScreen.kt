@@ -1302,7 +1302,7 @@ private fun WorkspaceSetupStack(
     val connected = p.printer()
     val status = connected?.status?.value?.state
     var editConnection by remember(connected) { mutableStateOf(false) }
-    var syncReview by remember(connected) { mutableStateOf<List<com.nozzleitall.printer.Toolhead>?>(null) }
+    var syncReview by remember(connected, connected?.session) { mutableStateOf<List<com.nozzleitall.printer.Toolhead>?>(null) }
     val reported = syncReview
     if (reported != null && connected != null) {
         val details = reported.mapNotNull { head ->
@@ -1317,7 +1317,8 @@ private fun WorkspaceSetupStack(
         ConfirmDialog(
             title = "Sync filament from printer?",
             body = "Copy the loaded spool details from ${connected.config.identity.displayName} into this project.",
-            detail = details.joinToString("\n"),
+            detail = details.takeIf { it.isNotEmpty() }?.joinToString("\n")
+                ?: "This printer did not report any loaded spool details.",
             confirmLabel = "Sync filament",
             destructive = false,
             confirmEnabled = details.isNotEmpty(),
@@ -1359,13 +1360,13 @@ private fun WorkspaceSetupStack(
                 PrinterCardField("Bed", Modifier.weight(0.34f)) {
                     com.nozzleitall.desktop.settings.DenseSelect("Bed type",
                         beds.choices.map { com.nozzleitall.desktop.settings.Choice(it.value, it.label) },
-                        bed, Modifier.fillMaxWidth(), enabled = beds.enabled && beds.choices.size > 1) { value ->
+                        bed, Modifier.fillMaxWidth(), enabled = beds.enabled && beds.choices.size > 1, labelLines = 2) { value ->
                         p.bedType = value
                         p.changed()
                     }
                 }
             }
-            val machineName = p.profile?.model ?: p.profileId
+            val machineName = p.slicingMachineLabel
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Txt("Machine profile: $machineName", Nz.type.bodySmall, c.textMuted,
                     modifier = Modifier.weight(1f), maxLines = 2)
@@ -1520,25 +1521,45 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
     val c = Nz.colors
     var open by remember { mutableStateOf(false) }
     val current = ProfileCatalog.byId(p.profileId)
-    var pending by remember { mutableStateOf<Pair<String?, String>?>(null) }
+    var pending by remember(p.profileId, p.printerId) { mutableStateOf<Pair<String?, String?>?>(null) }
+    val printerName = p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel()
     pending?.let { (destinationId, profileId) ->
         val target = ProfileCatalog.byId(profileId)
         val entry = destinationId?.let { state.fleet.printers[it] }
         val associationValid = destinationId == null || entry?.config?.identity?.profileId == profileId
+        val unknown = profileId == null
+        val mismatched = destinationId == null && p.printer()?.config?.identity?.profileId?.let { it != profileId } == true
         ConfirmDialog(
-            title = "Switch machine profile?",
-            body = "Switch from ${current?.model ?: p.profileId} to ${target?.model ?: profileId}." +
-                (entry?.let { " Use ${it.config.identity.displayName} as the destination." } ?: ""),
-            detail = "This resets the nozzle, build plate, Process preset and printer-specific filament choices. " +
-                "Plate objects and their assignments stay in the project. Review settings and slice again.",
-            confirmLabel = "Switch profile",
+            title = if (unknown) "Printer profile unknown" else "Switch machine profile?",
+            body = if (unknown) {
+                "${entry?.config?.identity?.displayName ?: "This printer"} has no recognized machine profile. The current machine profile stays selected."
+            } else {
+                "Switch from ${current?.name ?: p.profileId} to ${target?.name ?: profileId}." +
+                    (entry?.let { " Use ${it.config.identity.displayName} as the destination." } ?: "")
+            },
+            confirmLabel = if (unknown) "Select printer" else "Switch profile",
             destructive = false,
-            confirmEnabled = target != null && associationValid,
+            confirmEnabled = if (unknown) entry != null else target != null && associationValid,
+            extraContent = {
+                val detail = when {
+                    unknown -> "Verify compatibility before sending."
+                    mismatched -> "The saved printer uses another machine profile. Send will require a matching printer or a new slice."
+                    else -> "The nozzle, build plate and Process preset reset to the new machine defaults. Compatible project filament presets and plate objects stay."
+                }
+                Txt(detail, Nz.type.bodySmall, c.textMuted)
+            },
             onConfirm = {
-                if (target != null && associationValid) {
+                val latest = destinationId?.let { state.fleet.printers[it] }
+                if (unknown && latest === entry && entry != null) {
+                    p.choosePrinter(destinationId)
+                } else if (target != null && (destinationId == null || latest?.config?.identity?.profileId == target.id)) {
                     val availableIds = FilamentLibrary.forProfile(target.id).mapTo(linkedSetOf()) { it.id }
+                    val compatible = p.manualSlots.mapNotNull { slot ->
+                        slot.filamentProfile?.takeIf { slot.slot <= target.tools && it in availableIds }
+                            ?.let { slot.slot to it }
+                    }.toMap()
                     p.switchWorkspaceMachine(SlicingSetup(target.id, target.name, toolheads = target.tools,
-                        installedFilamentProfiles = availableIds), destinationId)
+                        filamentProfiles = compatible, installedFilamentProfiles = availableIds), destinationId)
                 }
                 pending = null
             },
@@ -1564,10 +1585,13 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
         Row(Modifier.fillMaxWidth().height(28.dp).clip(RoundedCornerShape(6.dp)).background(c.surfaceSunken)
             .border(1.dp, if (open) c.focus else c.line, RoundedCornerShape(6.dp))
             .clickable(onClickLabel = "Choose printer or machine profile") { open = !open }
-            .padding(horizontal = 8.dp).semantics { testTag = "setup-printer" },
+            .padding(horizontal = 8.dp).semantics {
+                testTag = "setup-printer"
+                contentDescription = "Printer: $printerName"
+                role = Role.DropdownList
+            },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Txt(p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel(),
-                Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
+            Txt(printerName, Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
             Txt("▾", Nz.type.bodySmall, c.textMuted)
         }
         if (open) Popup(
@@ -1588,8 +1612,8 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                     state.fleet.order.value.mapNotNull { state.fleet.printers[it]?.config?.identity }.forEach { printer ->
                         PrinterPickerOption(printer.displayName, p.printerId == printer.id, "saved-printer-${printer.id}") {
                             val associated = printer.profileId?.let(ProfileCatalog::byId)
-                            if (associated != null && associated.id != p.profileId) {
-                                pending = printer.id to associated.id
+                            if (printer.id != p.printerId && associated?.id != p.profileId) {
+                                pending = printer.id to associated?.id
                             } else {
                                 p.choosePrinter(printer.id)
                             }

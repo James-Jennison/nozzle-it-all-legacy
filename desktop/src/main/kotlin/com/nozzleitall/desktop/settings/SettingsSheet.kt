@@ -598,13 +598,16 @@ fun DenseInput(value: String, onChange: (String) -> Unit, label: String, modifie
 }
 
 @Composable
-fun DenseSelect(label: String, choices: List<Choice>, value: String, modifier: Modifier, enabled: Boolean = true, onSelect: (String) -> Unit) {
+fun DenseSelect(
+    label: String, choices: List<Choice>, value: String, modifier: Modifier, enabled: Boolean = true,
+    labelLines: Int = 1, onSelect: (String) -> Unit,
+) {
     val c = Nz.colors
     var open by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(6.dp)
     val selectedLabel = choices.firstOrNull { it.value == value }?.label ?: value
     Box(modifier) {
-        Row(Modifier.fillMaxWidth().height(28.dp).clip(shape).background(c.surfaceSunken).border(1.dp, if (open) c.focus else c.line, shape)
+        Row(Modifier.fillMaxWidth().height(if (labelLines == 1) 28.dp else 48.dp).clip(shape).background(c.surfaceSunken).border(1.dp, if (open) c.focus else c.line, shape)
             .semantics {
                 contentDescription = "$label, $selectedLabel"
                 stateDescription = if (open) "Expanded" else "Collapsed"
@@ -618,7 +621,7 @@ fun DenseSelect(label: String, choices: List<Choice>, value: String, modifier: M
             }
             .focusable(enabled)
             .clickable(enabled = enabled, onClickLabel = "Choose $label") { open = !open }.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Txt(selectedLabel, Nz.type.bodySmall, if (enabled) c.text else c.textMuted, modifier = Modifier.weight(1f), maxLines = 1)
+            Txt(selectedLabel, Nz.type.bodySmall, if (enabled) c.text else c.textMuted, modifier = Modifier.weight(1f), maxLines = labelLines)
             Txt("▾", Nz.type.bodySmall, c.textMuted)
         }
         if (open && enabled) Popup(offset = androidx.compose.ui.unit.IntOffset(0, with(androidx.compose.ui.platform.LocalDensity.current) { 30.dp.roundToPx() }),

@@ -596,7 +596,6 @@ class PrepareState(private val app: AppState) {
     /** Choosing a physical destination never changes the independently installed slicing configuration. */
     fun choosePrinter(id: String?) {
         if (printerId == id) return
-        headProfiles.clear()
         printerId = id
         changed()
     }
@@ -612,7 +611,10 @@ class PrepareState(private val app: AppState) {
     }
 
     /** Filament profiles chosen on slots of a printer that reports what's loaded (slot → library id). */
-    val headProfiles = androidx.compose.runtime.mutableStateMapOf<Int, String>()
+    private val destinationHeadProfiles = mutableMapOf<Pair<String?, String>, androidx.compose.runtime.snapshots.SnapshotStateMap<Int, String>>()
+    val headProfiles get() = destinationHeadProfiles.getOrPut(printerId to profileId) {
+        androidx.compose.runtime.mutableStateMapOf()
+    }
 
     /** The filament profiles this printer profile can slice with, one per slot. */
     fun filamentLibrary(): List<FilamentLibrary.Entry> {
@@ -1025,7 +1027,8 @@ class PrepareState(private val app: AppState) {
         bedType = null; nozzleFlows.clear(); nozzle = null; processId = null
         presetSnapshot = null; presetSnapshotProblem = null
         machineCache = null
-        overrides.clear(); mixed.clear(); mixedSettings = emptyMap(); mixSublayers = true; mixProblem = null; headProfiles.clear()
+        overrides.clear(); mixed.clear(); mixedSettings = emptyMap(); mixSublayers = true; mixProblem = null; destinationHeadProfiles.clear()
+        printerId = null
         items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap()
         plateNames.clear(); plateNames += "Plate 1"; plateIds.clear(); plateIds += UUID.randomUUID().toString(); currentPlate = 0
         showPlateOverview = false
@@ -1107,6 +1110,7 @@ class PrepareState(private val app: AppState) {
                 k != "nozzle_volume_type" && preset.overrides[k] != v }.forEach { (k, v) -> overrides[k] = v }
         }
         // The project's slots: what a printer doesn't report comes back as saved (colour, material, filament profile).
+        printerId = p.manifest?.printer?.printerId?.takeIf { it in app.fleet.printers }
         val savedMaterials = p.manifest?.materials.orEmpty()
         val conflictingReaderTags = savedMaterials.filter { !it.fromTag && SpoolReader.owns(it.spoolId) }
             .groupingBy { it.spoolId }.eachCount().filterValues { it > 1 }.keys
@@ -1121,7 +1125,6 @@ class PrepareState(private val app: AppState) {
             }
             m.filamentProfile?.let { headProfiles[m.slot] = it }
         }
-        p.manifest?.printer?.printerId?.takeIf { it in app.fleet.printers }?.let { printerId = it }
         presetSnapshot?.let { saved ->
             if (!saved.appliesTo(profileId, bundledProfileDir())) {
                 presetSnapshotProblem = "The saved printer or process preset is unavailable in this app version. Review the current choices before slicing."

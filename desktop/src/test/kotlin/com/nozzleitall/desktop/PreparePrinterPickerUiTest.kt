@@ -54,7 +54,7 @@ class PreparePrinterPickerUiTest {
         val app = AppState(paths, scope)
         val u1 = PrinterIdentity("u1", "Snapmaker U1", "Snapmaker U1", PrinterFamily.PAXX_U1,
             "http://127.0.0.1:9", "snapmaker_u1")
-        val cc1Profile = ProfileCatalog.search("Centauri Carbon").first()
+        val cc1Profile = requireNotNull(ProfileCatalog.byId("elegoo_centauri_carbon_cosmos_afc"))
         val cc1 = PrinterIdentity("cc1", "CC1", "Elegoo CC1", PrinterFamily.KLIPPER, "http://127.0.0.1:9", cc1Profile.id)
         app.fleet.printers[u1.id] = PrinterEntry(PrinterConfig(u1, "paxx-lan"))
         app.fleet.printers[cc1.id] = PrinterEntry(PrinterConfig(cc1, "moonraker"))
@@ -98,6 +98,8 @@ class PreparePrinterPickerUiTest {
                 runOnIdle {
                     assertEquals(printer, app.prepare.printer()?.config?.identity)
                     assertEquals(printer.profileId, app.prepare.profileId)
+                    if (printer == u1) app.prepare.headProfiles[1] = "fixture-u1-slot"
+                    else assertEquals(null, app.prepare.headProfiles[1])
                 }
             }
             openPicker()
@@ -136,6 +138,10 @@ class PreparePrinterPickerUiTest {
             runOnIdle {
                 assertEquals(u1.id, app.prepare.printerId)
                 assertEquals(u1.profileId, app.prepare.profileId)
+                assertEquals("fixture-u1-slot", app.prepare.headProfiles[1])
+                app.prepare.newProject()
+                assertEquals(null, app.prepare.printerId)
+                assertEquals(emptyMap<Int, String>(), app.prepare.headProfiles)
             }
         } finally {
             scope.cancel()
