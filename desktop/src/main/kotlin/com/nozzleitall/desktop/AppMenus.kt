@@ -153,6 +153,7 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Rotate view left") { p.camera.yaw -= 90f },
             MenuAction("Rotate view right") { p.camera.yaw += 90f },
             MenuAction("Centre view") { p.camera.pan = androidx.compose.ui.geometry.Offset.Zero },
+            MenuAction("Fit build plate", commandId = "fit-bed") { p.camera.fitView() },
         )),
         AppMenu("Go", Key.G, Destination.entries.filter { it.inDestinations }.map { d -> MenuAction(d.label, Shortcut(d.key, ctrl = true, text = "Ctrl+" + if (d.key == Key.Comma) "," else d.key.toString().removePrefix("Key: "))) { state.destination = d } }),
         AppMenu("Help", Key.H, listOf(

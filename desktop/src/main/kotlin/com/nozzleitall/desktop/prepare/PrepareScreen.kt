@@ -973,7 +973,7 @@ fun PrepareScreen(state: AppState) {
                         "Reset 3D view",
                         camera::reset,
                         testTag = "plate-reset-view",
-                        tooltip = "Reset 3D view · Drag to orbit · Shift-drag to pan · Scroll to zoom",
+                        tooltip = "Reset 3D view · Left-drag to orbit · Middle- or right-drag to pan · Scroll to zoom",
                     )
                 }
             }

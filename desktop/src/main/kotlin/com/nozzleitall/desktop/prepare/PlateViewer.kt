@@ -36,7 +36,8 @@ class ViewCamera {
     fun fitBed(width: Float, depth: Float) { fittedDistance = (maxOf(width, depth) * 1.9f).coerceIn(200f, 1500f); distance = fittedDistance }
     /** Continuous orbit through both poles and underneath; bounded angles avoid precision loss after many turns. */
     fun orbit(dx: Float, dy: Float) { yaw = (yaw - dx * 0.4f) % 360f; pitch = (pitch - dy * 0.3f) % 360f }
-    fun reset() { yaw = -35f; pitch = 55f; pan = Offset.Zero; distance = fittedDistance }
+    fun fitView() { pan = Offset.Zero; distance = fittedDistance }
+    fun reset() { yaw = -35f; pitch = 55f; fitView() }
     internal fun snapshot() = CameraPose(yaw, pitch, distance, pan)
 }
 
@@ -314,7 +315,7 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
     Box(modifier) {
     Canvas(Modifier.matchParentSize().onSizeChanged { dimensions=it }.semantics { contentDescription = if (preview != null) "Layer preview, layer ${previewLayer + 1} of ${preview.layers.size}" else "Build plate with ${objects.size} objects. ${transformTool.label} tool selected. ${if (transformTool == TransformTool.MOVE) "Drag an object to move it" else "Drag the visible ${transformTool.label.lowercase()} handle"}, drag empty space to orbit, scroll to zoom." }
         .pointerInput(camera, preview != null,bedW,bedD,dimensions,transformTool) { awaitPointerEventScope {
-            // Left-drag orbits; right-drag or Shift+drag pans.
+            // Left-drag orbits. Middle-drag, right-drag and Shift-drag pan.
             var last: Offset? = null
             val strokes = ArrayList<PaintRay>()
             var strokeMesh: Mesh? = null; var strokeInput: PaintInput? = null
@@ -330,7 +331,7 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
                 // Read the live state, not a composition-captured image which
                 // might already have been replaced/closed before recomposition.
                 val frame=rendered?.takeIf { it.ticket.request.sameSource(requestRef.value) && it.ticket.request.width==size.width && it.ticket.request.height==size.height }
-                val painting = paintRef.value?.takeIf { !ev.buttons.isSecondaryPressed && !ev.keyboardModifiers.isShiftPressed && !ev.keyboardModifiers.isAltPressed }
+                val painting = paintRef.value?.takeIf { !ev.buttons.isSecondaryPressed && !ev.buttons.isTertiaryPressed && !ev.keyboardModifiers.isShiftPressed && !ev.keyboardModifiers.isAltPressed }
                 if (painting != null && (ch.pressed || strokes.isNotEmpty())) {
                     // Painting: the left button lays a stroke on the selected object (Alt-drag orbits, Shift-drag pans).
                     val target = frame?.ticket?.request?.scene?.prepared?.firstOrNull { (o, _) -> o.id == painting.objectId }
@@ -390,7 +391,7 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
                 }
                 if (ev.type == PointerEventType.Move && ch.pressed && prev != null) {
                     val d = ch.position - prev
-                    if (ev.buttons.isSecondaryPressed || ev.keyboardModifiers.isShiftPressed) camera.pan += d
+                    if (ev.buttons.isSecondaryPressed || ev.buttons.isTertiaryPressed || ev.keyboardModifiers.isShiftPressed) camera.pan += d
                     else if (!modifierClick) { camera.orbit(d.x, d.y); preparationDiagnostic("orbit-input", objectsRef.value.size);frameDiagnostic("orbit-input") }
                 }
                 if (!ch.pressed && primaryPress) {
