@@ -141,7 +141,7 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         require(item.projectRevision == null || item.projectRevision > 0)
         require(item.plateId == null || item.projectId != null)
         require(item.draftPlateId == null || (item.projectId == null && item.plateId == null &&
-            runCatching { UUID.fromString(item.draftPlateId) }.isSuccess))
+            runCatching { UUID.fromString(item.draftPlateId) }.isSuccess)) { "Invalid draft plate identity." }
         require(!item.pendingLink || (item.jobId == null && item.artifactId == null))
         require(!item.startUncertain || (!item.pendingLink && item.jobId != null && item.startPrinterId != null))
         require(item.startPrinterId == null || item.startUncertain)

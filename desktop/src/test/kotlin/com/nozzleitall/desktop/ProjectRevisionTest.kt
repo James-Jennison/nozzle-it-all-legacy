@@ -71,6 +71,28 @@ class ProjectRevisionTest {
         }
     }
 
+    @Test fun importedPlateIdentityCanBeQueuedAsAStableDraft() {
+        val root = Files.createTempDirectory("draft-plate-identity").toFile()
+        val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val app = AppState(paths, scope)
+        try {
+            val prepare = app.prepare
+            val imported = "imported-plate-1"
+            val draft = prepare.draftQueuePlateId(imported)
+            val gcode = File(root, "fixture.gcode").apply { writeText("G28\n") }
+            val queued = app.fleet.enqueue("Fixture", gcode, null, emptyList(), draftPlateId = draft)
+            assertEquals(draft, queued.draftPlateId)
+            assertEquals(draft, prepare.draftQueuePlateId(imported))
+            prepare.newProject()
+            assertNotEquals(draft, prepare.draftQueuePlateId(imported))
+        } finally {
+            scope.cancel()
+            app.fleet.shutdown()
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun replacingProjectClearsPriorMachineMaterialsAndBatchResults() {
         val root = Files.createTempDirectory("fresh-project-materials").toFile()
         val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()

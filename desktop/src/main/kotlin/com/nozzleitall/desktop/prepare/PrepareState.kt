@@ -133,6 +133,7 @@ class PrepItem(val id: Int, name: String, val mesh: Mesh, x: Float, y: Float, ro
 
 data class SlicedPlateContext(
     val plateId: String,
+    val draftQueueId: String,
     val plateName: String,
     val machine: String,
     val nozzles: String,
@@ -528,6 +529,10 @@ class PrepareState(private val app: AppState) {
     // --- Plates (Orca's plate list): names in order, the one shown, and the objects on it.
     val plateNames = androidx.compose.runtime.mutableStateListOf("Plate 1")
     val plateIds = androidx.compose.runtime.mutableStateListOf(UUID.randomUUID().toString())
+    private var draftSessionId = UUID.randomUUID()
+
+    internal fun draftQueuePlateId(plateId: String): String =
+        UUID.nameUUIDFromBytes("$draftSessionId:$plateId".toByteArray(Charsets.UTF_8)).toString()
     var currentPlate by mutableStateOf(0)
     var showPlateOverview by mutableStateOf(false)
     fun plateItems(plate: Int = currentPlate): List<PrepItem> = items.filter { it.plate == plate }
@@ -1111,6 +1116,7 @@ class PrepareState(private val app: AppState) {
 
     fun newProject() {
         invalidateSlice()
+        draftSessionId = UUID.randomUUID()
         manualSlots.clear()
         manualSlots.addAll(defaultMaterialSlots)
         bedType = null; nozzleFlows.clear(); nozzle = null; processId = null
@@ -2186,6 +2192,7 @@ class PrepareState(private val app: AppState) {
         val saved = manifest?.takeIf { !dirty }
         val selectedProfileId = profileId
         val calibrationAtStart = calibration
+        val draftIds = plates.associate { plateIds[it] to draftQueuePlateId(plateIds[it]) }
         val machineLabel = slicingMachineLabel
         val nozzleLabel = nozzleToolheadLabel
         val surfaceLabel = effectiveBedType()
@@ -2241,7 +2248,7 @@ class PrepareState(private val app: AppState) {
                                 SliceState.Done(outcome.copy(inputSha256 = completeInput), preview,
                                     saved?.projectId, saved?.revision, id.takeIf { saved != null }, selectedProfileId,
                                     input.materials.sortedBy { it.slot },
-                                    SlicedPlateContext(id, plateName, machineLabel, nozzleLabel, surfaceLabel))
+                                    SlicedPlateContext(id, draftIds.getValue(id), plateName, machineLabel, nozzleLabel, surfaceLabel))
                             }
                             is SliceOutcome.Failed -> SliceState.Failed(outcome.message)
                             SliceOutcome.Cancelled -> SliceState.Cancelled

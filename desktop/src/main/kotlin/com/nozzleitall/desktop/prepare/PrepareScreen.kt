@@ -1273,7 +1273,7 @@ private fun RowScope.WorkspaceProjectControls(state: AppState) {
         "Save project",
         { runCatching { p.save() }.onFailure { p.notice = "Couldn't save: ${it.message}" } },
         kind = if (p.dirty) ButtonKind.SECONDARY else ButtonKind.QUIET,
-        enabled = p.items.isNotEmpty(),
+        enabled = p.dirty || p.file != null,
         testTag = "save-project",
         tooltip = "Save project · Ctrl+S",
     )
@@ -2061,9 +2061,9 @@ private fun SendDrawer(
                 state.fleet.enqueue(p.name, s.result.printFile, printer?.config?.identity?.id, toolMap,
                     s.savedProjectId, s.savedProjectRevision, s.savedPlateId, s.targetProfileId,
                     s.result.engineSha256, s.result.inputSha256,
-                    draftPlateId = s.plateContext?.plateId?.takeIf { s.savedProjectId == null }, materialPlan = s.materialPlan)
+                    draftPlateId = s.plateContext?.draftQueueId?.takeIf { s.savedProjectId == null }, materialPlan = s.materialPlan)
             }.onSuccess { p.notice = "Added to the print queue on the Jobs page." }
-                .onFailure { p.notice = "Queue records need recovery: ${it.message}" }
+                .onFailure { p.notice = "Couldn't add the prepared file to Jobs: ${it.message ?: "Unknown queue error."}" }
         }, kind = ButtonKind.QUIET, enabled = outside.isEmpty(), testTag = "add-to-queue")
     }
 }
@@ -3220,7 +3220,8 @@ private fun SendPanel(state: AppState) {
     val sendIdentity = PreparedSendIdentity(entry.config.identity.id, preparedDigest,
         done.savedProjectId, done.savedProjectRevision, done.savedPlateId, done.targetProfileId,
         done.result.inputSha256, done.result.engineSha256,
-        if (done.savedProjectId == null) done.plateContext?.plateId ?: p.plateIds.getOrNull(p.currentPlate) else null)
+        if (done.savedProjectId == null) done.plateContext?.draftQueueId
+            ?: p.plateIds.getOrNull(p.currentPlate)?.let(p::draftQueuePlateId) else null)
     fun sameQueued(item: com.nozzleitall.desktop.queue.QueueItem) = isSameQueuedPrint(item, sendIdentity)
     val alreadyQueued = state.fleet.queue.value.any(::sameQueued)
     val uncertainDuplicate = done.savedProjectId == null && state.fleet.queue.value.any { item ->
