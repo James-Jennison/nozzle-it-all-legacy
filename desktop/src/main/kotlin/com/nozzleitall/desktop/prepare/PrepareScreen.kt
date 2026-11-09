@@ -783,7 +783,7 @@ fun PrepareScreen(state: AppState) {
                 }
             }
             if (p.showPreview && done?.preview != null && drawer != Drawer.SEND) Column(
-                Modifier.align(Alignment.TopStart).padding(12.dp).padding(end = previewZWidth)
+                Modifier.align(Alignment.TopEnd).padding(12.dp).padding(end = previewZWidth)
                     .heightIn(max = minOf(compactPreviewOverlayMaxHeight(maxHeight),
                         (maxHeight - previewFooterHeight - 12.dp).coerceAtLeast(0.dp)))
                     .clipToBounds().verticalScroll(rememberScrollState()),
@@ -1122,19 +1122,16 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
     val showsTimeBreakdown = view == PreviewView.LINE_TYPE || view == PreviewView.TOOL
     val baseLegendWidth = if (Nz.textScale >= 1.5f) 390.dp else 300.dp
     val legendWidth = baseLegendWidth + if (showsTimeBreakdown) 40.dp else 0.dp
-    val width = when {
-        expanded -> Modifier.width(overlayWidth ?: legendWidth)
-        else -> Modifier.widthIn(max = overlayWidth ?: legendWidth)
-    }
-    Column(width.clip(shape).background(c.surface.copy(alpha = 0.94f)).border(1.dp, c.line, shape)
-        .padding(if (expanded) 10.dp else 5.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.width(overlayWidth ?: legendWidth).clip(shape)
+        .background(c.surface.copy(alpha = 0.94f)).border(1.dp, c.line, shape)
+        .padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         var viewMenuOpen by remember { mutableStateOf(false) }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Box(if (expanded) Modifier.weight(1f) else Modifier) {
+            Box(Modifier.weight(1f)) {
                 NzButton(
                     "Colour by ${view.label}  ▾",
                     { viewMenuOpen = !viewMenuOpen },
-                    if (expanded) Modifier.fillMaxWidth() else Modifier,
+                    Modifier.fillMaxWidth(),
                     kind = ButtonKind.SECONDARY,
                     testTag = "preview-view-selector",
                     accessibilityDescription = "Preview colour: ${view.label}",
@@ -1151,7 +1148,11 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                             Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(7.dp))
                                     .background(if (on) c.accent.copy(alpha = 0.16f) else Color.Transparent)
-                                    .selectable(on, enabled = available, role = Role.RadioButton) { p.previewView = choice; viewMenuOpen = false }
+                                    .selectable(on, enabled = available, role = Role.RadioButton) {
+                                        p.previewView = choice
+                                        viewMenuOpen = false
+                                        showDetails = true
+                                    }
                                     .padding(horizontal = 10.dp, vertical = 8.dp)
                                     .semantics { testTag = "preview-view-${choice.name.lowercase()}" },
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1174,69 +1175,77 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
             }
         }
         if (!expanded) return@Column
-        val detailSize = if (overlayHeight == null) Modifier
-            else Modifier.heightIn(max = overlayHeight).verticalScroll(rememberScrollState())
-        Column(detailSize.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val usage = if (showsTimeBreakdown) preview.usage else null
-            if (showsTimeBreakdown) Row(
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Spacer(Modifier.width(12.dp))
-                Txt("Type", Nz.type.bodySmall, c.textMuted, modifier = Modifier.weight(1f), maxLines = 1)
-                Txt("Time", Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                Txt("%", Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                Txt(if (preview.plannerBacked) "Filament" else "Path", Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                Spacer(Modifier.width(18.dp))
-            }
-            fun entry(colour: Color, label: String, metrics: GcodePreview.Usage, visible: Boolean, toggle: () -> Unit) = @Composable {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(colour))
-                    Txt(label, Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
-                    Txt(formatDuration(metrics.seconds, includeSeconds = true), Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                    val total = requireNotNull(usage).total
-                    val totalMm = if (preview.plannerBacked) total.filamentMm else total.pathMm
-                    val mm = if (preview.plannerBacked) metrics.filamentMm else metrics.pathMm
-                    val percent = if (totalMm > 0.0) mm / totalMm * 100.0 else 0.0
-                    Txt("${percent.toInt()}%", Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                    Txt(if (mm >= 1000f) "%.1fm".format(mm / 1000f) else "%.0fmm".format(mm), Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                    Txt(if (visible) "●" else "○", Nz.type.label, if (visible) c.accent else c.textMuted,
-                        modifier = Modifier.clip(CircleShape).clickable(onClickLabel = if (visible) "Hide $label" else "Show $label") { toggle() }.padding(3.dp))
+        val scroll = rememberScrollState()
+        val detailSize = if (overlayHeight == null) Modifier else Modifier.heightIn(max = overlayHeight)
+        Box(detailSize.fillMaxWidth()) {
+            val scrollable = if (overlayHeight == null) Modifier else Modifier.padding(end = 8.dp).verticalScroll(scroll)
+            Column(scrollable.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val usage = if (showsTimeBreakdown) preview.usage else null
+                if (showsTimeBreakdown) Row(
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Spacer(Modifier.width(12.dp))
+                    Txt("Type", Nz.type.bodySmall, c.textMuted, modifier = Modifier.weight(1f), maxLines = 1)
+                    Txt("Time", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                    Txt("%", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                    Txt(if (preview.plannerBacked) "Filament" else "Path", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                    Spacer(Modifier.width(18.dp))
                 }
-            }
-            when (view) {
-                PreviewView.SUMMARY -> {
-                    MappingValue("Est. time", formatDuration(stats.seconds))
-                    MappingValue("Filament", listOfNotNull(stats.metres?.let { "%.2f m".format(it) },
-                        stats.grams?.let { "%.2f g".format(it) }).joinToString(" · ").ifBlank { "Unavailable" })
-                    MappingValue("Layers", "${preview.layers.size}")
-                    MappingValue("Tool changes", "${stats.toolChanges}")
-                }
-                PreviewView.LINE_TYPE -> preview.kindsUsed.forEach { k ->
-                    val f = GcodePreview.FEATURES.getOrNull(k)
-                    entry(Color(f?.second ?: 0xFF8C8C8C), f?.first ?: "Other", requireNotNull(usage).byKind.getValue(k),
-                        k !in p.previewHiddenKinds) {
-                        if (k in p.previewHiddenKinds) p.previewHiddenKinds.remove(k) else p.previewHiddenKinds.add(k)
-                    }()
-                }
-                PreviewView.TOOL -> preview.toolsUsed.forEach { t ->
-                    val slot = slots.getOrNull(t)
-                    val profileName = slot?.filamentProfile?.let { id -> p.filamentLibrary().firstOrNull { it.id == id }?.name }
-                    entry(parseHex(slot?.colorHex) ?: c.accent, "${t + 1} · " + (profileName ?: slot?.type ?: "Filament"),
-                        requireNotNull(usage).byTool.getValue(t), t !in p.previewHiddenTools) {
-                        if (t in p.previewHiddenTools) p.previewHiddenTools.remove(t) else p.previewHiddenTools.add(t)
-                    }()
-                }
-                else -> {
-                    val (lo, hi) = preview.valueRange(view)
-                    Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(
-                        androidx.compose.ui.graphics.Brush.horizontalGradient((0..8).map { Color(GcodePreview.speedColour(it / 8f)) })))
-                    Row {
-                        Txt("${"%.2f".format(lo)} ${view.units}".trim(), Nz.type.bodySmall, c.textMuted, modifier = Modifier.weight(1f))
-                        Txt("${"%.2f".format(hi)} ${view.units}".trim(), Nz.type.bodySmall, c.textMuted)
+                fun entry(colour: Color, label: String, metrics: GcodePreview.Usage, visible: Boolean, toggle: () -> Unit) = @Composable {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(colour))
+                        Txt(label, Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
+                        Txt(formatDuration(metrics.seconds, includeSeconds = true), Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                        val total = requireNotNull(usage).total
+                        val totalMm = if (preview.plannerBacked) total.filamentMm else total.pathMm
+                        val mm = if (preview.plannerBacked) metrics.filamentMm else metrics.pathMm
+                        val percent = if (totalMm > 0.0) mm / totalMm * 100.0 else 0.0
+                        Txt("${percent.toInt()}%", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                        Txt(if (mm >= 1000f) "%.1fm".format(mm / 1000f) else "%.0fmm".format(mm), Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                        Txt(if (visible) "●" else "○", Nz.type.label, if (visible) c.accent else c.textMuted,
+                            modifier = Modifier.clip(CircleShape).clickable(onClickLabel = if (visible) "Hide $label" else "Show $label") { toggle() }.padding(3.dp))
                     }
                 }
+                when (view) {
+                    PreviewView.SUMMARY -> {
+                        MappingValue("Est. time", formatDuration(stats.seconds))
+                        MappingValue("Filament", listOfNotNull(stats.metres?.let { "%.2f m".format(it) },
+                            stats.grams?.let { "%.2f g".format(it) }).joinToString(" · ").ifBlank { "Unavailable" })
+                        MappingValue("Layers", "${preview.layers.size}")
+                        MappingValue("Tool changes", "${stats.toolChanges}")
+                    }
+                    PreviewView.LINE_TYPE -> preview.kindsUsed.forEach { k ->
+                        val f = GcodePreview.FEATURES.getOrNull(k)
+                        entry(Color(f?.second ?: 0xFF8C8C8C), f?.first ?: "Other", requireNotNull(usage).byKind.getValue(k),
+                            k !in p.previewHiddenKinds) {
+                            if (k in p.previewHiddenKinds) p.previewHiddenKinds.remove(k) else p.previewHiddenKinds.add(k)
+                        }()
+                    }
+                    PreviewView.TOOL -> preview.toolsUsed.forEach { t ->
+                        val slot = slots.getOrNull(t)
+                        val profileName = slot?.filamentProfile?.let { id -> p.filamentLibrary().firstOrNull { it.id == id }?.name }
+                        entry(parseHex(slot?.colorHex) ?: c.accent, "${t + 1} · " + (profileName ?: slot?.type ?: "Filament"),
+                            requireNotNull(usage).byTool.getValue(t), t !in p.previewHiddenTools) {
+                            if (t in p.previewHiddenTools) p.previewHiddenTools.remove(t) else p.previewHiddenTools.add(t)
+                        }()
+                    }
+                    else -> {
+                        val (lo, hi) = preview.valueRange(view)
+                        Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(
+                            androidx.compose.ui.graphics.Brush.horizontalGradient((0..8).map { Color(GcodePreview.speedColour(it / 8f)) })))
+                        Row {
+                            Txt("${"%.2f".format(lo)} ${view.units}".trim(), Nz.type.bodySmall, c.textMuted, modifier = Modifier.weight(1f))
+                            Txt("${"%.2f".format(hi)} ${view.units}".trim(), Nz.type.bodySmall, c.textMuted)
+                        }
+                    }
+                }
+                if (overlayHeight != null) PreviewWarnings(preview)
             }
-            if (overlayHeight != null) PreviewWarnings(preview)
+            if (overlayHeight != null && scroll.maxValue > 0) VerticalScrollbar(
+                rememberScrollbarAdapter(scroll),
+                Modifier.align(Alignment.CenterEnd).height(overlayHeight).width(6.dp)
+                    .semantics { contentDescription = "Colour legend scroll bar" },
+            )
         }
     }
 }
