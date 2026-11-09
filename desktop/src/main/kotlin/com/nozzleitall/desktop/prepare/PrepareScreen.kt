@@ -1300,7 +1300,7 @@ private fun WorkspaceSetupStack(
             expanded = printerKey !in collapsed,
             onExpandedChange = { state.fleet.updateSettingGroupCollapsed(printerKey, !it) },
         ) {
-            MachineProfilePicker(p, Modifier.fillMaxWidth()) { setDrawer(Drawer.PRINTER) }
+            PrinterPicker(state, Modifier.fillMaxWidth())
             val beds = p.beds()
             if (beds.enabled && beds.choices.size > 1) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -1340,7 +1340,6 @@ private fun WorkspaceSetupStack(
             val connected = p.printer()
             val status = connected?.status?.value?.state
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
-                .clickable(onClickLabel = "Choose printer connection") { state.startPrinterSetup(autoScan = true) }
                 .padding(horizontal = 6.dp, vertical = 5.dp).semantics { testTag = "setup-connection" },
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(status?.let { Nz.status.forState(it.glossaryId) } ?: c.textMuted))
@@ -1463,20 +1462,18 @@ internal fun FoldedFilamentBadges(
 }
 
 @Composable
-private fun MachineProfilePicker(p: PrepareState, modifier: Modifier = Modifier, onManage: () -> Unit) {
+private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
+    val p = state.prepare
     val c = Nz.colors
     var open by remember { mutableStateOf(false) }
     val current = ProfileCatalog.byId(p.profileId)
-    val profiles = remember(p.profileId) {
-        (listOfNotNull(current) + ProfileCatalog.search("").filter { it.id != current?.id }.take(7)).distinctBy { it.id }
-    }
     Box(modifier) {
         Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(6.dp)).background(c.surfaceSunken)
             .border(1.dp, if (open) c.focus else c.line, RoundedCornerShape(6.dp))
-            .clickable(onClickLabel = "Choose machine profile") { open = !open }
+            .clickable(onClickLabel = "Choose printer or slicing profile") { open = !open }
             .padding(horizontal = 8.dp).semantics { testTag = "setup-printer" },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Txt("Model", Nz.type.bodySmall, c.textMuted,
+            Txt("Printer", Nz.type.bodySmall, c.textMuted,
                 modifier = Modifier.width(setupRowLabelWidth(Nz.textScale)), maxLines = 1)
             Txt(current?.let { "${it.vendor} · ${it.model}" } ?: p.slicingMachineLabel,
                 Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
@@ -1486,34 +1483,63 @@ private fun MachineProfilePicker(p: PrepareState, modifier: Modifier = Modifier,
             offset = androidx.compose.ui.unit.IntOffset(0, with(androidx.compose.ui.platform.LocalDensity.current) { 32.dp.roundToPx() }),
             onDismissRequest = { open = false }, properties = PopupProperties(focusable = true),
         ) {
+            var query by remember { mutableStateOf("") }
+            val profiles = remember(p.profileId, query) {
+                if (query.isBlank()) listOfNotNull(current) + ProfileCatalog.search("").filter { it.id != current?.id }.take(7)
+                else ProfileCatalog.search(query).take(20)
+            }
             Column(Modifier.width(320.dp).heightIn(max = 330.dp).clip(RoundedCornerShape(10.dp)).background(c.surfaceRaised)
-                .border(1.dp, c.lineStrong, RoundedCornerShape(10.dp)).verticalScroll(rememberScrollState()).padding(5.dp),
+                .border(1.dp, c.lineStrong, RoundedCornerShape(10.dp)).padding(5.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                profiles.forEach { profile ->
-                    val selected = profile.id == p.profileId
-                    Txt((if (selected) "✓  " else "") + "${profile.vendor} · ${profile.model}", Nz.type.bodySmall,
-                        if (selected) c.accent else c.text, maxLines = 1,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
-                            .background(if (selected) c.accent.copy(alpha = 0.14f) else Color.Transparent)
-                            .clickable {
-                                val available = FilamentLibrary.forProfile(profile.id)
-                                val availableIds = available.mapTo(linkedSetOf()) { it.id }
-                                val filaments = p.materials().mapNotNull { slot ->
-                                    slot.filamentProfile?.takeIf { it in availableIds }?.let { slot.slot to it }
-                                }.toMap()
-                                p.applySlicingSetup(SlicingSetup(profile.id, profile.name, toolheads = profile.tools,
-                                    filamentProfiles = filaments, installedFilamentProfiles = availableIds))
-                                open = false
-                            }.padding(horizontal = 10.dp, vertical = 7.dp))
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Txt("Saved printers", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                    state.fleet.order.value.mapNotNull { state.fleet.printers[it]?.config?.identity }.forEach { printer ->
+                        PrinterPickerOption(printer.displayName, p.printerId == printer.id, "saved-printer-${printer.id}") {
+                            p.choosePrinter(printer.id)
+                            open = false
+                        }
+                    }
+                    PrinterPickerOption("Export only", p.printer() == null, "saved-printer-export") {
+                        p.choosePrinter(null)
+                        open = false
+                    }
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
+                    Txt("Slicing profiles", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                    com.nozzleitall.desktop.settings.DenseInput(query, { query = it }, "Search slicing profiles",
+                        Modifier.fillMaxWidth(), placeholder = "Search slicing profiles")
+                    profiles.forEach { profile ->
+                        PrinterPickerOption("${profile.vendor} · ${profile.model}", profile.id == p.profileId,
+                            "slicing-profile-${profile.id}") {
+                            val available = FilamentLibrary.forProfile(profile.id)
+                            val availableIds = available.mapTo(linkedSetOf()) { it.id }
+                            val filaments = p.materials().mapNotNull { slot ->
+                                slot.filamentProfile?.takeIf { it in availableIds }?.let { slot.slot to it }
+                            }.toMap()
+                            p.applySlicingSetup(SlicingSetup(profile.id, profile.name, toolheads = profile.tools,
+                                filamentProfiles = filaments, installedFilamentProfiles = availableIds))
+                            open = false
+                        }
+                    }
                 }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
                 Txt("Add or remove printers…", Nz.type.bodySmall, c.accent,
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).clickable {
-                        open = false; onManage()
+                        open = false
+                        state.destination = Destination.FLEET
                     }.padding(horizontal = 10.dp, vertical = 8.dp))
             }
         }
     }
+}
+
+@Composable
+private fun PrinterPickerOption(label: String, selected: Boolean, tag: String, onSelect: () -> Unit) {
+    val c = Nz.colors
+    Txt((if (selected) "✓  " else "") + label, Nz.type.bodySmall, if (selected) c.accent else c.text,
+        maxLines = 1, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
+            .background(if (selected) c.accent.copy(alpha = 0.14f) else Color.Transparent)
+            .clickable(onClick = onSelect).semantics { testTag = tag }.padding(horizontal = 10.dp, vertical = 7.dp))
 }
 
 @Composable
