@@ -193,6 +193,36 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         cancelProjectReplacement()
         action()
     }
+    internal var droppedProject by mutableStateOf<File?>(null)
+    internal var gcodeInspection by mutableStateOf<File?>(null)
+
+    internal fun openWorkspaceProject(file: File) {
+        runCatching { prepare.open(file) }
+            .onSuccess { returnToWorkspace(preview = false) }
+            .onFailure { prepare.notice = it.message ?: "The project could not be opened." }
+    }
+
+    internal fun importWorkspaceModels(files: List<File>) {
+        val problems = files.mapNotNull { file ->
+            runCatching { prepare.importModel(file) }.exceptionOrNull()?.let { "${file.name}: ${it.message}" }
+        }
+        returnToWorkspace(preview = false)
+        if (problems.isNotEmpty()) prepare.notice = problems.joinToString("\n")
+    }
+
+    internal fun receiveWorkspaceDrop(files: List<File>) {
+        if (pendingProjectAction != null || pendingMachineSelection != null || droppedProject != null || gcodeInspection != null) return
+        when {
+            files.size == 1 && files.single().extension.equals("3mf", true) -> droppedProject = files.single()
+            files.size == 1 && files.single().extension.equals("gcode", true) -> gcodeInspection = files.single()
+            files.size in 1..32 && files.all { it.extension.lowercase() in setOf("stl", "obj") } -> importWorkspaceModels(files)
+            else -> {
+                returnToWorkspace(preview = false)
+                prepare.notice = "Drop up to 32 STL or OBJ models together, or one 3MF project or G-code file at a time."
+            }
+        }
+    }
+
     internal var pendingMachineSelection by mutableStateOf<Pair<String?, String?>?>(null)
 
     internal fun requestWorkspacePrinter(id: String?) {
@@ -387,10 +417,15 @@ private fun runApp(open: List<File>) = application {
             if (osName.startsWith("Linux")) {
                 Toolkit.getDefaultToolkit().systemEventQueue.push(LinuxCloseEventQueue(window, closeWindow))
             }
+            val dropTarget = workspaceDropTarget(window, state::receiveWorkspaceDrop)
             val listener = com.nozzleitall.desktop.environment.DesktopMonitoringWindowListener(state.environment::foreground)
             state.environment.foreground(true)
             window.addWindowListener(listener)
-            onDispose { window.removeWindowListener(listener); state.environment.foreground(false) }
+            onDispose {
+                dropTarget.component = null
+                window.removeWindowListener(listener)
+                state.environment.foreground(false)
+            }
         }
         NozzleTheme(state.fleet.settings.value.theme, state.fleet.settings.value.textScale) {
             Column(Modifier.fillMaxSize()) {
@@ -418,6 +453,7 @@ private fun runApp(open: List<File>) = application {
 @Composable
 fun App(state: AppState) {
     WorkspaceMachineReview(state)
+    WorkspaceFiles(state)
     val c = Nz.colors
     Column(Modifier.fillMaxSize().background(c.background).semantics { paneTitle = state.destination.label }) {
         AppHeader(state)

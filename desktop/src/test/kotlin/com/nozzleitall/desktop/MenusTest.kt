@@ -159,6 +159,24 @@ class MenusTest {
         assertFalse(a.prepare.dirty)
     }
 
+    @Test fun dropping3mfOrGcodeLeavesCurrentProjectInPlaceUntilIntentIsChosen() {
+        val a = app()
+        a.prepare.addPlate()
+        val plateIds = a.prepare.plateIds.toList()
+        val dropped = File(a.paths.config, "model.3mf")
+        a.receiveWorkspaceDrop(listOf(dropped))
+        assertEquals(dropped, a.droppedProject)
+        assertEquals(plateIds, a.prepare.plateIds.toList())
+        assertTrue(a.prepare.dirty)
+
+        a.droppedProject = null
+        val gcode = File(a.paths.config, "fixture.gcode")
+        a.receiveWorkspaceDrop(listOf(gcode))
+        assertEquals(gcode, a.gcodeInspection)
+        assertEquals(plateIds, a.prepare.plateIds.toList())
+        assertTrue(a.fleet.queue.value.isEmpty())
+    }
+
     @Test fun calibrationMenuStartsATestPrintWithItsSettingsAndPostProcessing() {
         val a = app(); val p = a.prepare
         assertEquals(net.jamesjennison.klippercompanion.CalibrationKind.entries.map { it.label }, appMenus(a) {}.first { it.title == "Calibration" }.items.filterNotNull().map { it.label })

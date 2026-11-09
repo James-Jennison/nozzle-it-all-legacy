@@ -80,13 +80,15 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Projects…") { state.destination = Destination.PROJECTS },
             MenuAction("Open project…", ctrl(Key.O, "O")) {
                 chooseFiles("Open a project", listOf("3mf"), multiple = false).firstOrNull()?.let { f ->
-                    guarded { runCatching { p.open(f); state.destination = Destination.PREPARE }.onFailure(::report) }
+                    guarded { state.openWorkspaceProject(f) }
                 }
             },
-            *recentProjects(state).map { f -> MenuAction("Recent: " + f.nameWithoutExtension.take(40)) { guarded { runCatching { p.open(f); state.destination = Destination.PREPARE }.onFailure(::report) } } }.toTypedArray(),
+            *recentProjects(state).map { f -> MenuAction("Recent: " + f.nameWithoutExtension.take(40)) { guarded { state.openWorkspaceProject(f) } } }.toTypedArray(),
             MenuAction("Add model…", ctrl(Key.I, "I")) {
-                chooseFiles("Add a model", listOf("stl", "3mf", "obj")).forEach { f -> runCatching { p.importModel(f) }.onFailure(::report) }
-                state.destination = Destination.PREPARE
+                chooseFiles("Add a model", listOf("stl", "3mf", "obj")).takeIf { it.isNotEmpty() }?.let(state::importWorkspaceModels)
+            },
+            MenuAction("Inspect G-code…") {
+                chooseFiles("Inspect G-code", listOf("gcode"), multiple = false).firstOrNull()?.let { state.gcodeInspection = it }
             },
             null,
             MenuAction("Save", ctrl(Key.S, "S"), enabled = p.dirty || p.file != null) { runCatching { p.save() }.onFailure(::report) },
