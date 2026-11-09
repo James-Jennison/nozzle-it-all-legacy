@@ -60,7 +60,6 @@ class PreparePrinterPickerUiTest {
                 onNodeWithTag("saved-printer-cc1").assertIsDisplayed()
                 onNodeWithTag("saved-printer-${printer.id}").performClick()
                 onNodeWithTag("setup-printer").assertTextContains(printer.displayName)
-                onNodeWithTag("setup-slicing-profile").assertTextContains("Snapmaker U1")
                 runOnIdle {
                     assertEquals(printer, app.prepare.printer()?.config?.identity)
                     assertEquals(profile, app.prepare.profileId)
@@ -70,7 +69,7 @@ class PreparePrinterPickerUiTest {
             onNodeWithTag("saved-printer-cc1").assertIsSelected()
             onNodeWithTag("saved-printer-u1").assertIsNotSelected()
             onNodeWithTag("saved-printer-extra-14").performScrollTo().assertIsDisplayed()
-            val search = onNodeWithContentDescription("Search slicing profiles")
+            val search = onNodeWithContentDescription("Search machine profiles")
             search.performScrollTo().assertIsDisplayed().performTextInput("Centauri Carbon")
             val cc1Profile = ProfileCatalog.search("Centauri Carbon").first()
             onNodeWithTag("slicing-profile-${cc1Profile.id}").performScrollTo().assertIsDisplayed().performClick()
@@ -79,7 +78,6 @@ class PreparePrinterPickerUiTest {
                 assertEquals(cc1Profile.id, app.prepare.profileId)
             }
             onNodeWithTag("setup-printer").assertTextContains("CC1")
-            onNodeWithTag("setup-slicing-profile").assertTextContains(cc1Profile.model)
             openPicker()
             onNodeWithTag("saved-printer-export").performScrollTo().performClick()
             onNodeWithTag("setup-printer").assertTextContains("Export only")

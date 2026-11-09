@@ -1329,12 +1329,6 @@ private fun WorkspaceSetupStack(
                     }
                 }
             }
-            val profile = p.profile?.model ?: p.slicingMachineLabel
-            Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Txt("Slicing profile", Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                Txt(profile, Nz.type.bodySmall, modifier = Modifier.weight(1f).semantics { testTag = "setup-slicing-profile" }, maxLines = 1)
-            }
             val toolCount = (p.profile?.tools ?: slots.size.coerceAtLeast(1)).coerceAtLeast(1)
             val highFlow = runCatching { PrinterSetup.supportsHighFlow(p.machineJson()) }.getOrDefault(false)
             (1..toolCount).chunked(2).forEach { tools ->
@@ -1513,7 +1507,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
     Box(modifier) {
         Row(Modifier.fillMaxWidth().height(28.dp).clip(RoundedCornerShape(6.dp)).background(c.surfaceSunken)
             .border(1.dp, if (open) c.focus else c.line, RoundedCornerShape(6.dp))
-            .clickable(onClickLabel = "Choose printer or slicing profile") { open = !open }
+            .clickable(onClickLabel = "Choose printer or machine profile") { open = !open }
             .padding(horizontal = 8.dp).semantics { testTag = "setup-printer" },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Txt(p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel(),
@@ -1535,8 +1529,6 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Txt("Saved printers", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
-                    Txt("Choose a matching slicing profile separately.", Nz.type.bodySmall, c.textMuted,
-                        Modifier.padding(horizontal = 10.dp, vertical = 3.dp))
                     state.fleet.order.value.mapNotNull { state.fleet.printers[it]?.config?.identity }.forEach { printer ->
                         PrinterPickerOption(printer.displayName, p.printerId == printer.id, "saved-printer-${printer.id}") {
                             p.choosePrinter(printer.id)
@@ -1548,9 +1540,9 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                         open = false
                     }
                     Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
-                    Txt("Slicing profiles", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
-                    com.nozzleitall.desktop.settings.DenseInput(query, { query = it }, "Search slicing profiles",
-                        Modifier.fillMaxWidth(), placeholder = "Search slicing profiles")
+                    Txt("Machine profiles", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                    com.nozzleitall.desktop.settings.DenseInput(query, { query = it }, "Search machine profiles",
+                        Modifier.fillMaxWidth(), placeholder = "Search machine profiles")
                     profiles.forEach { profile ->
                         PrinterPickerOption("${profile.vendor} · ${profile.model}", profile.id == p.profileId,
                             "slicing-profile-${profile.id}") {
