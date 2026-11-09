@@ -285,6 +285,8 @@ fun HistoryScreen(state: AppState) {
         // a useful picker or reprint target, and duplicates the result in a cramped row.
         if (orphanedRecord != null) return@Column
         reprintReview?.takeIf { entry != null }?.let { (previous, candidate) ->
+            val printer = requireNotNull(entry)
+            val mismatch = com.nozzleitall.desktop.printerProfileMismatch(candidate.targetProfileId, printer.config.identity.profileId)
             Card(Modifier.fillMaxWidth()) {
                 Txt("Review reprint", Nz.type.title)
                 Txt("A new job will use the retained prepared file. Nothing starts until you review its queue entry and explicitly choose Start.", Nz.type.bodySmall, c.textMuted)
@@ -292,6 +294,8 @@ fun HistoryScreen(state: AppState) {
                 Txt("Project: ${candidate.projectId ?: "not recorded"} · revision ${candidate.projectRevision ?: "not recorded"}", Nz.type.bodySmall)
                 Txt("Printer profile: ${candidate.targetProfileId ?: "not recorded"} → ${entry.config.identity.profileId ?: "not reported"}", Nz.type.bodySmall)
                 Txt("Material, spool, and toolhead assignments: previous not recorded → check the printer's current setup before Start", Nz.type.bodySmall)
+                if (mismatch) Banner("This file was sliced for a different machine profile. Open the project to slice for this printer.", BannerKind.DANGER)
+                AssociatePrinterProfile(state, printer, candidate.targetProfileId)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     NzButton("Add reprint to queue", {
                         runCatching {
@@ -301,7 +305,7 @@ fun HistoryScreen(state: AppState) {
                                 candidate.inputDigest, candidate.sourceJobId)
                         }.onSuccess { reprintReview = null; state.destination = Destination.JOBS }
                             .onFailure { reprintProblem = "Reprint could not be queued: ${it.message}" }
-                    }, kind = ButtonKind.PRIMARY, testTag = "reprint-queue")
+                    }, kind = ButtonKind.PRIMARY, enabled = !mismatch, testTag = "reprint-queue")
                     NzButton("Cancel review", { reprintReview = null }, kind = ButtonKind.QUIET)
                 }
             }

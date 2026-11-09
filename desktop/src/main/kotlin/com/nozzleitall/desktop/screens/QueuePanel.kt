@@ -180,6 +180,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
                 if (flow != null) NzButton("Check printer", { state.scope.launch(Dispatchers.Main) { flow.reconcile() } }, kind = ButtonKind.SECONDARY)
             }
             if (item.sha256 == null) Txt("This older queued file has no integrity digest. Requeue it before starting.", Nz.type.bodySmall, c.textMuted)
+            if (unknownPrinterProfile && candidate != null) AssociatePrinterProfile(state, candidate, item.targetProfileId)
             if (profileMismatch) Txt("This job was sliced for ${item.targetProfileId}, not this printer's ${candidate?.config?.identity?.profileId}. Choose a matching printer or slice again.", Nz.type.bodySmall, c.danger)
             materialChecks.filter { it.blocks }.forEach { Banner(it.message, BannerKind.DANGER) }
             if (candidate != null && flow != null) NzButton(

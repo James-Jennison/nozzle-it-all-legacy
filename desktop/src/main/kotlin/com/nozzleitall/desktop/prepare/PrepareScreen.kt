@@ -1374,11 +1374,14 @@ private fun WorkspaceSetupStack(
                 NzIconButton(NzIcon.SETTINGS, "Edit machine preset and nozzle types",
                     { setDrawer(Drawer.PRINTER) })
             }
-            connected?.config?.identity?.let { identity ->
+            connected?.let { printer ->
+                val identity = printer.config.identity
                 val association = identity.profileId
                 when {
-                    association == null || ProfileCatalog.byId(association) == null ->
+                    association == null || ProfileCatalog.byId(association) == null -> {
                         Txt("Printer profile unknown. Verify the machine profile before sending.", Nz.type.bodySmall, c.textMuted)
+                        com.nozzleitall.desktop.screens.AssociatePrinterProfile(state, printer, p.profileId)
+                    }
                     association != p.profileId ->
                         Txt("Profile mismatch. Select ${ProfileCatalog.byId(association)?.model} for ${identity.displayName}.",
                             Nz.type.bodySmall, c.danger)
@@ -3230,7 +3233,10 @@ private fun SendPanel(state: AppState) {
         preflight.forEach { Banner(it.message, if (it.blocks) BannerKind.DANGER else BannerKind.WARNING) }
         bundleProblem?.let { Banner(it, BannerKind.DANGER) }
         if (profileMismatch) Banner("This file was sliced for ${done.targetProfileId}, but the printer reports ${entry.config.identity.profileId}. Choose a matching printer or slice again.", BannerKind.DANGER)
-        if (unknownProfile) Banner("The printer did not report a profile, so compatibility cannot be verified. Check its model and loaded materials before continuing.", BannerKind.WARNING)
+        if (unknownProfile) {
+            Banner("This connection has no linked machine profile. Check its model and loaded materials before continuing.", BannerKind.WARNING)
+            com.nozzleitall.desktop.screens.AssociatePrinterProfile(state, entry, done.targetProfileId)
+        }
         if (commandUnknown) Banner("The last printer command has an unknown outcome. Check the printer before sending another file.", BannerKind.DANGER)
         if (done.result.output !in caps.acceptedOutputs || (!caps.uploadJob && !caps.uploadAndStart))
             Banner("This connection cannot receive the prepared file format. Export the file and use a supported printer path.", BannerKind.DANGER)

@@ -316,3 +316,37 @@ fun EditPrinterDialog(state: AppState, entry: PrinterEntry, onDone: () -> Unit) 
         }
     }
 }
+
+
+/** The operator explicitly links a saved physical printer to the machine preset under review. */
+@Composable
+internal fun AssociatePrinterProfile(state: AppState, entry: PrinterEntry, profileId: String?) {
+    val profile = ProfileCatalog.byId(profileId) ?: return
+    if (entry.config.identity.profileId != null) return
+    val scope = rememberCoroutineScope()
+    var reviewing by remember(entry, profile.id) { mutableStateOf(false) }
+    var problem by remember(entry, profile.id) { mutableStateOf<String?>(null) }
+    NzButton("Link machine profile…", { reviewing = true }, enabled = state.fleet.canAssociatePrinterProfile(entry), testTag = "link-machine-profile")
+    problem?.let { Banner(it, BannerKind.WARNING) }
+    if (reviewing) ConfirmDialog(
+        title = "Link machine profile?",
+        body = "Link ${entry.config.identity.displayName} to ${profile.vendor} · ${profile.model}.",
+        detail = "Check that this is the physical printer and configuration you intend to use. The association is used when reviewing prepared files.",
+        acknowledgement = "I verified the printer matches this machine profile.",
+        confirmLabel = "Link profile",
+        destructive = false,
+        onConfirm = {
+            reviewing = false
+            scope.launch {
+                try {
+                    state.fleet.associatePrinterProfile(entry, profile.id)
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    problem = error.message ?: "The machine profile could not be linked."
+                }
+            }
+        },
+        onDismiss = { reviewing = false },
+    )
+}

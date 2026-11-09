@@ -372,6 +372,11 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
                 inputDigest: String? = null, sourceJobId: String? = null,
                 expectedSha256: String? = null, draftPlateId: String? = null,
                 materialPlan: com.nozzleitall.desktop.prepare.PreparedMaterialPlan? = null): com.nozzleitall.desktop.queue.QueueItem {
+        if (sourceJobId != null && printerId != null) {
+            check(!printerProfileMismatch(targetProfileId, printers[printerId]?.config?.identity?.profileId)) {
+                "This reprint was sliced for a different machine profile. Choose a matching printer or slice again."
+            }
+        }
         val sourceDigest = sourceJobId?.let { sourceId ->
             val source = localJobs.job(sourceId) ?: error("The original job is missing.")
             val indexed = reprintArtifactFor(source) ?: error("The original prepared file or its provenance is missing.")
@@ -649,6 +654,30 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         store.save(order.value.mapNotNull { printers[it]?.config })
     }
 
+    internal fun canAssociatePrinterProfile(entry: PrinterEntry): Boolean =
+        entry.config.identity.profileId == null && !entry.retired &&
+            entry.status.value.state in PrinterAction.StartJob("profile review").allowedStates &&
+            entry.guard?.needsReconcile != true &&
+            queue.value.none { it.startUncertain && (it.printerId == null || it.printerId == entry.config.identity.id) }
+
+    /** Persist the association before replacing the connection and invalidating its reviews. */
+    internal suspend fun associatePrinterProfile(entry: PrinterEntry, profileId: String) {
+        val id = entry.config.identity.id
+        withPrinterTransfer(id) {
+            check(printers[id] === entry && !entry.retired) { "The saved printer changed. Review it again." }
+            check(canAssociatePrinterProfile(entry)) {
+                "Wait for the printer to be idle and resolve any held Start before associating a profile."
+            }
+            requireNotNull(com.nozzleitall.desktop.prepare.ProfileCatalog.byId(profileId)) { "Choose an available machine profile." }
+            val config = entry.config.copy(identity = entry.config.identity.copy(profileId = profileId))
+            val savedOrder = order.value
+            store.save(savedOrder.mapNotNull { if (it == id) config else printers[it]?.config })
+            remove(id, persist = false, forgetQueuedTargets = false)
+            add(config, persist = false)
+            order.value = savedOrder
+        }
+    }
+
     /** Removes a printer only after its durable fleet record accepted the change. */
     fun remove(id: String, persist: Boolean = true, forgetQueuedTargets: Boolean = true): Boolean {
         if (id !in printers) return false
@@ -838,3 +867,7 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         stockClient?.close()
     }
 }
+
+
+internal fun printerProfileMismatch(prepared: String?, associated: String?): Boolean =
+    prepared != null && associated != null && prepared != associated

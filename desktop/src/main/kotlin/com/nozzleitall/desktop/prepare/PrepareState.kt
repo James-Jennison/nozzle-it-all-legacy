@@ -2021,6 +2021,11 @@ class PrepareState(private val app: AppState) {
         if (file?.canonicalFile == target.canonicalFile) return save()
         check(!target.exists()) { "Save as will not replace an existing file. Choose a new name." }
         check(target.name.endsWith(".3mf", ignoreCase = true)) { "Choose a .3mf filename." }
+        val libraryRoot = app.library.dir.canonicalFile
+        val parent = target.canonicalFile.parentFile
+        check(parent == libraryRoot || !parent.toPath().startsWith(libraryRoot.toPath())) {
+            "Projects must be saved directly in the project library, not one of its subfolders."
+        }
         val fork = forkProject(toProject(), target.nameWithoutExtension)
         if (parent == libraryRoot) {
             app.library.save(fork, target)
@@ -2033,11 +2038,6 @@ class PrepareState(private val app: AppState) {
     }
 
     private fun forkProject(project: Project3mf, copyName: String): Project3mf {
-        val libraryRoot = app.library.dir.canonicalFile
-        val parent = target.canonicalFile.parentFile
-        check(parent == libraryRoot || !parent.toPath().startsWith(libraryRoot.toPath())) {
-            "Projects must be saved directly in the project library, not one of its subfolders."
-        }
         val original = requireNotNull(project.manifest) { "The project has no manifest to copy." }
         val extensions = JSONObject(original.extensions.toString())
         val desktop = JSONObject(extensions.optJSONObject("desktop")?.toString() ?: "{}")
