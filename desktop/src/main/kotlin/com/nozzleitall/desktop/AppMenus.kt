@@ -68,7 +68,10 @@ fun appMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> =
 
 private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> {
     val p = state.prepare
-    fun guarded(action: () -> Unit) { if (p.dirty && p.items.isNotEmpty()) state.pendingDiscard = action else action() }
+    fun guarded(action: () -> Unit) = state.guardProjectReplacement(action)
+    fun confirmEdit(action: () -> Unit) {
+        if (p.items.isNotEmpty()) guarded(action) else action()
+    }
     fun report(e: Throwable) { p.notice = e.message ?: "That didn't work." }
     val sliced = p.slice as? SliceState.Done
     return listOf(
@@ -76,7 +79,9 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("New project", ctrl(Key.N, "N")) { guarded { p.newProject(); state.destination = Destination.PREPARE } },
             MenuAction("Projects…") { state.destination = Destination.PROJECTS },
             MenuAction("Open project…", ctrl(Key.O, "O")) {
-                guarded { chooseFiles("Open a project", listOf("3mf"), multiple = false).firstOrNull()?.let { f -> runCatching { p.open(f); state.destination = Destination.PREPARE }.onFailure(::report) } }
+                chooseFiles("Open a project", listOf("3mf"), multiple = false).firstOrNull()?.let { f ->
+                    guarded { runCatching { p.open(f); state.destination = Destination.PREPARE }.onFailure(::report) }
+                }
             },
             *recentProjects(state).map { f -> MenuAction("Recent: " + f.nameWithoutExtension.take(40)) { guarded { runCatching { p.open(f); state.destination = Destination.PREPARE }.onFailure(::report) } } }.toTypedArray(),
             MenuAction("Add model…", ctrl(Key.I, "I")) {
@@ -84,7 +89,7 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
                 state.destination = Destination.PREPARE
             },
             null,
-            MenuAction("Save", ctrl(Key.S, "S"), enabled = p.items.isNotEmpty()) { runCatching { p.save() }.onFailure(::report) },
+            MenuAction("Save", ctrl(Key.S, "S"), enabled = p.dirty || p.file != null) { runCatching { p.save() }.onFailure(::report) },
             MenuAction("Save as…", ctrl(Key.S, "S", shift = true), enabled = p.items.isNotEmpty()) {
                 chooseSaveFile("Save project as", p.name + ".3mf")?.let { f -> runCatching { p.saveAs(f) }.onFailure(::report) }
             },
@@ -106,7 +111,7 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Deselect", ctrl(Key.A, "A", shift = true, afterFocus = true), enabled = state.destination == Destination.PREPARE && p.selected != null) { p.deselect() },
             MenuAction("Duplicate", ctrl(Key.D, "D", afterFocus = true), enabled = p.selected != null) { p.duplicateSelected() },
             MenuAction("Delete", Shortcut(Key.Delete, text = "Delete"), enabled = p.selected != null) { p.removeSelected() },
-            MenuAction("Delete all", enabled = p.items.isNotEmpty()) { guarded { p.items.clear(); p.selected = null; p.changed() } },
+            MenuAction("Delete all", enabled = p.items.isNotEmpty()) { confirmEdit { p.items.clear(); p.selected = null; p.changed() } },
             MenuAction("Arrange plate", Shortcut(Key.A, text = "A"), enabled = p.items.isNotEmpty(), commandId = "arrange") {
                 state.requestWorkspaceTool(WorkspaceToolRequest.ARRANGE)
             },
@@ -126,7 +131,7 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Duplicate plate", enabled = p.toolBusy == null, commandId = "duplicate-plate") { p.duplicateCurrentPlate() },
             MenuAction("Move plate left", enabled = p.toolBusy == null && p.currentPlate > 0, commandId = "plate-left") { p.moveCurrentPlate(-1) },
             MenuAction("Move plate right", enabled = p.toolBusy == null && p.currentPlate < p.plateNames.lastIndex, commandId = "plate-right") { p.moveCurrentPlate(1) },
-            MenuAction("Delete this plate", enabled = p.plateNames.size > 1) { guarded { p.removePlate(p.currentPlate) } },
+            MenuAction("Delete this plate", enabled = p.plateNames.size > 1) { confirmEdit { p.removePlate(p.currentPlate) } },
             null,
             MenuAction("Previous plate", enabled = p.currentPlate > 0) { p.showPlate(p.currentPlate - 1) },
             MenuAction("Next plate", enabled = p.currentPlate < p.plateNames.lastIndex) { p.showPlate(p.currentPlate + 1) },

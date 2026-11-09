@@ -162,8 +162,34 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     var showAbout by mutableStateOf(false)
     /** Which menu is open in the menu bar, if any. */
     var openMenu by mutableStateOf<Int?>(null)
-    /** An action waiting for "discard unsaved changes?" to be answered. */
-    var pendingDiscard by mutableStateOf<(() -> Unit)?>(null)
+    internal var pendingProjectAction by mutableStateOf<(() -> Unit)?>(null)
+        private set
+    internal var projectSaveProblem by mutableStateOf<String?>(null)
+        private set
+
+    internal fun guardProjectReplacement(action: () -> Unit) {
+        if (pendingProjectAction != null) return
+        if (prepare.dirty) pendingProjectAction = action else action()
+    }
+
+    internal fun cancelProjectReplacement() {
+        pendingProjectAction = null
+        projectSaveProblem = null
+    }
+
+    internal fun continueProjectReplacement(save: Boolean) {
+        val action = pendingProjectAction ?: return
+        if (save) {
+            try {
+                prepare.save()
+            } catch (error: Exception) {
+                projectSaveProblem = error.message ?: "The project could not be saved."
+                return
+            }
+        }
+        cancelProjectReplacement()
+        action()
+    }
     fun selectPrinter(id: String) {
         monitorHandoff = null
         selectedPrinter = id
@@ -289,9 +315,12 @@ internal class DesktopShutdown(
 }
 
 /** Intercepts X11's WM_DELETE before Compose's window listener can invalidate the Skiko drawing surface. */
-private class LinuxCloseEventQueue(private val onWindowClose: () -> Unit) : EventQueue() {
+private class LinuxCloseEventQueue(
+    private val mainWindow: java.awt.Window,
+    private val onWindowClose: () -> Unit,
+) : EventQueue() {
     override fun dispatchEvent(event: AWTEvent) {
-        if (event is WindowEvent && event.id == WindowEvent.WINDOW_CLOSING) {
+        if (event is WindowEvent && event.id == WindowEvent.WINDOW_CLOSING && event.window === mainWindow) {
             onWindowClose()
             return
         }
@@ -321,18 +350,10 @@ private fun runApp(open: List<File>) = application {
             terminateProcess = { Runtime.getRuntime().halt(0) },
         )
     }
-    val quit = shutdown::menuQuit
-    DisposableEffect(shutdown) {
-        val osName = System.getProperty("os.name").orEmpty()
-        if (!osName.startsWith("Linux")) return@DisposableEffect onDispose { }
-        Toolkit.getDefaultToolkit().systemEventQueue.push(
-            LinuxCloseEventQueue { shutdown.windowManagerQuit(osName) },
-        )
-        // The Linux close edge halts the process, so this queue cannot outlive the application. Popping it during
-        // composition disposal would race the exact native shutdown path it protects.
-        onDispose { }
-    }
-    Window(onCloseRequest = quit, title = Glossary.PRODUCT_FAMILY,
+    val osName = System.getProperty("os.name").orEmpty()
+    val quit = { state.guardProjectReplacement(shutdown::menuQuit) }
+    val closeWindow = { state.guardProjectReplacement { shutdown.windowManagerQuit(osName) } }
+    Window(onCloseRequest = closeWindow, title = Glossary.PRODUCT_FAMILY,
         icon = painterResource("brand/mark-violet.svg"), state = rememberWindowState(size = DpSize(initialWidth.dp, initialHeight.dp)),
         onPreviewKeyEvent = { e ->
             // Menu shortcuts (all with Ctrl, so typing is never taken) and Alt+letter to open a menu.
@@ -347,6 +368,9 @@ private fun runApp(open: List<File>) = application {
             minOf(960, (initialWidth * 3 / 4).coerceAtLeast(320)),
             minOf(640, (initialHeight * 3 / 4).coerceAtLeast(240)))
         DisposableEffect(window) {
+            if (osName.startsWith("Linux")) {
+                Toolkit.getDefaultToolkit().systemEventQueue.push(LinuxCloseEventQueue(window, closeWindow))
+            }
             val listener = com.nozzleitall.desktop.environment.DesktopMonitoringWindowListener(state.environment::foreground)
             state.environment.foreground(true)
             window.addWindowListener(listener)
@@ -364,9 +388,12 @@ private fun runApp(open: List<File>) = application {
                 AddPrinterDialog(state, autoScan = request.autoScan, compatibilityProfileId = request.compatibilityProfileId,
                     onDone = state::finishPrinterSetup)
             }
-            state.pendingDiscard?.let { action ->
-                ConfirmDialog("Discard unsaved changes?", "${state.prepare.name} has changes that aren't saved.", "Discard changes", destructive = true,
-                    onConfirm = { state.pendingDiscard = null; action() }, onDismiss = { state.pendingDiscard = null })
+            if (state.pendingProjectAction != null) {
+                ConfirmDialog("Save changes?", "${state.prepare.name} has unsaved changes.", "Discard changes",
+                    destructive = true, detail = state.projectSaveProblem,
+                    onConfirm = { state.continueProjectReplacement(save = false) },
+                    onDismiss = state::cancelProjectReplacement,
+                    alternativeAction = { NzButton("Save", { state.continueProjectReplacement(save = true) }) })
             }
         }
     }

@@ -2006,8 +2006,12 @@ class PrepareState(private val app: AppState) {
 
     fun save(): File {
         if (!dirty) file?.let { return it }
-        val project = toProject()
-        val target = file?.also { app.library.save(project, it) } ?: app.library.saveNew(project, name)
+        val source = file
+        val saveCopy = source != null && (source.canonicalFile.parentFile != app.library.dir.canonicalFile || manifest == null)
+        val current = toProject()
+        val project = if (saveCopy) forkProject(current, name) else current
+        val target = if (source == null || saveCopy) app.library.saveNew(project, name)
+            else source.also { app.library.save(project, it) }
         file = target; manifest = project.manifest; dirty = false
         return target
     }
@@ -2017,7 +2021,18 @@ class PrepareState(private val app: AppState) {
         if (file?.canonicalFile == target.canonicalFile) return save()
         check(!target.exists()) { "Save as will not replace an existing file. Choose a new name." }
         check(target.name.endsWith(".3mf", ignoreCase = true)) { "Choose a .3mf filename." }
-        val project = toProject()
+        val fork = forkProject(toProject(), target.nameWithoutExtension)
+        if (parent == libraryRoot) {
+            app.library.save(fork, target)
+            open(target)
+        } else {
+            ThreeMf.writeAtomicallyNew(fork, target)
+            notice = "A copy was saved outside the project library. The current project remains open here."
+        }
+        return target
+    }
+
+    private fun forkProject(project: Project3mf, copyName: String): Project3mf {
         val libraryRoot = app.library.dir.canonicalFile
         val parent = target.canonicalFile.parentFile
         check(parent == libraryRoot || !parent.toPath().startsWith(libraryRoot.toPath())) {
@@ -2029,17 +2044,9 @@ class PrepareState(private val app: AppState) {
         manifest?.let { source -> desktop.put("saveAsSource", JSONObject().put("projectId", source.projectId)
             .put("revision", source.revision).put("name", source.name)) }
         extensions.put("desktop", desktop)
-        val fork = project.copy(manifest = original.copy(projectId = UUID.randomUUID().toString(), revision = 1,
-            name = target.nameWithoutExtension, modifiedAtMillis = System.currentTimeMillis(), extensions = extensions),
-            metadata = project.metadata + ("Title" to target.nameWithoutExtension))
-        if (parent == libraryRoot) {
-            app.library.save(fork, target)
-            open(target)
-        } else {
-            ThreeMf.writeAtomicallyNew(fork, target)
-            notice = "A copy was saved outside the project library. The current project remains open here."
-        }
-        return target
+        return project.copy(manifest = original.copy(projectId = UUID.randomUUID().toString(), revision = 1,
+            name = copyName, modifiedAtMillis = System.currentTimeMillis(), extensions = extensions),
+            metadata = project.metadata + ("Title" to copyName))
     }
 
     fun slice(scope: kotlinx.coroutines.CoroutineScope) {

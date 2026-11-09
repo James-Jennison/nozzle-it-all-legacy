@@ -317,7 +317,8 @@ fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit, descrip
 @Composable
 fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit,
                   detail: String? = null, acknowledgement: String? = null, cancelLabel: String = "Cancel",
-                  extraContent: (@Composable () -> Unit)? = null, confirmEnabled: Boolean = true) {
+                  extraContent: (@Composable () -> Unit)? = null, confirmEnabled: Boolean = true,
+                  alternativeAction: (@Composable () -> Unit)? = null) {
     DialogWindow(onCloseRequest = onDismiss, title = title,
         state = rememberDialogState(width = 460.dp,
             height = if (extraContent != null) 490.dp else if (acknowledgement == null) 300.dp else 390.dp), resizable = false,
@@ -345,6 +346,7 @@ fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                 Box(Modifier.focusRequester(cancelFocus).focusable()) { NzButton(cancelLabel, onDismiss, kind = ButtonKind.SECONDARY) }
+                alternativeAction?.invoke()
                 NzButton(confirmLabel, onConfirm, kind = if (destructive) ButtonKind.DANGER else ButtonKind.PRIMARY,
                     enabled = confirmEnabled && (acknowledgement == null || acknowledged), testTag = "confirm-action")
             }

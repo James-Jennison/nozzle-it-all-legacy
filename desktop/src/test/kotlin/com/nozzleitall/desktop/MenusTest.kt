@@ -105,6 +105,60 @@ class MenusTest {
         assertEquals(listOf("Recent: New", "Recent: Old"), recent.map { it.label })
     }
 
+    @Test fun dirtyEmptyProjectCanCancelOrSaveBeforeNewProject() {
+        val a = app()
+        val p = a.prepare
+        p.addPlate()
+        val plates = p.plateIds.toList()
+        a.item("File", "New project").run()
+        assertNotNull(a.pendingProjectAction)
+        a.cancelProjectReplacement()
+        assertEquals(plates, p.plateIds.toList())
+        assertTrue(p.dirty)
+
+        a.item("File", "New project").run()
+        a.continueProjectReplacement(save = true)
+        assertNull(a.pendingProjectAction)
+        assertFalse(p.dirty)
+        assertEquals(1, p.plateIds.size)
+        val saved = a.library.dir.listFiles()!!.single { it.extension == "3mf" }
+        assertEquals(plates, ThreeMf.read(saved).manifest!!.plates.map { it.id })
+    }
+
+    @Test fun quitWaitsAndFailedSaveKeepsTheEditorOpen() {
+        val a = app()
+        val p = a.prepare
+        p.addPlate()
+        val saved = p.save()
+        p.addPlate()
+        ThreeMf.writeAtomically(Project3mf(listOf(ModelObject(1, "cube", cube))), saved)
+        var quitCount = 0
+        val quit = appMenus(a) { a.guardProjectReplacement { quitCount++ } }
+            .first { it.title == "File" }.items.filterNotNull().single { it.label == "Quit" }
+        quit.run()
+        a.continueProjectReplacement(save = true)
+        assertEquals(0, quitCount)
+        assertNotNull(a.projectSaveProblem)
+        assertNotNull(a.pendingProjectAction)
+        assertTrue(p.dirty)
+        a.continueProjectReplacement(save = false)
+        assertEquals(1, quitCount)
+    }
+
+    @Test fun savingEditedExternalProjectLeavesItsSourceIntact() {
+        val a = app()
+        val external = File(a.paths.config, "Foreign.3mf")
+        ThreeMf.writeAtomically(Project3mf(listOf(ModelObject(1, "cube", cube))), external)
+        val original = external.readBytes()
+        a.prepare.open(external)
+        a.prepare.addPlate()
+        val saved = a.prepare.save()
+        assertEquals(a.library.dir.canonicalFile, saved.canonicalFile.parentFile)
+        assertArrayEquals(original, external.readBytes())
+        assertEquals(2, ThreeMf.read(saved).manifest!!.plates.size)
+        assertFalse(a.prepare.dirty)
+    }
+
     @Test fun calibrationMenuStartsATestPrintWithItsSettingsAndPostProcessing() {
         val a = app(); val p = a.prepare
         assertEquals(net.jamesjennison.klippercompanion.CalibrationKind.entries.map { it.label }, appMenus(a) {}.first { it.title == "Calibration" }.items.filterNotNull().map { it.label })

@@ -21,9 +21,6 @@ fun JobsScreen(state: AppState) {
     val fleet = state.fleet
     var creating by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
-    fun preservingCurrentProject(action: () -> Unit) {
-        if (state.prepare.dirty) state.pendingDiscard = action else action()
-    }
     val active = fleet.order.value.mapNotNull { id -> fleet.printers[id]?.let { id to it } }
         .filter { (_, entry) -> entry.status.value.job != null && entry.status.value.state in setOf(PrinterState.PRINTING, PrinterState.PAUSED) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -47,7 +44,7 @@ fun JobsScreen(state: AppState) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 NzButton("Existing project", { creating = false; state.destination = Destination.PROJECTS })
                 NzButton("Import model", {
-                    preservingCurrentProject {
+                    state.guardProjectReplacement {
                         val files = chooseFiles("Import a model", listOf("stl", "3mf", "obj"))
                         if (files.isNotEmpty()) {
                             val failures = mutableListOf<String>()

@@ -259,9 +259,6 @@ fun ProjectsScreen(state: AppState) {
             if (currentCoroutineContext().isActive) comparisonLoading = false
         }
     }
-    fun preservingCurrentProject(action: () -> Unit) {
-        if (state.prepare.dirty) state.pendingDiscard = action else action()
-    }
     fun openRecoveryCopy(candidate: ProjectRecoveryCandidate) {
         if (openingRecoveryCopy) return
         openingRecoveryCopy = true
@@ -293,7 +290,7 @@ fun ProjectsScreen(state: AppState) {
                 }
                 refresh++
             }, icon = NzIcon.IMPORT, enabled = !openingRecoveryCopy)
-            NzButton("New project", { preservingCurrentProject { state.prepare.newProject(); state.destination = Destination.PREPARE } }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, enabled = !openingRecoveryCopy)
+            NzButton("New project", { state.guardProjectReplacement { state.prepare.newProject(); state.destination = Destination.PREPARE } }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, enabled = !openingRecoveryCopy)
         }
         notice?.let { (text, trashed) ->
             Banner(text, if (trashed != null) BannerKind.INFO else BannerKind.WARNING, if (trashed != null) "Undo" to {
@@ -475,7 +472,7 @@ fun ProjectsScreen(state: AppState) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Txt("${draft.name} · ${draft.objectCount} objects", Nz.type.bodySmall,
                         modifier = Modifier.weight(1f), maxLines = 1)
-                    NzButton("Open as copy", { preservingCurrentProject {
+                    NzButton("Open as copy", { state.guardProjectReplacement {
                         state.scope.launch(Dispatchers.Main) {
                             try {
                                 val file = withContext(Dispatchers.IO) { state.library.openSessionDraftAsCopy(draft.file) }
@@ -524,7 +521,7 @@ fun ProjectsScreen(state: AppState) {
                         Txt("Changed ${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(p.modifiedMillis))}", Nz.type.bodySmall, c.textMuted)
                         p.problem?.let { Txt(it, Nz.type.bodySmall, Nz.status.paused) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            NzButton("Open", { preservingCurrentProject {
+                            NzButton("Open", { state.guardProjectReplacement {
                                 runCatching { state.prepare.open(p.file) }.onSuccess { state.destination = Destination.PREPARE }.onFailure { notice = "Couldn't open ${p.name}: ${it.message}" to null }
                             } }, kind = ButtonKind.PRIMARY, enabled = p.objectCount > 0 && !openingRecoveryCopy)
                             NzButton("Move to trash", { runCatching { state.library.moveToTrash(p.file) }.onSuccess { notice = "${p.name} moved to the trash." to it }; refresh++ }, kind = ButtonKind.QUIET, enabled = !openingRecoveryCopy)
