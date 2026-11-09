@@ -36,8 +36,18 @@ class PreparePrinterPickerUiTest {
     @Test fun savedPrintersAndManagementAt100Percent() = verifySidebar(1f)
     @Test fun savedPrintersAndManagementAt150Percent() = verifySidebar(1.5f)
 
+    @Test fun captureSidebarAt100Percent() = captureSidebar(1f)
+    @Test fun captureSidebarAt150Percent() = captureSidebar(1.5f)
+
+    private fun captureSidebar(scale: Float) {
+        val folder = System.getenv("NIA_SIDEBAR_CAPTURE_DIR")
+        org.junit.Assume.assumeNotNull(folder)
+        verifySidebar(scale, 1360, 860, folder)
+    }
+
     @OptIn(ExperimentalTestApi::class)
-    private fun verifySidebar(scale: Float) = runDesktopComposeUiTest(960, 640) {
+    private fun verifySidebar(scale: Float, width: Int = 960, height: Int = 640, captureFolder: String? = null) =
+        runDesktopComposeUiTest(width, height) {
         val root = temporary.newFolder()
         val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -76,7 +86,7 @@ class PreparePrinterPickerUiTest {
                     onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
                 }
                 onNodeWithTag("setup-printer").assertTextContains(printer.displayName)
-                System.getenv("NIA_SIDEBAR_CAPTURE_DIR")?.let { folder ->
+                captureFolder?.let { folder ->
                     val bitmap = captureToImage()
                     val pixels = IntArray(bitmap.width * bitmap.height)
                     bitmap.readPixels(pixels)

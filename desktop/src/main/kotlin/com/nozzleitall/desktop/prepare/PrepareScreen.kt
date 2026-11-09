@@ -1350,7 +1350,7 @@ private fun WorkspaceSetupStack(
                 PrinterCardField("Printer", Modifier.weight(0.47f)) {
                     PrinterPicker(state, Modifier.fillMaxWidth())
                 }
-                PrinterCardField("Variant", Modifier.weight(0.19f)) {
+                PrinterCardField("Nozzle", Modifier.weight(0.19f)) {
                     val choices = nozzleSizes.ifEmpty { listOf(nozzle) }
                     com.nozzleitall.desktop.settings.DenseSelect("Nozzle diameter",
                         choices.map { com.nozzleitall.desktop.settings.Choice(it, it) },
@@ -1365,33 +1365,12 @@ private fun WorkspaceSetupStack(
                     }
                 }
             }
-            val toolCount = (p.profile?.tools ?: slots.size.coerceAtLeast(1)).coerceAtLeast(1)
-            val highFlow = runCatching { PrinterSetup.supportsHighFlow(p.machineJson()) }.getOrDefault(false)
-            (1..toolCount).chunked(2).forEach { tools ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    tools.forEach { tool ->
-                        NozzleSlot(
-                            tool = tool,
-                            nozzle = nozzle,
-                            highFlow = highFlow,
-                            flow = p.nozzleFlows.getOrElse(tool - 1) { "standard" },
-                            modifier = Modifier.weight(1f),
-                            onFlow = { value ->
-                                while (p.nozzleFlows.size < tool) p.nozzleFlows.add("standard")
-                                p.nozzleFlows[tool - 1] = value
-                                p.changed()
-                            },
-                            onEdit = { setDrawer(Drawer.PRINTER) },
-                        )
-                    }
-                    if (tools.size == 1) Spacer(Modifier.weight(1f))
-                }
-            }
             val machineName = p.profile?.model ?: p.profileId
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Txt("Machine profile: $machineName", Nz.type.bodySmall, c.textMuted,
-                    modifier = Modifier.weight(1f), maxLines = 1)
-                NzIconButton(NzIcon.TUNE, "Edit machine settings", { setDrawer(Drawer.PRINTER) })
+                    modifier = Modifier.weight(1f), maxLines = 2)
+                NzIconButton(NzIcon.SETTINGS, "Edit machine preset and nozzle types",
+                    { setDrawer(Drawer.PRINTER) })
             }
             connected?.config?.identity?.let { identity ->
                 val association = identity.profileId
@@ -1530,7 +1509,7 @@ internal fun FoldedFilamentBadges(
 @Composable
 private fun PrinterCardField(label: String, modifier: Modifier, content: @Composable () -> Unit) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Txt(label, Nz.type.bodySmall, Nz.colors.textMuted, Modifier.padding(horizontal = 6.dp), maxLines = 1)
+        Txt(label, Nz.type.bodySmall, Nz.colors.textMuted, Modifier.padding(start = 4.dp), maxLines = 1)
         content()
     }
 }
@@ -1684,45 +1663,6 @@ private fun SetupSection(
             action?.invoke()
         }
         if (expanded) content()
-    }
-}
-
-@Composable
-private fun NozzleSlot(
-    tool: Int,
-    nozzle: String,
-    highFlow: Boolean,
-    flow: String,
-    modifier: Modifier = Modifier,
-    onFlow: (String) -> Unit,
-    onEdit: () -> Unit,
-) {
-    val c = Nz.colors
-    Row(
-        modifier.clip(RoundedCornerShape(7.dp))
-            .padding(horizontal = 7.dp, vertical = if (Nz.textScale >= 1.5f) 3.dp else 4.dp)
-            .semantics(mergeDescendants = true) { testTag = "setup-nozzle-$tool" },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Txt(
-            "T$tool $nozzle",
-            Nz.type.bodySmall,
-            c.text,
-            maxLines = 1,
-            modifier = Modifier.clip(RoundedCornerShape(5.dp))
-                .clickable(onClickLabel = "Open T$tool nozzle settings") { onEdit() }
-                .padding(vertical = 4.dp),
-        )
-        val values = nozzleFlowOptions(highFlow)
-        com.nozzleitall.desktop.settings.DenseSelect(
-            "T$tool nozzle type",
-            values.map { com.nozzleitall.desktop.settings.Choice(it, if (it == "high_flow") "High Flow" else "Standard") },
-            effectiveNozzleFlow(values, flow),
-            Modifier.weight(1f),
-            enabled = nozzleFlowControlEnabled(values),
-            onSelect = onFlow,
-        )
     }
 }
 
@@ -1900,13 +1840,9 @@ private fun WorkspaceLeftPanel(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Txt("Process", Nz.type.label, modifier = Modifier.padding(horizontal = 4.dp))
-            NzButton("Global", { setDrawer(Drawer.PROCESS) }, Modifier.weight(1f),
-                kind = if (drawer == Drawer.PROCESS) ButtonKind.PRIMARY else ButtonKind.SECONDARY,
-                testTag = "workspace-global-tab", centerContent = true)
-            NzButton("Objects", { setDrawer(null) }, Modifier.weight(1f),
-                kind = if (!drawer.isGlobalSetup()) ButtonKind.PRIMARY else ButtonKind.SECONDARY,
-                testTag = "workspace-objects-tab", centerContent = true)
+            Spacer(Modifier.weight(1f))
             if (processControls) {
+                Txt(if (p.advancedSettings) "Advanced" else "Essential", Nz.type.bodySmall, c.textMuted, maxLines = 1)
                 NzIconButton(NzIcon.TUNE, if (p.advancedSettings) "Show essential settings" else "Show advanced settings",
                     { p.advancedSettings = !p.advancedSettings }, selected = p.advancedSettings)
                 NzIconButton(NzIcon.COMPARE, "Compare process presets",
@@ -1914,6 +1850,14 @@ private fun WorkspaceLeftPanel(
             }
             NzIconButton(NzIcon.LAYERS, "Object settings on this plate",
                 { if (processValues != null) objectSettings = true })
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            NzButton("Global", { setDrawer(Drawer.PROCESS) }, Modifier.weight(1f),
+                kind = if (drawer == Drawer.PROCESS) ButtonKind.PRIMARY else ButtonKind.SECONDARY,
+                testTag = "workspace-global-tab", centerContent = true)
+            NzButton("Objects", { setDrawer(null) }, Modifier.weight(1f),
+                kind = if (!drawer.isGlobalSetup()) ButtonKind.PRIMARY else ButtonKind.SECONDARY,
+                testTag = "workspace-objects-tab", centerContent = true)
         }
         when (drawer) {
             Drawer.PROCESS -> {
