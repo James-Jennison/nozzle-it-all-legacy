@@ -77,7 +77,35 @@ jobs:
         run: python3 scripts/build_site.py --check
 
       - name: Unit tests + lint
-        run: ./gradlew testDebugUnitTest lintDebug :domain:check :transport:check :test-grid:check :desktop:test --no-daemon
+        run: ./gradlew testDebugUnitTest lintDebug :domain:check :transport:check :test-grid:check --no-daemon
+
+      - name: Desktop tests (private Xvfb)
+        env:
+          JAVA_HOME: /vmdata/build-cache/nia-ci-toolchain/temurin-17.0.20.1+1
+          GRADLE_USER_HOME: /vmdata/build-cache/nia-gradle
+          SKIKO_RENDER_API: SOFTWARE
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          test -s "$JAVA_HOME/lib/libawt_xawt.so"
+          display_dir="$(mktemp -d /vmdata/worktrees/nia-ci-display.XXXXXX)"
+          chmod 1777 "$display_dir"
+          display_container="nia-ci-xvfb-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$display_container" >/dev/null 2>&1 || true; rmdir "$display_dir" || true' EXIT
+          docker run -d --rm --name "$display_container" --network none \
+            --userns=host --user "$(id -u):$(id -g)" \
+            -v "$display_dir:/tmp/.X11-unix" \
+            sha256:a7b7e622ea745b4c6d7748fefee031697a591074306169dd9e0884042e6dd4a9 \
+            Xvfb :197 -screen 0 1360x860x24 -nolisten tcp -ac
+          for i in {1..50}; do
+            [ ! -S "$display_dir/X197" ] || break
+            sleep 0.2
+          done
+          test -S "$display_dir/X197"
+          export DISPLAY=:197
+          unset ANDROID_HOME ANDROID_SDK_ROOT
+          bwrap --bind / / --ro-bind "$display_dir" /tmp/.X11-unix -- \
+            bash ./gradlew -c settings-desktop.gradle.kts :desktop:test --no-daemon --max-workers=4
 
       - name: Assemble debug (native build, arm64-v8a)
         # -PdeviceFarmTests leaves out the LAN/printer-only tests: Device Farm rejects (at re-signing) a test package with too much code.
