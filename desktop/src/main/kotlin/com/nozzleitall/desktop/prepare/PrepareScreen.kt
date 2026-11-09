@@ -782,6 +782,7 @@ fun PrepareScreen(state: AppState) {
                     PlateToolbar(p, sel, drawer, modelingTool, transformTool, { transformTool = it }, ::toggleModeling) { toggle(it) }
                 }
             }
+            val previewLegendHeight = minOf(130.dp, maxHeight * 0.20f)
             if (p.showPreview && done?.preview != null && drawer != Drawer.SEND) Column(
                 Modifier.align(Alignment.TopEnd).padding(12.dp).padding(end = previewZWidth)
                     .heightIn(max = minOf(compactPreviewOverlayMaxHeight(maxHeight),
@@ -794,7 +795,7 @@ fun PrepareScreen(state: AppState) {
                 } else PreviewLegend(p, done.preview, p.previewView ?: if (done.preview.toolsUsed.size > 1) PreviewView.TOOL else PreviewView.LINE_TYPE,
                     slots, done.result.stats,
                     overlayWidth = minOf(340.dp, viewportWidth * 0.42f),
-                    overlayHeight = minOf(130.dp, maxHeight * 0.20f))
+                    overlayHeight = previewLegendHeight)
             }
             if (p.showPreview && done != null && done.preview == null) Box(Modifier.align(Alignment.TopStart).padding(12.dp)) {
                 Banner("The sliced file has no available toolpath preview. Return to Plate or slice again before reviewing it.", BannerKind.WARNING)
