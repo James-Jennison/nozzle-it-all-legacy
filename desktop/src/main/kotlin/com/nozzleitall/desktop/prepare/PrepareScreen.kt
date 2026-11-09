@@ -784,7 +784,7 @@ fun PrepareScreen(state: AppState) {
                     PlateToolbar(p, sel, drawer, modelingTool, transformTool, { transformTool = it }, ::toggleModeling) { toggle(it) }
                 }
             }
-            val previewLegendHeight = minOf(130.dp, maxHeight * 0.20f)
+            val previewLegendHeight = minOf(150.dp, maxHeight * 0.23f)
             if (p.showPreview && done?.preview != null && !sendReviewOpen) Column(
                 Modifier.align(Alignment.TopEnd).padding(12.dp).padding(end = previewZWidth)
                     .heightIn(max = minOf(compactPreviewOverlayMaxHeight(maxHeight),
@@ -1129,6 +1129,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
     val warnings = previewWarningMessages(preview)
     val expanded = overlayHeight == null || showDetails
     val showsTimeBreakdown = view == PreviewView.LINE_TYPE || view == PreviewView.TOOL
+    val stackedRows = overlayWidth != null && (Nz.textScale >= 1.5f || overlayWidth < 300.dp)
     val baseLegendWidth = if (Nz.textScale >= 1.5f) 390.dp else 300.dp
     val legendWidth = baseLegendWidth + if (showsTimeBreakdown) 40.dp else 0.dp
     Column(Modifier.width(overlayWidth ?: legendWidth).clip(shape)
@@ -1190,7 +1191,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
             val scrollable = if (overlayHeight == null) Modifier else Modifier.padding(end = 8.dp).verticalScroll(scroll)
             Column(scrollable.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 val usage = if (showsTimeBreakdown) preview.usage else null
-                if (showsTimeBreakdown) Row(
+                if (showsTimeBreakdown && !stackedRows) Row(
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Spacer(Modifier.width(12.dp))
@@ -1203,14 +1204,23 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                 fun entry(colour: Color, label: String, metrics: GcodePreview.Usage, visible: Boolean, toggle: () -> Unit) = @Composable {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(colour))
-                        Txt(label, Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
-                        Txt(formatDuration(metrics.seconds, includeSeconds = true), Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                        val time = formatDuration(metrics.seconds, includeSeconds = true)
                         val total = requireNotNull(usage).total
                         val totalMm = if (preview.plannerBacked) total.filamentMm else total.pathMm
                         val mm = if (preview.plannerBacked) metrics.filamentMm else metrics.pathMm
                         val percent = if (totalMm > 0.0) mm / totalMm * 100.0 else 0.0
-                        Txt("${percent.toInt()}%", Nz.type.bodySmall, c.textMuted, maxLines = 1)
-                        Txt(if (mm >= 1000f) "%.1fm".format(mm / 1000f) else "%.0fmm".format(mm), Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                        val amount = if (mm >= 1000f) "%.1f m".format(mm / 1000f) else "%.0f mm".format(mm)
+                        if (stackedRows) {
+                            Column(Modifier.weight(1f)) {
+                                Txt(label, Nz.type.bodySmall, maxLines = 2)
+                                Txt("$time · ${percent.toInt()}% · $amount", Nz.type.bodySmall, c.textMuted)
+                            }
+                        } else {
+                            Txt(label, Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
+                            Txt(time, Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                            Txt("${percent.toInt()}%", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                            Txt(amount, Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                        }
                         Txt(if (visible) "●" else "○", Nz.type.label, if (visible) c.accent else c.textMuted,
                             modifier = Modifier.clip(CircleShape).clickable(onClickLabel = if (visible) "Hide $label" else "Show $label") { toggle() }.padding(3.dp))
                     }
