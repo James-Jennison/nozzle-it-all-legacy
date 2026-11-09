@@ -589,25 +589,30 @@ fun PrepareScreen(state: AppState) {
             if (!previewFocused && p.plateNames.size > 1) NzButton("Plate overview", { p.showPlateOverview = true }, kind = ButtonKind.QUIET,
                 testTag = "plate-overview")
             if (previewReady && drawer != Drawer.SEND) {
-                NzButton(
-                    if (previewSection) "Exit Section View" else "Section View",
-                    {
-                        previewSectionRequested = !previewSectionRequested
-                        if (!previewSectionRequested) p.previewLayer = p.previewLayer.coerceAtLeast(p.previewFirstLayer)
-                    },
-                    kind = ButtonKind.QUIET, testTag = "preview-section-view",
-                )
-                NzButton(
-                    if (previewRealistic) "Exit Realistic View" else "Realistic View",
-                    { previewRealisticRequested = !previewRealisticRequested },
-                    enabled = realisticAvailable, kind = ButtonKind.QUIET, testTag = "preview-realistic-view",
-                    accessibilityDescription = if (realisticAvailable) null else "Realistic View requires recorded extrusion widths",
-                )
-                NzButton(
-                    if (previewFocused) "Exit Focus Mode" else "Focus Mode",
-                    { previewFocusRequested = !previewFocusRequested },
-                    kind = ButtonKind.QUIET, testTag = "preview-focus-mode",
-                )
+                val sectionLabel = if (previewSection) "Exit Section View" else "Section View"
+                val realisticLabel = if (previewRealistic) "Exit Realistic View" else "Realistic View"
+                val focusLabel = if (previewFocused) "Exit Focus Mode" else "Focus Mode"
+                val compactPreviewActions = Nz.textScale >= 1.5f || compactWorkspace
+                val toggleSection = {
+                    previewSectionRequested = !previewSectionRequested
+                    if (!previewSectionRequested) p.previewLayer = p.previewLayer.coerceAtLeast(p.previewFirstLayer)
+                }
+                if (compactPreviewActions) {
+                    NzIconButton(NzIcon.CUT, sectionLabel, toggleSection, selected = previewSection,
+                        testTag = "preview-section-view")
+                    NzIconButton(NzIcon.PREPARE, realisticLabel, { previewRealisticRequested = !previewRealisticRequested },
+                        enabled = realisticAvailable, selected = previewRealistic, testTag = "preview-realistic-view",
+                        tooltip = if (realisticAvailable) realisticLabel else "Realistic View requires recorded extrusion widths")
+                    NzIconButton(NzIcon.WORKSPACE, focusLabel, { previewFocusRequested = !previewFocusRequested },
+                        selected = previewFocused, testTag = "preview-focus-mode")
+                } else {
+                    NzButton(sectionLabel, toggleSection, kind = ButtonKind.QUIET, testTag = "preview-section-view")
+                    NzButton(realisticLabel, { previewRealisticRequested = !previewRealisticRequested },
+                        kind = ButtonKind.QUIET, enabled = realisticAvailable, testTag = "preview-realistic-view",
+                        accessibilityDescription = if (realisticAvailable) null else "Realistic View requires recorded extrusion widths")
+                    NzButton(focusLabel, { previewFocusRequested = !previewFocusRequested },
+                        kind = ButtonKind.QUIET, testTag = "preview-focus-mode")
+                }
             }
         }
         if (compactWorkspace) {
