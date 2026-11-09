@@ -902,7 +902,15 @@ class PrepareState(private val app: AppState) {
     /** Whether mixed filaments split each layer into sub-layers (Orca's default) rather than alternating whole layers. */
     var mixSublayers by mutableStateOf(true)
     /** The slice settings for [mixed] as the engine last worked them out, kept so saving the project needs no engine call. */
-    private var mixedSettings: Map<String, String> = emptyMap()
+    internal var mixedSettings: Map<String, String> = emptyMap()
+        private set
+
+    internal fun restoreMixes(rows: List<MixedFilamentFormat.Row>, settings: Map<String, String>, sublayers: Boolean) {
+        mixed.clear()
+        mixed.addAll(rows)
+        mixedSettings = settings
+        mixSublayers = sublayers
+    }
 
     /** The slot number of mixed row [index]: after the loaded filaments. */
     fun mixedSlot(index: Int): Int = materials().size + index + 1
@@ -923,29 +931,87 @@ class PrepareState(private val app: AppState) {
         if (mixed.isEmpty()) { mixedSettings = emptyMap(); return }
         val physical = typedPhysical(); val rows = mixed.toList(); val sublayer = mixSublayers
         scope.launch { runCatching { withContext(Dispatchers.IO) { MixedFilament.display(physical, rows) to runCatching { MixedFilament.sliceOverrides(physical, rows, sublayer) }.getOrDefault(emptyMap()) } }
-            .onSuccess { (display, settings) -> if (display != mixed.toList()) { mixed.clear(); mixed.addAll(display) }; mixedSettings = settings; mixProblem = null }
+            .onSuccess { (display, settings) ->
+                if (mixed.toList() == rows && typedPhysical() == physical && mixSublayers == sublayer) {
+                    restoreMixes(display, settings, sublayer)
+                }
+            }
             .onFailure { mixProblem = it.message } }
     }
 
-    private fun edit(scope: kotlinx.coroutines.CoroutineScope, op: (List<Pair<String, String?>>, List<MixedFilamentFormat.Row>) -> List<MixedFilamentFormat.Row>?) {
-        val physical = typedPhysical(); val rows = mixed.toList()
-        scope.launch { runCatching { withContext(Dispatchers.IO) { op(physical, rows) } }
-            .onSuccess { result -> if (result == null) mixProblem = "That mix is already in the list." else { mixed.clear(); mixed.addAll(result); mixProblem = null; changed(); refreshMixes(scope) } }
-            .onFailure { mixProblem = it.message } }
+    private fun editMix(op: (List<Pair<String, String?>>, List<MixedFilamentFormat.Row>) -> List<MixedFilamentFormat.Row>?) {
+        val physical = typedPhysical()
+        val rows = mixed.toList()
+        val sublayer = mixSublayers
+        val generation = editorGeneration
+        app.scope.launch(Dispatchers.Main) {
+            try {
+                val (result, settings) = withContext(Dispatchers.IO) {
+                    val updated = op(physical, rows) ?: error("That mix is already in the list.")
+                    updated to MixedFilament.sliceOverrides(physical, updated, sublayer)
+                }
+                if (editorGeneration != generation || typedPhysical() != physical ||
+                    mixed.toList() != rows || mixSublayers != sublayer) {
+                    mixProblem = "The filament assignments changed. Review the mix again."
+                    return@launch
+                }
+                restoreMixes(result, settings, sublayer)
+                mixProblem = null
+                changed()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                mixProblem = error.message ?: "The mix could not be saved."
+            }
+        }
     }
 
-    fun addMixed(row: MixedFilamentFormat.Row, scope: kotlinx.coroutines.CoroutineScope) = edit(scope) { phys, rows -> MixedFilament.add(phys, rows, row) }
-    fun updateMixed(index: Int, row: MixedFilamentFormat.Row, scope: kotlinx.coroutines.CoroutineScope) = edit(scope) { phys, rows -> MixedFilament.update(phys, rows, index, row) }
+    fun addMixed(row: MixedFilamentFormat.Row) = editMix { phys, rows -> MixedFilament.add(phys, rows, row) }
+    fun updateMixed(index: Int, row: MixedFilamentFormat.Row) = editMix { phys, rows -> MixedFilament.update(phys, rows, index, row) }
 
-    /** Removes mixed row [index]; objects and painted areas on it go back to the default slot, and later mixes move down one slot. */
-    fun removeMixed(index: Int, scope: kotlinx.coroutines.CoroutineScope) {
-        val gone = mixedSlot(index)
-        edit(scope) { phys, rows -> MixedFilament.remove(phys, rows, index) }
-        items.forEach { item ->
-            if (item.slot == gone) item.slot = 1 else if (item.slot > gone) item.slot--
-            for (i in item.paintSlots.indices) {
-                val s = item.paintSlots[i]
-                item.paintSlots[i] = if (s == gone) item.slot else if (s > gone) s - 1 else s
+    /** A reviewed removal changes the recipe table and all plate assignments in the same Undo step. */
+    internal fun removeMixed(index: Int, replacement: Int, reviewedGeneration: Long): Job? {
+        val physical = typedPhysical()
+        val rows = mixed.toList()
+        val sublayers = mixSublayers
+        val gone = physical.size + index + 1
+        if (index !in rows.indices || replacement !in 1..physical.size || editorGeneration != reviewedGeneration) {
+            mixProblem = "The filament assignments changed. Review the removal again."
+            return null
+        }
+        return app.scope.launch(Dispatchers.Main) {
+            try {
+                val (remaining, settings) = withContext(Dispatchers.IO) {
+                    val updated = MixedFilament.remove(physical, rows, index)
+                    check(updated.size == rows.size - 1) { "The engine did not remove the reviewed mix." }
+                    updated to if (updated.isEmpty()) emptyMap() else MixedFilament.sliceOverrides(physical, updated, sublayers)
+                }
+                if (editorGeneration != reviewedGeneration || typedPhysical() != physical ||
+                    mixed.toList() != rows || mixSublayers != sublayers) {
+                    mixProblem = "The filament assignments changed. Review the removal again."
+                    return@launch
+                }
+                fun remap(slot: Int): Int = when {
+                    slot == gone -> replacement
+                    slot > gone -> slot - 1
+                    else -> slot
+                }
+                history.beginEdit()
+                try {
+                    restoreMixes(remaining, settings, sublayers)
+                    items.forEach { item ->
+                        item.slot = remap(item.slot)
+                        item.paintSlots.indices.forEach { i -> item.paintSlots[i] = remap(item.paintSlots[i]) }
+                    }
+                    mixProblem = null
+                    changed()
+                } finally {
+                    history.endEdit()
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                mixProblem = error.message ?: "The mix could not be removed."
             }
         }
     }

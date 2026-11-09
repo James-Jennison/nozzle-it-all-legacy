@@ -159,6 +159,32 @@ private fun MixEditor(p: PrepareState, mix: MixedFilamentFormat.Row?, index: Int
         gradient = false
     }
 
+    var removalGeneration by remember(index, mix) { mutableStateOf<Long?>(null) }
+    var replacement by remember(index, mix) { mutableStateOf(physical.firstOrNull()?.slot) }
+    removalGeneration?.let { reviewedGeneration ->
+        val slot = p.mixedSlot(index)
+        val affected = p.items.count { item -> item.slot == slot || slot in item.paintSlots }
+        ConfirmDialog(
+            title = "Remove mixed filament $slot?",
+            body = if (affected == 0) "This mix has no object or paint assignments."
+                else "$affected objects use this mix in their filament or paint assignments. Choose their replacement.",
+            detail = "Later mixed slots will move down one number, including their existing assignments.",
+            confirmLabel = "Remove mix",
+            destructive = true,
+            confirmEnabled = replacement != null,
+            extraContent = if (affected > 0) ({
+                DenseSelect("Replacement filament", physical.map { Choice(it.slot.toString(), "Slot ${it.slot} · ${it.type ?: "Filament"}") },
+                    replacement?.toString().orEmpty(), Modifier.fillMaxWidth()) { replacement = it.toIntOrNull() }
+            }) else null,
+            onConfirm = {
+                replacement?.let { p.removeMixed(index, it, reviewedGeneration) }
+                removalGeneration = null
+                onDone()
+            },
+            onDismiss = { removalGeneration = null },
+        )
+    }
+
     val bring = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     LaunchedEffect(index) { kotlinx.coroutines.delay(50); bring.bringIntoView() }
     Column(Modifier.fillMaxWidth().bringIntoViewRequester(bring).clip(RoundedCornerShape(8.dp)).background(c.surfaceSunken).border(1.dp, c.line, RoundedCornerShape(8.dp)).padding(8.dp),
@@ -226,10 +252,10 @@ private fun MixEditor(p: PrepareState, mix: MixedFilamentFormat.Row?, index: Int
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (mix != null) Txt("Delete", Nz.type.label, c.danger, modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { p.removeMixed(index, scope); onDone() }.padding(4.dp))
+            if (mix != null) NzButton("Remove mix…", { removalGeneration = p.editorGeneration }, kind = ButtonKind.QUIET)
             Spacer(Modifier.weight(1f))
             NzButton("Cancel", onDone, kind = ButtonKind.SECONDARY)
-            NzButton("OK", { if (mix == null) p.addMixed(row(), scope) else p.updateMixed(index, row(), scope); onDone() }, kind = ButtonKind.PRIMARY, enabled = preview != null && problem == null)
+            NzButton("OK", { if (mix == null) p.addMixed(row()) else p.updateMixed(index, row()); onDone() }, kind = ButtonKind.PRIMARY, enabled = preview != null && problem == null)
         }
     }
 }

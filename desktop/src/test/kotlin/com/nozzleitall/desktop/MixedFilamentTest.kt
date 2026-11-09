@@ -32,6 +32,42 @@ class MixedFilamentTest {
         assertEquals(6, MixedFilament.add(typed, rows, row(1 to 1, 3 to 1))!!.last().filament)
     }
 
+    @Test fun removalRemapsAcrossPlatesAndUndoRestoresRecipesAndAssignments() {
+        engineReady()
+        val tmp = Files.createTempDirectory("mf-remove").toFile()
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val app = AppState(AppPaths(File(tmp, "c"), File(tmp, "d"), File(tmp, "k")).ensure(), scope)
+        try {
+            kotlinx.coroutines.runBlocking {
+                val prepare = app.prepare
+                prepare.addPlate()
+                val cube = MeshIO.readStl(File(root, "site-src/assets/test-cube-20mm.stl").readBytes())
+                val physical = prepare.materials().map { (it.colorHex ?: "#FFFFFF") to it.type }
+                val rows = MixedFilament.display(physical, listOf(row(1 to 1, 2 to 1), row(2 to 1, 3 to 1)))
+                prepare.restoreMixes(rows, MixedFilament.sliceOverrides(physical, rows), true)
+                prepare.items += PrepItem(1, "first", cube, 60f, 60f, slot = 5, paintSlots = listOf(5, 6))
+                prepare.items += PrepItem(2, "second", cube, 60f, 60f, slot = 6, paintSlots = listOf(5), plate = 1)
+                prepare.history.reset()
+
+                assertNull(prepare.removeMixed(0, 3, prepare.editorGeneration - 1))
+                assertEquals(listOf(5, 6), prepare.items.map { it.slot })
+                requireNotNull(prepare.removeMixed(0, 3, prepare.editorGeneration)).join()
+                assertEquals(listOf(3, 5), prepare.items.map { it.slot })
+                assertEquals(listOf(listOf(3, 5), listOf(3)), prepare.items.map { it.paintSlots.toList() })
+                assertEquals(5, prepare.mixed.single().filament)
+
+                prepare.history.undo()
+                assertEquals(listOf(5, 6), prepare.items.map { it.slot })
+                assertEquals(listOf(listOf(5, 6), listOf(5)), prepare.items.map { it.paintSlots.toList() })
+                assertEquals(rows, prepare.mixed.toList())
+            }
+        } finally {
+            app.fleet.shutdown()
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            tmp.deleteRecursively()
+        }
+    }
+
     @Test fun deletingALoadedFilamentRenumbersAndFlagsMixes() {
         engineReady()
         val rows = listOf(row(2 to 1, 3 to 1), row(1 to 1, 2 to 1))
