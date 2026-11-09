@@ -220,7 +220,10 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
             if (projectSaveProblem == null) projectSaveProblem = "Finish this project decision before opening dropped files."
             return
         }
-        if (pendingMachineSelection != null || droppedProject != null || gcodeInspection != null) return
+        if (pendingMachineSelection != null || droppedProject != null || gcodeInspection != null) {
+            prepare.notice = "Close the current dialog before opening dropped files."
+            return
+        }
         when {
             files.size == 1 && files.single().extension.equals("3mf", true) -> droppedProject = files.single()
             files.size == 1 && files.single().extension.equals("gcode", true) -> gcodeInspection = files.single()
@@ -490,7 +493,7 @@ private fun AppHeader(state: AppState) {
     val c = Nz.colors
     val done = state.prepare.slice as? com.nozzleitall.desktop.prepare.SliceState.Done
     val windowWidth = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
-    val compactWorkflow = windowWidth < if (Nz.textScale >= 1.5f) 1120.dp else 850.dp
+    val compactWorkflow = usesCompactNavigation(windowWidth, Nz.textScale)
     val activeWorkflow = when {
         state.destination == Destination.MONITOR -> PrintWorkflowStage.MONITOR
         state.workspaceSendOpen -> PrintWorkflowStage.SEND

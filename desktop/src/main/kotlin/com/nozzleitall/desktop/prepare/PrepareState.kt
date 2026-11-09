@@ -142,7 +142,7 @@ data class SlicedPlateContext(
 
 sealed class SliceState {
     object Idle : SliceState()
-    data class Running(val progress: Float, val stage: String) : SliceState()
+    data class Running(val progress: Float, val stage: String, val batch: Boolean) : SliceState()
     data class Done(val result: SliceOutcome.Done, val preview: GcodePreview?,
                     val savedProjectId: String? = null, val savedProjectRevision: Long? = null,
                     val savedPlateId: String? = null, val targetProfileId: String? = null,
@@ -545,7 +545,7 @@ class PrepareState(private val app: AppState) {
             selected = null
             val prepared = batchSlices[plateIds[i]]
             when {
-                slice is SliceState.Running && slicingBatch -> discardMeshEditPreview()
+                (slice as? SliceState.Running)?.batch == true -> discardMeshEditPreview()
                 prepared != null -> showCompletedSlice(prepared, openPreview = showPreview)
                 batchSlices.isNotEmpty() -> {
                     slice = SliceState.Idle
@@ -1415,7 +1415,6 @@ class PrepareState(private val app: AppState) {
     @Volatile private var sliceGeneration = 0L
     @Volatile private var sliceCancelRequested = false
     private var batchSlices: Map<String, SliceState.Done> = emptyMap()
-    private var slicingBatch = false
 
     private fun invalidateSlice() {
         discardMeshEditPreview()
@@ -2210,8 +2209,7 @@ class PrepareState(private val app: AppState) {
             return
         }
         sliceCancelRequested = false
-        slicingBatch = batch
-        slice = SliceState.Running(0f, "Starting")
+        slice = SliceState.Running(0f, "Starting", batch)
         val results = linkedMapOf<String, SliceState.Done>()
         scope.launch(Dispatchers.Main) {
             for ((id, target) in targets) {
@@ -2234,7 +2232,7 @@ class PrepareState(private val app: AppState) {
                         val index = results.size
                         when (val outcome = worker.slice(request) { progress, stage ->
                             if (generation == sliceGeneration) slice = SliceState.Running((index + progress) / targets.size,
-                                if (batch) "$plateName · $stage" else stage)
+                                if (batch) "$plateName · $stage" else stage, batch)
                         }) {
                             is SliceOutcome.Done -> {
                                 try {

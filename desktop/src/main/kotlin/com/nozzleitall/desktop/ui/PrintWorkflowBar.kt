@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** The familiar slicer journey, expressed in NIA's own shell rather than Orca's window chrome. */
@@ -17,6 +18,9 @@ enum class PrintWorkflowStage(val label: String, val icon: NzIcon) {
     SEND("Send", NzIcon.SEND),
     MONITOR("Monitor", NzIcon.MONITOR),
 }
+
+internal fun usesCompactNavigation(width: Dp, textScale: Float): Boolean =
+    width < if (textScale >= 1.5f) 1120.dp else 850.dp
 
 internal fun printWorkflowStageEnabled(
     stage: PrintWorkflowStage,

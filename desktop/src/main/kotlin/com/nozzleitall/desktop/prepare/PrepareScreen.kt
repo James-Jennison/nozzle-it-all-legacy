@@ -585,9 +585,10 @@ fun PrepareScreen(state: AppState) {
             if (!previewFocused && !compactWorkspace) Spacer(Modifier.width(if (sidebarCollapsed) 28.dp else sidebarWidth))
             if (!previewFocused && compactWorkspace) NzButton("Setup & objects (${p.plateItems().size})", { compactObjectsOpen = !compactObjectsOpen },
                 kind = if (compactObjectsOpen) ButtonKind.PRIMARY else ButtonKind.SECONDARY, testTag = "compact-objects")
-            Box(Modifier.weight(1f)) { PlateTabs(p) }
+            val compactNavigation = usesCompactNavigation(workspaceWidth, Nz.textScale)
+            Box(Modifier.weight(1f)) { PlateTabs(p, compactNavigation) }
             if (!previewFocused && p.plateNames.size > 1) {
-                if (workspaceWidth < 1120.dp && Nz.textScale >= 1.5f)
+                if (compactNavigation)
                     NzIconButton(NzIcon.PROJECTS, "Plate overview", { p.showPlateOverview = true }, testTag = "plate-overview")
                 else NzButton("Plate overview", { p.showPlateOverview = true }, kind = ButtonKind.QUIET, testTag = "plate-overview")
             }
@@ -2643,31 +2644,35 @@ internal fun objectPartLabel(part: com.nozzleitall.project.ProjectManifest.Objec
 
 /** The project's plates (Orca's plate list): pick one to show it, rename it in place, add one, remove an empty one. */
 @Composable
-private fun PlateTabs(p: PrepareState) {
+private fun PlateTabs(p: PrepareState, compact: Boolean) {
     val c = Nz.colors
     var renaming by remember { mutableStateOf<Int?>(null) }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        p.plateNames.forEachIndexed { i, name ->
-            val on = i == p.currentPlate
-            if (renaming == i) {
-                var text by remember(i) { mutableStateOf(name) }
-                com.nozzleitall.desktop.settings.DenseInput(text, { text = it }, "Plate name", Modifier.width(150.dp))
-                NzButton("OK", { p.renamePlate(i, text.trim().ifBlank { "Plate ${i + 1}" }); renaming = null }, kind = ButtonKind.PRIMARY)
-            } else {
-                val count = p.plateItems(i).size
-                Row(Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.accent.copy(alpha = 0.14f) else c.surfaceSunken)
-                    .border(1.dp, if (on) c.accent else c.line, RoundedCornerShape(8.dp))
-                    .clickable(onClickLabel = if (on) "Rename $name" else "Show $name") { if (on) renaming = i else p.showPlate(i) }
-                    .semantics { role = Role.Tab; selected = on; contentDescription = "$name, $count object(s)" }
-                    .padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Txt(name, Nz.type.label, if (on) c.accent else c.text, maxLines = 1)
-                    Txt("$count", Nz.type.bodySmall, c.textMuted)
-                    if (on && count == 0 && p.plateNames.size > 1)
-                        Txt("×", Nz.type.label, c.textMuted, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClickLabel = "Remove $name") { p.removePlate(i) }.padding(horizontal = 2.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            p.plateNames.forEachIndexed { i, name ->
+                val on = i == p.currentPlate
+                if (renaming == i) {
+                    var text by remember(i) { mutableStateOf(name) }
+                    com.nozzleitall.desktop.settings.DenseInput(text, { text = it }, "Plate name", Modifier.width(150.dp))
+                    NzButton("OK", { p.renamePlate(i, text.trim().ifBlank { "Plate ${i + 1}" }); renaming = null }, kind = ButtonKind.PRIMARY)
+                } else {
+                    val count = p.plateItems(i).size
+                    Row(Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.accent.copy(alpha = 0.14f) else c.surfaceSunken)
+                        .border(1.dp, if (on) c.accent else c.line, RoundedCornerShape(8.dp))
+                        .clickable(onClickLabel = if (on) "Rename $name" else "Show $name") { if (on) renaming = i else p.showPlate(i) }
+                        .semantics { role = Role.Tab; selected = on; contentDescription = "$name, $count object(s)" }
+                        .padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Txt(name, Nz.type.label, if (on) c.accent else c.text, maxLines = 1)
+                        Txt("$count", Nz.type.bodySmall, c.textMuted)
+                        if (on && count == 0 && p.plateNames.size > 1)
+                            Txt("×", Nz.type.label, c.textMuted, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClickLabel = "Remove $name") { p.removePlate(i) }.padding(horizontal = 2.dp))
+                    }
                 }
             }
         }
-        NzButton("Add plate", { p.addPlate() }, kind = ButtonKind.QUIET, icon = NzIcon.ADD, testTag = "add-plate")
+        if (compact) NzIconButton(NzIcon.ADD, "Add plate", { p.addPlate() }, testTag = "add-plate")
+        else NzButton("Add plate", { p.addPlate() }, kind = ButtonKind.QUIET, icon = NzIcon.ADD, testTag = "add-plate")
     }
 }
 

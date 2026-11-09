@@ -68,6 +68,12 @@ class PreparePrinterPickerUiTest {
             listOf("prepare", "preview", "send", "monitor").forEach { stage ->
                 onNodeWithTag("workflow-$stage").assertIsDisplayed()
             }
+            onNodeWithTag("add-plate").assertIsDisplayed().assertHasClickAction()
+            if (width == 960 && scale == 1.5f) {
+                listOf("Prepare", "Preview", "Send", "Monitor", "Add plate").forEach { label ->
+                    onNodeWithContentDescription(label).assertIsDisplayed()
+                }
+            }
             onNodeWithTag("setup-connection").assertHasClickAction()
             onNodeWithTag("setup-printer").assertTextContains("Export only")
             onNodeWithContentDescription("Nozzle diameter, 0.4").assertIsDisplayed()
