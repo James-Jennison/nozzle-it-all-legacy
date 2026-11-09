@@ -1,0 +1,312 @@
+package net.jamesjennison.klippercompanion
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * Replaces the old one-field "type an address, tap Connect" flow (owner request, 2026-09-22):
+ * type + address + credentials, then a slicing-profile choice, then (for a Centauri Carbon)
+ * live firmware confirmation, then a live connectivity test - each step a real check, not just a
+ * form field, so a printer never gets silently added half-configured or unreachable. Every live
+ * check here builds its own short-lived PrinterService directly (the same ad hoc pattern
+ * SlicingCoordinator and NozzlePrinterWidget already use) rather than going through PrinterModel,
+ * since the profile doesn't exist there yet - addProfile is the one and only commit at the end.
+ */
+private enum class WizardStep { TYPE_AND_ADDRESS, SLICING_PROFILE, FIRMWARE_CONFIRM, CONNECTIVITY_TEST }
+
+@Composable fun AddPrinterWizard(existingAddresses: List<String>, addProfile: (PrinterProfile) -> String?, openPrinter: (String) -> Unit, close: () -> Unit) {
+    var step by remember { mutableStateOf(WizardStep.TYPE_AND_ADDRESS) }
+    var name by remember { mutableStateOf("") }
+    var address by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf("") }
+    var serial by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf(PrinterKind.GENERIC_KLIPPER) }
+    var slicingModel by remember { mutableStateOf<SlicingPrinterModel?>(null) }
+    // Set once the person picks a profile themselves (including "None"); a type's default never overrides that.
+    var slicingModelChosen by remember { mutableStateOf(false) }
+    var customMachine by remember { mutableStateOf<CustomMachine?>(null) }
+    var customMachineError by remember { mutableStateOf<String?>(null) }
+    var showKey by remember { mutableStateOf(false) }
+    var typeError by remember { mutableStateOf<String?>(null) }
+    var normalizedAddressResult by remember { mutableStateOf("") }
+    var declaredFirmwareVersion by remember { mutableStateOf("") }
+    var detecting by remember { mutableStateOf(false) }
+    var detectNote by remember { mutableStateOf("") }
+    var testing by remember { mutableStateOf(false) }
+    var testPassed by remember { mutableStateOf(false) }
+    var testNote by remember { mutableStateOf("") }
+    var finishError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun draftProfile() = PrinterProfile(normalizedAddressResult, name.trim().take(80), false, "", apiKey.trim().take(200), kind, serial.trim().take(40), slicingModel, declaredFirmwareVersion, customMachine.takeIf { ElegooProfiles.firmwareFor(slicingModel) == null })
+
+    var scanning by remember { mutableStateOf(false) }
+    var scanNote by remember { mutableStateOf("") }
+    val found = remember { mutableStateListOf<DiscoveredPrinter>() }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    fun applyDiscovered(p: DiscoveredPrinter) {
+        if(name.isBlank()) name = p.name
+        address = p.address; kind = p.kind; slicingModel = p.slicingModel
+        if(p.serial.isNotBlank()) serial = p.serial
+        typeError = null
+    }
+    fun runScan() {
+        scanning = true; scanNote = "Looking for printers on this network…"; found.clear()
+        scope.launch {
+            val hosts = withContext(Dispatchers.IO) { LocalNetwork.scanHosts(context) }
+            if(hosts.isEmpty()) { scanNote = "Not connected to a Wi-Fi/LAN network, so there is nothing to scan."; scanning = false; return@launch }
+            withContext(Dispatchers.IO) {
+                val lock = LocalNetwork.multicastLock(context)
+                try { PrinterScanner().scan(hosts) { p -> scope.launch(Dispatchers.Main) { found += p } } } finally { runCatching { lock?.release() } }
+            }
+            scanning = false
+            scanNote = if(found.isEmpty()) "No printers answered. Bambu printers need LAN mode on; you can still enter the address below." else "Tap a printer to fill in the form. You still enter any password or access code."
+        }
+    }
+
+    fun runFirmwareDetection() {
+        detecting = true; detectNote = ""
+        scope.launch {
+            val result = try {
+                val service = withContext(Dispatchers.IO) { printerServiceFor(draftProfile(), normalizedAddressResult) }
+                val identity = try { withContext(Dispatchers.IO) { service.firmwareIdentity() } } finally { runCatching { service.close() } }
+                Result.success(identity)
+            } catch (e: Exception) { Result.failure(e) }
+            detecting = false
+            result.onSuccess { declaredFirmwareVersion = it.version; detectNote = "Confirmed: ${it.app.ifBlank { "unknown firmware" }} ${it.version}" }
+            result.onFailure { detectNote = it.message ?: "Could not read firmware. Is the printer connected?" }
+        }
+    }
+    fun runConnectivityTest() {
+        testing = true; testNote = ""; testPassed = false
+        scope.launch {
+            val result = try {
+                val service = withContext(Dispatchers.IO) { printerServiceFor(draftProfile(), normalizedAddressResult) }
+                val snapshot = try { withContext(Dispatchers.IO) { service.snapshot() } } finally { runCatching { service.close() } }
+                Result.success(snapshot)
+            } catch (e: Exception) { Result.failure(e) }
+            testing = false
+            result.onSuccess { testPassed = true; testNote = "Connected. ${familyStateLabel(it.state)}." }
+            result.onFailure { testPassed = false; testNote = it.message ?: "Could not connect." }
+        }
+    }
+    LaunchedEffect(step) { if(step == WizardStep.FIRMWARE_CONFIRM && declaredFirmwareVersion.isBlank()) runFirmwareDetection() }
+    LaunchedEffect(step) { if(step == WizardStep.CONNECTIVITY_TEST && !testPassed) runConnectivityTest() }
+
+    AlertDialog(onDismissRequest = close, title = { Text("Add printer") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            when(step) {
+                WizardStep.TYPE_AND_ADDRESS -> {
+                    Text("Step 1 of 4: printer type and address", style = MaterialTheme.typography.labelLarge)
+                    OutlinedButton({ runScan() }, enabled = !scanning, modifier = Modifier.testTag("wizard-scan")) { Text(if(scanning) "Scanning…" else "Scan network", maxLines = 1) }
+                    if(scanNote.isNotBlank()) Text(scanNote, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("wizard-scan-note"))
+                    found.forEach { p ->
+                        val saved = existingAddresses.any { it.contains(p.address) }
+                        OutlinedButton({ applyDiscovered(p) }, enabled = !saved, modifier = Modifier.fillMaxWidth().testTag("wizard-found-${p.address}")) {
+                            Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
+                                Text(p.name, maxLines = 1); Text(p.address + " · " + (if(saved) "already saved" else p.detail), style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                            }
+                        }
+                    }
+                    OutlinedTextField(name, { name = it.take(80) }, label = { Text("Printer name") }, singleLine = true)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(kind==PrinterKind.GENERIC_KLIPPER, {kind=PrinterKind.GENERIC_KLIPPER}, label={Text("Generic Klipper")})
+                        FilterChip(kind==PrinterKind.SNAPMAKER_U1, {kind=PrinterKind.SNAPMAKER_U1}, label={Text("Snapmaker U1 (stock)")}, modifier=Modifier.testTag("wizard-kind-u1-stock"))
+                        FilterChip(kind==PrinterKind.SNAPMAKER_U1_PAXX, {kind=PrinterKind.SNAPMAKER_U1_PAXX}, label={Text("Snapmaker U1 (PAXX)")}, modifier=Modifier.testTag("wizard-kind-u1-paxx"))
+                        FilterChip(kind==PrinterKind.BAMBU_LAB, {kind=PrinterKind.BAMBU_LAB}, label={Text("Bambu Lab")})
+                        FilterChip(kind==PrinterKind.PRUSA_LINK, {kind=PrinterKind.PRUSA_LINK}, label={Text("Prusa Link")}, modifier=Modifier.testTag("wizard-kind-prusa-link"))
+                        FilterChip(kind==PrinterKind.OCTOPRINT, {kind=PrinterKind.OCTOPRINT}, label={Text("OctoPrint")}, modifier=Modifier.testTag("wizard-kind-octoprint"))
+                        FilterChip(kind==PrinterKind.ELEGOO, {kind=PrinterKind.ELEGOO}, label={Text("Elegoo")}, modifier=Modifier.testTag("wizard-kind-elegoo"))
+                        FilterChip(kind==PrinterKind.CREALITY, {kind=PrinterKind.CREALITY}, label={Text("Creality (K1 / K2 / Hi)")}, modifier=Modifier.testTag("wizard-kind-creality"))
+                        FilterChip(kind==PrinterKind.FLASHFORGE, {kind=PrinterKind.FLASHFORGE}, label={Text("Flashforge")}, modifier=Modifier.testTag("wizard-kind-flashforge"))
+                        FilterChip(kind==PrinterKind.DUET, {kind=PrinterKind.DUET}, label={Text("Duet (RepRapFirmware)")}, modifier=Modifier.testTag("wizard-kind-duet"))
+                        FilterChip(kind==PrinterKind.ULTIMAKER, {kind=PrinterKind.ULTIMAKER}, label={Text("UltiMaker (3 / S-series)")}, modifier=Modifier.testTag("wizard-kind-ultimaker"))
+                        FilterChip(kind==PrinterKind.REPETIER, {kind=PrinterKind.REPETIER}, label={Text("Repetier-Server")}, modifier=Modifier.testTag("wizard-kind-repetier"))
+                        FilterChip(kind==PrinterKind.ANYCUBIC_LAN, {kind=PrinterKind.ANYCUBIC_LAN}, label={Text("Anycubic (Kobra 3 / S1 / X)")}, modifier=Modifier.testTag("wizard-kind-anycubic-lan"))
+                        FilterChip(kind==PrinterKind.SNAPMAKER_A_SERIES, {kind=PrinterKind.SNAPMAKER_A_SERIES}, label={Text("Snapmaker 2.0 (A250 / A350)")}, modifier=Modifier.testTag("wizard-kind-snapmaker-a-series"))
+                        FilterChip(kind==PrinterKind.SNAPMAKER_SACP, {kind=PrinterKind.SNAPMAKER_SACP}, label={Text("Snapmaker J1 / Artisan")}, modifier=Modifier.testTag("wizard-kind-snapmaker-sacp"))
+                        FilterChip(kind==PrinterKind.USB_SERIAL, {kind=PrinterKind.USB_SERIAL; if(apiKey.isBlank()) apiKey = UsbSerial.OFFERED_BAUD_RATES.first().toString()}, label={Text("USB cable")}, modifier=Modifier.testTag("wizard-kind-usb-serial"))
+                    }
+                    if(kind==PrinterKind.BAMBU_LAB) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true)
+                        OutlinedTextField(serial, {serial=it.take(40)}, label={Text("Serial number")}, singleLine=true, modifier=Modifier.testTag("wizard-bambu-serial"))
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("Access code")}, singleLine=true, modifier=Modifier.testTag("wizard-bambu-access-code"),
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                        Text("Serial number and access code both come from the printer's own network settings. LAN mode must be on.", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.OCTOPRINT) {
+                        OutlinedTextField(address, {address=it}, label={Text("OctoPrint address")}, placeholder={Text("octopi.local or 192.168.1.60:5000")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("API key")}, singleLine=true, modifier=Modifier.testTag("wizard-octoprint-key"),
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                        Text("Create one in OctoPrint under Settings > Application Keys (or use your user's API key).", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.ELEGOO) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("Access code (Centauri Carbon 2 only, if you set one)")}, singleLine=true, modifier=Modifier.testTag("wizard-elegoo-access-code"),
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                        Text("A Centauri Carbon on Elegoo's own firmware or a Centauri Carbon 2, on your network. A Centauri Carbon running OpenCentauri COSMOS is a Klipper printer: choose Generic Klipper for it.", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.CREALITY) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        Text("A Creality K1, K2 or Hi on Creality's own firmware, on your network. Nozzle It All reads its status and CFS slots and uploads sliced files; you start the print on the printer's screen (starting from here isn't verified on a real printer yet).", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.FLASHFORGE) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        OutlinedTextField(serial, {serial=it.take(40)}, label={Text("Serial number")}, singleLine=true, modifier=Modifier.testTag("wizard-flashforge-serial"))
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("Access code")}, singleLine=true, modifier=Modifier.testTag("wizard-flashforge-access-code"),
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                        Text("Serial number and access code are both on the printer's own network settings screen; Flashforge's local API needs both. You start the print on the printer's screen (starting from here isn't verified on a real printer yet).", style=MaterialTheme.typography.bodySmall)
+                        Text("An older Flashforge (Adventurer 3 / 4, Creator, Guider): leave both blank. Nozzle It All then uses its older port-8899 connection, which only checks the printer answers (its state isn't read yet).", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.DUET) {
+                        OutlinedTextField(address, {address=it}, label={Text("Duet address")}, placeholder={Text("192.168.1.50 or duet.local")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("Board password (optional)")}, singleLine=true, modifier=Modifier.testTag("wizard-duet-password"),
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                        Text("A Duet on RepRapFirmware, standalone or with Duet Software Framework. Only enter a password if the board has one (M551). Nozzle It All checks the board is reachable and uploads sliced files; you start the print on the printer's screen or Duet Web Control (starting from here isn't verified on a real printer yet).", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.ULTIMAKER) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        UltiMakerPairing(address, serial, apiKey) { id, key -> serial = id; apiKey = key }
+                        Text("A networked UltiMaker (3, S3, S5, S7). Status works without pairing. Sending prints from here isn't verified on a real printer yet, and an UltiMaker prints every job it is sent, so nothing is sent: print from the printer's screen. The UltiMaker 2 has no network connection.", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.REPETIER) {
+                        OutlinedTextField(address, {address=it}, label={Text("Repetier-Server address")}, placeholder={Text("192.168.1.60:3344")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("API key")}, singleLine=true, modifier=Modifier.testTag("wizard-repetier-key"),
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                        OutlinedTextField(serial, {serial=it.take(40)}, label={Text("Printer slug (blank if the server has one printer)")}, singleLine=true, modifier=Modifier.testTag("wizard-repetier-slug"))
+                        Text("One printer behind a Repetier-Server. Nozzle It All checks the server answers and stores sliced files in its model library; you start the print from Repetier-Server or the printer's screen (starting from here isn't verified on a real printer yet).", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.ANYCUBIC_LAN) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        Text("An Anycubic Kobra 3, Kobra S1 or Kobra X on Anycubic's own firmware, with LAN mode turned on in the printer's settings. Nothing else is needed: the printer hands Nozzle It All its connection details itself. Nozzle It All reads its status and ACE slots and uploads sliced files; you start the print on the printer's screen (starting from here isn't verified on a real printer yet).", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.SNAPMAKER_A_SERIES || kind==PrinterKind.SNAPMAKER_SACP) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        SnapmakerConnect(kind, address, serial, apiKey) { s, k -> serial = s; apiKey = k }
+                        Text(if(kind==PrinterKind.SNAPMAKER_SACP) "A Snapmaker J1 or Artisan on your network. Tap Connect and accept Nozzle It All on the printer's screen. Nozzle It All reads its temperatures and job progress and uploads sliced files; you start the print on the printer's screen (starting from here isn't verified on a real printer yet). Laser and CNC work isn't offered."
+                            else "A Snapmaker 2.0 (A150, A250 or A350, single or dual extruder) with a 3D printing module, on your network. Tap Connect and accept Nozzle It All on the touchscreen. Nozzle It All reads its state and job progress and uploads sliced files; you start the print on the printer's screen (starting from here isn't verified on a real printer yet). Laser and CNC work isn't offered.", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.USB_SERIAL) {
+                        UsbSerialDevicePicker(address, serial, apiKey) { addr, ser, baud -> address = addr; serial = ser; apiKey = baud }
+                        Text("A printer plugged into this device by USB cable, spoken to as a Marlin/Prusa serial port. Nozzle It All reads its temperatures and SD job progress; nothing is sent that could move, heat or reset it, and starting a print or uploading a file from here isn't verified on a real printer yet - copy the sliced file to the printer's SD card or USB stick and start it from the printer's own screen. Plugging in never restarts the printer on its own; a separate, explicit action offers to if it doesn't answer.", style=MaterialTheme.typography.bodySmall)
+                    } else if(kind==PrinterKind.PRUSA_LINK) {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer IP address")}, placeholder={Text("192.168.1.50")}, singleLine=true)
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("Prusa Link password")}, singleLine=true, modifier=Modifier.testTag("wizard-prusa-password"),
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                    } else {
+                        OutlinedTextField(address, {address=it}, label={Text("Printer address")}, singleLine=true, modifier=Modifier.testTag("wizard-address"))
+                        Text("A Tailscale address (100.x.x.x or *.ts.net), Cloudflare Tunnel or other https:// address also works away from home.", style=MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(apiKey, {apiKey=it.take(200)}, label={Text("API key (optional)")}, singleLine=true,
+                            visualTransformation=if(showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon={TextButton({showKey=!showKey}){Text(if(showKey) "Hide" else "Show")}})
+                    }
+                    typeError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+                WizardStep.SLICING_PROFILE -> {
+                    Text("Step 2 of 4: slicing profile", style = MaterialTheme.typography.labelLarge)
+                    Text("Which bundled OrcaSlicer profile to use when slicing a shared model for this printer. Leave unset if you never slice on-device for it.", style=MaterialTheme.typography.bodySmall)
+                    SlicingModelPicker(slicingModel) { slicingModel = it; slicingModelChosen = true }
+                    CustomMachineEditor(slicingModel, customMachine) { value, problem -> customMachine = value; customMachineError = problem }
+                    ElegooProfiles.connectionProblem(slicingModel, kind)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("wizard-elegoo-profile-problem")) }
+                }
+                WizardStep.FIRMWARE_CONFIRM -> {
+                    Text("Step 3 of 4: firmware confirmation", style = MaterialTheme.typography.labelLarge)
+                    Text("A Centauri Carbon's firmware must be confirmed before slicing for it - the wrong slicer profile can trigger a hard emergency stop mid-print on COSMOS 26.07.0+.", style=MaterialTheme.typography.bodySmall)
+                    if(detecting) Text("Detecting…") else if(declaredFirmwareVersion.isNotBlank()) Text("Confirmed firmware: $declaredFirmwareVersion", color=MaterialTheme.colorScheme.primary) else if(detectNote.isNotBlank()) Text(detectNote, color=MaterialTheme.colorScheme.error)
+                    TextButton({runFirmwareDetection()}, enabled=!detecting, modifier=Modifier.testTag("wizard-retry-firmware")){Text(if(detecting)"Detecting…" else "Retry detection")}
+                    Text("You can skip this and confirm later from Edit printer - slicing for this printer will stay blocked until it's confirmed either way.", style=MaterialTheme.typography.bodySmall)
+                }
+                WizardStep.CONNECTIVITY_TEST -> {
+                    Text("Step 4 of 4: connection test", style = MaterialTheme.typography.labelLarge)
+                    if(testing) Text("Testing connection…") else if(testPassed) Text(testNote, color=MaterialTheme.colorScheme.primary) else if(testNote.isNotBlank()) Text(testNote, color=MaterialTheme.colorScheme.error)
+                    TextButton({runConnectivityTest()}, enabled=!testing, modifier=Modifier.testTag("wizard-retry-connection")){Text(if(testing)"Testing…" else "Retry test")}
+                }
+            }
+            finishError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }, confirmButton = {
+        when(step) {
+            WizardStep.TYPE_AND_ADDRESS -> Button({
+                typeError = null
+                val normalized = try { normalizedInputAddress(address, kind) } catch(e: IllegalArgumentException) { typeError = "Enter a valid printer address."; return@Button }
+                if(normalized in existingAddresses) { typeError = "That printer address is already saved."; return@Button }
+                normalizedAddressResult = normalized
+                // Adding a printer is a fresh trust decision: an old pin (say from an abandoned attempt, or a printer that was reset) must not block it.
+                if(kind == PrinterKind.BAMBU_LAB && serial.isNotBlank()) BambuCertPins.store.forget(serial.trim())
+                if(kind == PrinterKind.ANYCUBIC_LAN) anycubicPinKeyForAddress(normalized)?.let { BambuCertPins.store.forget(it) }
+                // Typing the address and picking the type (instead of tapping a scan result) used to leave the profile empty
+                // even for a U1, where only one profile fits.
+                if(slicingModel == null && !slicingModelChosen) slicingModel = PrinterDiscovery.defaultSlicingModel(kind)
+                step = WizardStep.SLICING_PROFILE
+            }, enabled = address.isNotBlank(), modifier = Modifier.testTag("wizard-next-1")) { Text("Next") }
+            WizardStep.SLICING_PROFILE -> Button({ step = if(ElegooProfiles.isCosmos(slicingModel)) WizardStep.FIRMWARE_CONFIRM else WizardStep.CONNECTIVITY_TEST }, enabled = customMachineError == null && ElegooProfiles.connectionProblem(slicingModel, kind) == null, modifier = Modifier.testTag("wizard-next-2")) { Text("Next") }
+            WizardStep.FIRMWARE_CONFIRM -> Button({ step = WizardStep.CONNECTIVITY_TEST }, enabled = !detecting, modifier = Modifier.testTag("wizard-next-3")) { Text(if(declaredFirmwareVersion.isNotBlank()) "Next" else "Skip for now") }
+            WizardStep.CONNECTIVITY_TEST -> Button({
+                finishError = addProfile(draftProfile())
+                if(finishError == null) { openPrinter(normalizedAddressResult); close() }
+            }, enabled = testPassed && !testing, modifier = Modifier.testTag("wizard-finish")) { Text("Finish") }
+        }
+    }, dismissButton = {
+        TextButton({
+            when(step) {
+                WizardStep.TYPE_AND_ADDRESS -> close()
+                WizardStep.SLICING_PROFILE -> step = WizardStep.TYPE_AND_ADDRESS
+                WizardStep.FIRMWARE_CONFIRM -> step = WizardStep.SLICING_PROFILE
+                WizardStep.CONNECTIVITY_TEST -> step = if(ElegooProfiles.isCosmos(slicingModel)) WizardStep.FIRMWARE_CONFIRM else WizardStep.SLICING_PROFILE
+            }
+        }) { Text(if(step==WizardStep.TYPE_AND_ADDRESS) "Cancel" else "Back") }
+    })
+}
+
+/**
+ * PrinterKind.USB_SERIAL's device picker: lists attached devices [UsbSerial] recognizes, asks for permission when a
+ * device without it is tapped, then reports the canonical "usb:<vendorId>:<productId>:<serialNumber>" address
+ * (once permission makes the serial number readable), that device's own serial number (for [PrinterProfile.serial],
+ * display only) and the chosen baud rate (for [PrinterProfile.apiKey]) back to the caller.
+ */
+@Composable internal fun UsbSerialDevicePicker(address: String, serial: String, baud: String, onPick: (address: String, serial: String, baud: String) -> Unit) {
+    val devices = remember { mutableStateListOf<UsbSerialDeviceManager.AttachedDevice>() }
+    var refreshNote by remember { mutableStateOf("") }
+    fun refresh() {
+        devices.clear(); devices.addAll(UsbSerialDeviceManager.attachedDevices())
+        refreshNote = if(devices.isEmpty()) "No recognized USB-serial printer is plugged in. Plug one in with a USB cable, then tap Refresh." else ""
+    }
+    LaunchedEffect(Unit) { refresh() }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton({ refresh() }, modifier = Modifier.testTag("wizard-usb-refresh")) { Text("Refresh") }
+        if(refreshNote.isNotBlank()) Text(refreshNote, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("wizard-usb-note"))
+        devices.forEach { attached ->
+            val identity = UsbSerialDeviceManager.identity(attached.device)
+            val selected = address.isNotBlank() && UsbSerialDeviceManager.parseIdentity(address)?.let { it.first == attached.device.vendorId && it.second == attached.device.productId } == true
+            OutlinedButton({
+                UsbSerialDeviceManager.requestPermission(attached.device) { granted ->
+                    if(granted) onPick(UsbSerialDeviceManager.identity(attached.device), attached.device.serialNumber.orEmpty(), baud.ifBlank { UsbSerial.OFFERED_BAUD_RATES.first().toString() })
+                }
+            }, modifier = Modifier.fillMaxWidth().testTag("wizard-usb-device-${attached.device.vendorId}-${attached.device.productId}")) {
+                Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
+                    Text("${attached.chipLabel} (${"%04x".format(attached.device.vendorId)}:${"%04x".format(attached.device.productId)})", maxLines = 1)
+                    Text(if(selected) "Selected" else identity, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                }
+            }
+        }
+        Text("Baud rate", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            UsbSerial.OFFERED_BAUD_RATES.forEach { rate ->
+                FilterChip(baud == rate.toString(), { onPick(address, serial, rate.toString()) }, label = { Text(rate.toString()) }, modifier = Modifier.testTag("wizard-usb-baud-$rate"))
+            }
+        }
+        Text("Most 8-bit boards (Ender-class/Creality, many CH340/CP210x/FTDI adapters) use 115200. Prusa's native USB boards (MK4, MK3.5, CORE One) and some tuned Marlin builds use 250000 - not sure which applies, try 115200 first.", style = MaterialTheme.typography.bodySmall)
+    }
+}

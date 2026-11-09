@@ -1,0 +1,279 @@
+import java.security.MessageDigest
+import java.time.Instant
+import java.util.UUID
+import java.util.zip.ZipFile
+
+plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose"); id("com.google.devtools.ksp") }
+
+// The native engine is nozzle-engine (engine/fork/ENGINE_PIN.json, P-0020/P-0021/P-0022), built against the engine root
+// engine/fork/android/prepare_engine_root.sh makes (-PnozzleEngineRoot=<dir> to move it; ORCASLICER_ENGINE_ROOT wins).
+val nozzleEngineRoot: String = providers.gradleProperty("nozzleEngineRoot").getOrElse("/mnt/faststorage/build-work/nozzle-android-fork")
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+
+android {
+ namespace = "net.jamesjennison.klippercompanion"
+ compileSdk = 36
+ defaultConfig {
+  // minSdk raised 26 -> 28 for WO-13's slicing engine: Boost.Locale (a libslic3r dependency)
+  // needs iconv(), only __INTRODUCED_IN(28) in Bionic, and every other engine dependency is
+  // fine as low as 21 - so 28 is Boost.Locale's floor, not an arbitrary choice, and it narrows
+  // this app's supported devices to Android 9+ (2018). See docs/WORK_ORDER.md's WO-13 entry.
+  applicationId = "com.nozzleitall.app"; minSdk = 28; targetSdk = 36; versionCode = (providers.gradleProperty("nozzleVersionCode").orNull ?: "1").toInt(); versionName = providers.gradleProperty("nozzleVersionName").orNull ?: "0.1.0"; testInstrumentationRunner = "net.jamesjennison.klippercompanion.NozzleTestRunner"
+  // arm64-v8a only, matching every physical device this app has ever been verified on (Razr
+  // 2023) and the only ABI the vendored slicing engine's dependencies were built for. NDK
+  // 29.0.14206865 (pinned below) matches what that engine was built and verified with.
+  ndk { abiFilters += "arm64-v8a" }
+  manifestPlaceholders["appLabel"] = "Nozzle It All"
+  // Phase 10: optional MyMiniFactory developer credentials, supplied by the owner at build time (never committed).
+  // MMF_API_KEY enables Discover browsing; MMF_CLIENT_KEY enables sign-in (file downloads). Empty = the user enters their own in Discover.
+  buildConfigField("String", "MMF_API_KEY", "\"${providers.gradleProperty("MMF_API_KEY").orElse(providers.environmentVariable("MMF_API_KEY")).getOrElse("")}\"")
+  buildConfigField("String", "MMF_CLIENT_KEY", "\"${providers.gradleProperty("MMF_CLIENT_KEY").orElse(providers.environmentVariable("MMF_CLIENT_KEY")).getOrElse("")}\"")
+  // Test Grid evidence names the commit a build came from. Blank outside a git checkout; -PnozzleSourceRevision overrides.
+  buildConfigField("String", "SOURCE_REVISION", "\"${providers.gradleProperty("nozzleSourceRevision").orElse(providers.exec { commandLine("git", "rev-parse", "HEAD"); isIgnoreExitValue = true }.standardOutput.asText.map { it.trim() }).getOrElse("").filter { it.isLetterOrDigit() }}\"")
+  externalNativeBuild {
+   cmake {
+    // CMAKE_BUILD_TYPE=Release regardless of the Gradle Debug/Release variant - matches
+    // orcaslicer-android-engine's own build_libslic3r.sh exactly (its env.sh hardcodes
+    // Release). This is load-bearing, not cosmetic: GCode.hpp forces its own
+    // ORCA_CHECK_GCODE_PLACEHOLDERS strictness check on whenever NDEBUG is undefined (Debug
+    // builds), and that check validates custom-gcode placeholder keys against a static
+    // allow-list (PrintConfig.cpp) that's demonstrably stale against what real gcode
+    // processing passes at runtime for filament_start_gcode/layer_change_gcode - a genuine
+    // upstream data inconsistency, not anything Android-specific. It threw
+    // "Some EditGcodeDialog defs were not specified properly" the first time this engine ran
+    // through Nozzle It All's own (Debug-mode) native build, despite identical config to the
+    // already-verified CLI tool - found via __android_log_print diagnostics added
+    // temporarily to the vendored GCode.cpp, then reverted once root-caused. See
+    // docs/WORK_ORDER.md's WO-13 entry.
+    arguments += listOf("-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release")
+    // Phase 0 (Consumer Slicer Plan §16): CI (.github/workflows/ci.yml) runs on a self-hosted
+    // runner (gthost-build01) where orcaslicer-android-engine lives at a different absolute path
+    // than this dev box's /mnt/faststorage/orcaslicer-android-engine - CMakeLists.txt's own
+    // ORCASLICER_ENGINE_ROOT cache default. Passing the override here, only when the CI
+    // environment variable is actually set, keeps local dev builds (no env var) completely
+    // unaffected - this is additive, not a behavior change for anyone not running CI.
+    // The engine root: engine/fork/android/prepare_engine_root.sh's (-PnozzleEngineRoot=<dir> to move it).
+    // ORCASLICER_ENGINE_ROOT, when set (CI), always wins.
+    System.getenv("ORCASLICER_ENGINE_ROOT")?.let { arguments += "-DORCASLICER_ENGINE_ROOT=$it" }
+     ?: run { arguments += "-DORCASLICER_ENGINE_ROOT=$nozzleEngineRoot" }
+    // Without this, AGP discovers and builds every CMake target in the whole configured
+    // project tree - including OrcaSlicer's desktop GUI executable (needs wxWidgets, which
+    // isn't cross-compiled here) and its i18n tooling. slic3rengine is the only target this
+    // app actually needs; libslic3r comes along transitively as its dependency. Matches what
+    // orcaslicer-android-engine's own build_libslic3r.sh does explicitly (`ninja libslic3r
+    // slic3rengine slic3r_cli_test`), just scoped through Gradle instead of a raw ninja call.
+    targets += "slic3rengine"
+   }
+  }
+ }
+ // WO-31 (owner request): real R8 shrinking/minification for release, measured to cut the
+ // release APK from 109.9MB to 73.6MB installed (47.1MB to 34.8MB download) - see
+ // docs/WORK_ORDER.md's WO-31 entry for the full before/after. proguard-rules.pro's own comments
+ // justify every rule (the JNI native-bridge keep rule is load-bearing, not boilerplate - see
+ // that file).
+ // Phase 9g: release signing comes from the environment or ~/.gradle/gradle.properties - never from this repo.
+ // Set NOZZLE_KEYSTORE (path), NOZZLE_KEYSTORE_PASSWORD, NOZZLE_KEY_ALIAS and NOZZLE_KEY_PASSWORD to sign; without
+ // them assembleRelease still works and produces an unsigned APK (the owner's signing identity is decided outside
+ // this repo, see docs/RELEASE.md).
+ val signingValue = { name: String -> providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull }
+ val releaseKeystore = signingValue("NOZZLE_KEYSTORE")
+ signingConfigs {
+  if (releaseKeystore != null) create("release") {
+   storeFile = file(releaseKeystore)
+   storePassword = signingValue("NOZZLE_KEYSTORE_PASSWORD"); keyAlias = signingValue("NOZZLE_KEY_ALIAS"); keyPassword = signingValue("NOZZLE_KEY_PASSWORD")
+  }
+ }
+ if (providers.gradleProperty("nozzleSmoke").isPresent) testBuildType = "releaseSmoke"
+ buildTypes {
+  // -PnozzleIdSuffix=.something installs a debug build beside the real app (its own application ID and data), for
+  // on-device tests that must never replace or uninstall the installed app and its saved printers.
+  // -PnozzleAppLabel="Nozzle It All - Testing" gives such a build its own launcher name. Debug only: release is always "Nozzle It All".
+  debug { providers.gradleProperty("nozzleIdSuffix").orNull?.let { applicationIdSuffix = it; versionNameSuffix = it }
+   providers.gradleProperty("nozzleAppLabel").orNull?.let { manifestPlaceholders["appLabel"] = it } }
+  release {
+   isMinifyEnabled = true; isShrinkResources = true
+   proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+   if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
+  }
+  // Phase 9g: the release recipe (R8 shrinking + obfuscation of every dependency) with the app's own classes and
+  // Kotlin kept, debug-signed, so the whole instrumented suite can run against minified libraries:
+  //   ./gradlew assembleReleaseSmoke assembleAndroidTest -PnozzleSmoke   (-PnozzleSmoke points the androidTest APK at this type)
+  // Never shipped. See proguard-smoke.pro and docs/RELEASE.md.
+  create("releaseSmoke") {
+   initWith(getByName("release"))
+   signingConfig = signingConfigs.getByName("debug")
+   matchingFallbacks += "release"
+   proguardFiles("proguard-smoke.pro")
+   testProguardFiles("proguard-smoke-test.pro")
+  }
+ }
+ buildFeatures { compose = true; buildConfig = true }
+ compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+ kotlinOptions { jvmTarget = "17" }
+ // Pinned rather than "latest": the exact NDK this native build has been verified against
+ // (see the oneTBB cross-compile proof in the WO-13 plan/commit history). A different NDK
+ // silently changes native codegen - do not bump this without re-verifying the native build.
+ // 27.1.12297006 (clang 18) miscompiled the engine's per-extruder lookups on arm64 (the U1
+ // "heater_bed 32769" slice, 2026-09-30; docs/upstream/PROVENANCE.md P-0041); 29.0.14206865
+ // (clang 21) is clean and is what the engine's own Android build uses.
+ ndkVersion = "29.0.14206865"
+ externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
+ // Several of Netty's jars (pulled in transitively by hivemq-mqtt-client) each carry their own
+ // copy of this JAR-signing-era index file; it's not needed at runtime, so drop it rather than
+ // pick one arbitrarily.
+ packaging { resources { excludes += "META-INF/INDEX.LIST"; pickFirsts += "META-INF/io.netty.versions.properties" } }
+}
+dependencies {
+ implementation(project(":environment-core"))
+ implementation(project(":domain")); implementation(project(":project-format"))
+ implementation(project(":transport")); implementation(project(":printer-api"))
+ implementation(project(":test-grid"))
+ implementation(platform("androidx.compose:compose-bom:2026.06.00"))
+ implementation("androidx.activity:activity-compose:1.11.0")
+ implementation("androidx.compose.material3:material3")
+ implementation("androidx.compose.ui:ui")
+ implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
+ implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+ implementation("com.squareup.okhttp3:okhttp:4.12.0")
+ implementation("androidx.security:security-crypto:1.1.0")
+ // Bespok3d bridge (Snapmaker U1/PAXX): SSH probe/enrollment + OpenPGP-signed plugin catalog
+ // verification, ported from Helix. com.github.mwiede:jsch is the actively maintained fork of
+ // the abandoned com.jcraft:jsch (same package name, drop-in API) — Helix itself pins this same
+ // fork/version. bcpg/bcprov provide the OpenPGP signature verification Bespok3dBootstrapPackages
+ // needs; bctls (TLS) is not used since Bespok3dClient pins certificates via javax.net.ssl directly.
+ implementation("com.github.mwiede:jsch:2.28.6")
+ implementation("org.bouncycastle:bcprov-jdk18on:1.83")
+ implementation("org.bouncycastle:bcpg-jdk18on:1.83")
+ // Bambu Lab LAN support (PrinterKind.BAMBU_LAB), ported from Helix, which pins these same
+ // versions. hivemq-mqtt-client is the MQTT 3.1.1 client BambuMqttConnection uses for the
+ // printer's TLS status/control channel on 8883 (chosen for its pluggable TrustManagerFactory,
+ // which is what serial pinning hangs off). commons-net supplies the FTPS client for the
+ // implicit-TLS upload port 990. bctls is BouncyCastle's JSSE provider: Android's own JSSE
+ // cannot ask a data socket to resume the control socket's TLS session, which Bambu's vsftpd
+ // requires, and only BCJSSE exposes an API for it (see BambuFtpsClient).
+ implementation("com.hivemq:hivemq-mqtt-client:1.3.17")
+ implementation("commons-net:commons-net:3.13.0")
+ implementation("org.bouncycastle:bctls-jdk18on:1.83")
+ // Home-screen widget (P18): Glance renders it in Compose, matching this app's own style,
+ // instead of hand-written RemoteViews/XML layouts. 1.2.0 is the current stable release.
+ implementation("androidx.glance:glance-appwidget:1.2.0")
+ // Phase 0 (Consumer Slicer Plan §16): Project/ProjectObject persistence infrastructure - added
+ // now, empty/unused this phase, because every later phase (1 through 13) depends on it and
+ // retrofitting it after the fact would be far more expensive. 2.8.5 is current stable.
+ implementation("androidx.room:room-runtime:2.8.5")
+ implementation("androidx.room:room-ktx:2.8.5")
+ ksp("androidx.room:room-compiler:2.8.5")
+ testImplementation("junit:junit:4.13.2")
+ testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+ testImplementation("org.json:json:20240303")
+ testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+ // ElegooPrinterServiceTest builds its fake printer's status with the Elegoo adapter's own parsers (Canvas, Sdcp, Cc2).
+ testImplementation(project(":adapter-elegoo"))
+ androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.00"))
+ androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+ androidTestImplementation("androidx.test:runner:1.6.2")
+ androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0") // 3.5.0 calls InputManager.getInstance, removed in Android 17
+ androidTestImplementation("androidx.test.ext:junit:1.2.1")
+ debugImplementation("androidx.compose.ui:ui-test-manifest")
+ add("releaseSmokeImplementation", "androidx.compose.ui:ui-test-manifest")
+}
+
+// The printer libraries' process presets (engine/profiles/library/<library>/process, shared with Desktop), packaged as
+// printer_library/<library>/process/*.json assets: the Print profile picker's presets for the packs built from a library
+// (slicer_profiles/<pack>/processes.json, scripts/bundle_process_presets.py) point at them instead of a second copy.
+abstract class PrinterLibraryAssets : DefaultTask() {
+ @get:InputDirectory @get:PathSensitive(PathSensitivity.RELATIVE) abstract val library: DirectoryProperty
+ @get:OutputDirectory abstract val outputDir: DirectoryProperty
+ @get:javax.inject.Inject abstract val fs: FileSystemOperations
+ @TaskAction fun copy() {
+  fs.sync { from(library) { include("*/process/*.json") }; into(outputDir.dir("printer_library")) }
+ }
+}
+val printerLibraryAssets = tasks.register<PrinterLibraryAssets>("printerLibraryAssets") {
+ library.set(rootProject.layout.projectDirectory.dir("engine/profiles/library"))
+}
+androidComponents.onVariants { it.sources.assets?.addGeneratedSourceDirectory(printerLibraryAssets, PrinterLibraryAssets::outputDir) }
+
+// Every print profile a pack's processes.json lists must be in the APK itself. Android packaging leaves out asset folders
+// whose names start with "_", and the unit tests read the source tree, so they can't see it: the shared presets once
+// shipped missing that way (P-0040). Every assemble<Variant> runs this against the APK it built.
+abstract class VerifyPackagedProfiles : DefaultTask() {
+ @get:InputDirectory @get:PathSensitive(PathSensitivity.RELATIVE) abstract val apkFolder: DirectoryProperty
+ @get:Internal abstract val loader: Property<com.android.build.api.variant.BuiltArtifactsLoader>
+ @TaskAction fun verify() {
+  val apks = loader.get().load(apkFolder.get())?.elements.orEmpty().map { File(it.outputFile) }
+  if (apks.isEmpty()) throw GradleException("No APK in ${apkFolder.get().asFile}")
+  for (apk in apks) ZipFile(apk).use { zip ->
+   val lists = zip.entries().asSequence().filter { it.name.startsWith("assets/slicer_profiles/") && it.name.endsWith("/processes.json") }.toList()
+   if (lists.isEmpty()) throw GradleException("${apk.name}: no slicer_profiles/*/processes.json packaged")
+   val missing = lists.flatMap { list ->
+    val presets = (zip.getInputStream(list).use { groovy.json.JsonSlurper().parse(it) } as Map<*, *>)["presets"] as List<*>
+    presets.map { (it as Map<*, *>)["file"] as String }.filter { zip.getEntry("assets/$it") == null }.map { "${list.name.removePrefix("assets/")} lists $it" }
+   }
+   if (missing.isNotEmpty()) throw GradleException("${apk.name}: ${missing.size} print profile file(s) listed but not packaged, e.g. ${missing.take(3).joinToString("; ")}")
+   logger.lifecycle("${apk.name}: every print profile the ${lists.size} packs list is packaged")
+  }
+ }
+}
+androidComponents.onVariants { variant ->
+ val name = variant.name.replaceFirstChar { it.uppercase() }
+ val verify = tasks.register<VerifyPackagedProfiles>("verify${name}PackagedProfiles") {
+  group = "verification"; description = "Checks that the ${variant.name} APK holds every print profile its packs list"
+  apkFolder.set(variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.APK)); loader.set(variant.artifacts.getBuiltArtifactsLoader())
+ }
+ tasks.matching { it.name == "assemble$name" }.configureEach { dependsOn(verify) }
+}
+
+// Phase 9g: CycloneDX 1.5 SBOM of everything that ships - the resolved release runtime dependencies (with SHA-256 of
+// each artifact) plus the pinned native engine (engine/fork/ENGINE_PIN.json) and the source archives of its Android
+// dependencies (engine/fork/android/DEPENDENCIES.json). Offline, no plugin.
+tasks.register("generateSbom") {
+ group = "release"; description = "Writes build/sbom/nozzle-it-all.cdx.json"
+ val runtime = configurations.named("releaseRuntimeClasspath")
+ val pinFile = rootProject.file("engine/fork/ENGINE_PIN.json")
+ val depsFile = rootProject.file("engine/fork/android/DEPENDENCIES.json")
+ val out = layout.buildDirectory.file("sbom/nozzle-it-all.cdx.json")
+ inputs.files(runtime); inputs.file(pinFile); inputs.file(depsFile); outputs.file(out)
+ doLast {
+  fun esc(v: String) = v.replace("\\", "\\\\").replace("\"", "\\\"")
+  fun sha256(f: java.io.File) = MessageDigest.getInstance("SHA-256").digest(f.readBytes()).joinToString("") { "%02x".format(it) }
+  val components = sortedMapOf<String, String>()
+  runtime.get().incoming.artifactView { lenient(true) }.artifacts.artifacts.forEach { a ->
+   val id = a.id.componentIdentifier
+   if (id is org.gradle.api.artifacts.component.ModuleComponentIdentifier) {
+    val purl = "pkg:maven/${id.group}/${id.module}@${id.version}"
+    components[purl] = """{"type":"library","group":"${esc(id.group)}","name":"${esc(id.module)}","version":"${esc(id.version)}","purl":"${esc(purl)}","hashes":[{"alg":"SHA-256","content":"${sha256(a.file)}"}]}"""
+   }
+  }
+  val pin = groovy.json.JsonSlurper().parse(pinFile) as Map<*, *>
+  val c = (pin["base"] as Map<*, *>)["commit"].toString()
+  components["pkg:github/James-Jennison/nozzle-engine@$c"] = """{"type":"library","name":"nozzle-engine (libslic3r)","version":"${esc(c)}","purl":"pkg:github/James-Jennison/nozzle-engine@$c","licenses":[{"license":{"id":"AGPL-3.0-or-later"}}]}"""
+  val deps = groovy.json.JsonSlurper().parse(depsFile) as Map<*, *>
+  (deps["dependencies"] as List<*>).forEach { d ->
+   d as Map<*, *>
+   val n = d["file"].toString()
+   components["pkg:generic/$n"] = """{"type":"library","name":"${esc(n)}","purl":"pkg:generic/${esc(n)}","hashes":[{"alg":"SHA-256","content":"${d["sha256"]}"}],"properties":[{"name":"linked","value":"native (arm64-v8a)"}]}"""
+  }
+  val body = components.values.joinToString(",\n    ")
+  val serial = UUID.nameUUIDFromBytes(body.toByteArray()).toString()
+  val stamp = (System.getenv("SOURCE_DATE_EPOCH")?.toLongOrNull()?.let { Instant.ofEpochSecond(it) } ?: Instant.now()).toString()
+  out.get().asFile.also { it.parentFile.mkdirs() }.writeText("""{
+  "bomFormat": "CycloneDX", "specVersion": "1.5", "serialNumber": "urn:uuid:$serial", "version": 1,
+  "metadata": {"timestamp": "$stamp", "component": {"type": "application", "name": "Nozzle It All", "version": "${android.defaultConfig.versionName}", "purl": "pkg:generic/net.jamesjennison.klippercompanion@${android.defaultConfig.versionName}"}},
+  "components": [
+    $body
+  ]
+}
+""")
+ }
+}
+
+// AWS Device Farm rejects (at its own re-signing step) an instrumented test package above roughly 3.7-4.0 MB of code. These files skip
+// themselves entirely without printer/LAN/API-key arguments, so they do nothing on Device Farm; -PdeviceFarmTests leaves them out of that build.
+if (providers.gradleProperty("deviceFarmTests").isPresent) {
+ val lanOnlyTests = listOf("ActiveToolDeviceTest", "AddPrinterWizardDeviceTest", "FakeBambuDeviceTest", "LiveFileHardwareTest", "LivePreviewHardwareTest",
+  "LivePrinterReadOnlyTest", "MmfLiveDeviceTest", "OctoPrintDeviceTest", "PrinterScanDeviceTest", "SshHostKeyPinDeviceTest").map { "**/$it.kt" }
+ tasks.matching { it.name.contains("AndroidTest") && it.name.startsWith("compile") }.configureEach {
+  if (this is org.gradle.api.tasks.util.PatternFilterable) exclude(lanOnlyTests)
+ }
+}

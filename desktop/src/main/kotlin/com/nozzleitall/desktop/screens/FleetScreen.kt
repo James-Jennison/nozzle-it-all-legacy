@@ -1,0 +1,197 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+package com.nozzleitall.desktop.screens
+
+import androidx.compose.foundation.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.*
+import androidx.compose.ui.unit.dp
+import com.nozzleitall.desktop.AppState
+import com.nozzleitall.desktop.PrinterEntry
+import com.nozzleitall.desktop.ui.*
+import com.nozzleitall.design.NozzleTokens
+import com.nozzleitall.printer.*
+
+fun parseHex(hex: String?): Color? = hex?.removePrefix("#")?.takeIf { it.length == 6 }?.toLongOrNull(16)?.let { Color(0xFF000000 or it) }
+
+fun formatDuration(seconds: Double?, includeSeconds: Boolean = false): String {
+    if (seconds == null || !seconds.isFinite() || seconds < 0) return "–"
+    if (includeSeconds) {
+        val total = seconds.toLong()
+        val days = total / 86_400
+        val hours = total / 3_600 % 24
+        val minutes = total / 60 % 60
+        val remainder = total % 60
+        return buildList {
+            if (days > 0) add("${days}d")
+            if (hours > 0) add("${hours}h")
+            if (minutes > 0) add("${minutes}m")
+            add("${remainder}s")
+        }.joinToString(" ")
+    }
+    val m = (seconds / 60).toLong()
+    return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
+}
+
+fun temp(t: Double?) = t?.let { "%.0f °C".format(it) } ?: "–"
+
+@Composable
+fun FleetScreen(state: AppState) {
+    val fleet = state.fleet
+    var editing by remember { mutableStateOf<String?>(null) }
+    var removing by remember { mutableStateOf<String?>(null) }
+    var removeError by remember { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        SectionHeader("Printers", "Everything you print on, at a glance.") {
+            NzButton("Add printer", { state.startPrinterSetup(autoScan = false) }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, testTag = "add-printer")
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Txt("Slicing machine", Nz.type.label, Nz.colors.textMuted)
+            Txt(state.prepare.slicingMachineLabel, Nz.type.title)
+            Txt(state.prepare.nozzleToolheadLabel, Nz.type.bodySmall, Nz.colors.textMuted)
+            Txt("Physical printer connections are listed separately below.", Nz.type.bodySmall, Nz.colors.textMuted)
+        }
+        val ids = fleet.order.value
+        if (ids.isEmpty()) {
+            Card(Modifier.fillMaxWidth()) {
+                EmptyState(NzIcon.FLEET, "Add your first printer",
+                    Glossary.explanations.getValue("first-printer")) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        NzButton("Find printers on my network", { state.startPrinterSetup(autoScan = true) }, kind = ButtonKind.PRIMARY, icon = NzIcon.SEARCH, testTag = "find-printers")
+                        NzButton("Add by address", { state.startPrinterSetup(autoScan = false) }, kind = ButtonKind.SECONDARY, icon = NzIcon.ADD)
+                    }
+                }
+            }
+        } else {
+            LazyVerticalGrid(GridCells.Adaptive(380.dp), Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                items(ids, key = { it }) { id -> fleet.printers[id]?.let {
+                    PrinterCard(it, onEdit = { editing = id }, onRemove = { removeError = null; removing = id },
+                        onPrepare = { state.prepare.choosePrinter(id); state.destination = com.nozzleitall.desktop.Destination.PREPARE }) { state.openPrinter(id) }
+                } }
+            }
+        }
+    }
+    editing?.let { id -> fleet.printers[id]?.let { EditPrinterDialog(state, it) { editing = null } } ?: run { editing = null } }
+    removing?.let { id -> fleet.printers[id]?.let { entry ->
+        val identity = entry.config.identity
+        val active = entry.status.value.state.isActiveJob
+        ConfirmDialog(
+            title = "Remove ${identity.displayName}?",
+            body = "This removes the saved printer connection and unassigns queued jobs. It does not delete printer-side files or stop a print already running on the printer.",
+            detail = removeError ?: if (active) "${identity.displayName} currently reports ${entry.status.value.state.label}. Removing it stops monitoring, not the printer." else null,
+            confirmLabel = "Remove printer",
+            destructive = true,
+            onConfirm = {
+                if (fleet.remove(id)) {
+                    if (state.prepare.printerId == id) state.prepare.choosePrinter(null)
+                    if (state.selectedPrinter == id) {
+                        state.selectedPrinter = null
+                        if (state.destination == com.nozzleitall.desktop.Destination.MONITOR || state.destination == com.nozzleitall.desktop.Destination.PRINTER_MATERIALS)
+                            state.destination = com.nozzleitall.desktop.Destination.FLEET
+                    }
+                    removeError = null
+                    removing = null
+                } else {
+                    removeError = "${identity.displayName} could not be removed because the printer list could not be saved."
+                }
+                editing = null
+            },
+            onDismiss = { removeError = null; removing = null },
+        )
+    } ?: run { removing = null } }
+}
+
+@Composable
+fun PrinterCard(entry: PrinterEntry, onEdit: (() -> Unit)? = null, onRemove: (() -> Unit)? = null,
+                onPrepare: (() -> Unit)? = null, onOpen: () -> Unit) {
+    val c = Nz.colors
+    val status = entry.status.value
+    val identity = entry.config.identity
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(NozzleTokens.Radius.panel)
+    val stateColor = Nz.status.forState(status.state.glossaryId)
+    Column(Modifier.clip(shape).background(c.surface).border(1.dp, c.line, shape).focusRing(focused, c.focus, shape)
+        .clickable(interaction, null, role = Role.Button, onClickLabel = "Open ${identity.displayName}", onClick = onOpen)
+        .semantics(mergeDescendants = true) { contentDescription = "${identity.displayName}, ${status.state.label}" }) {
+        // A thin band in the state colour: readable at a distance across a room of printers.
+        Box(Modifier.fillMaxWidth().height(4.dp).background(if (status.route == ConnectionRoute.NONE) c.line else stateColor))
+        // The live preview, or a quiet placeholder, so every card has the same shape whatever the printer is doing.
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(c.surfaceSunken), contentAlignment = Alignment.Center) {
+            if (entry.capabilities.value?.camera == true && entry.cameras.value.isNotEmpty()) {
+                val cam = com.nozzleitall.desktop.camera.rememberLiveCamera(entry, width = 640)
+                cam.image?.let { androidx.compose.foundation.Image(it, "Live camera view of ${identity.displayName}", Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+                    ?: Txt(cam.problem ?: "Connecting to the camera…", Nz.type.bodySmall, c.textMuted)
+                if (cam.live) Pill("Live", c.accent, Modifier.align(Alignment.TopEnd).padding(10.dp).background(c.surface.copy(alpha = 0.7f), RoundedCornerShape(NozzleTokens.Radius.chip)))
+            } else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(NzIcon.CAMERA, c.textMuted, 28.dp)
+                Txt(if (status.route == ConnectionRoute.NONE) "Export only" else "No camera", Nz.type.bodySmall, c.textMuted)
+            }
+        }
+        // Fixed height: job details and the idle message take the same space; chips and the footer sit at the bottom.
+        Column(Modifier.padding(18.dp).height(300.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Txt(identity.displayName.ifBlank { identity.address }, Nz.type.title, maxLines = 1)
+                    // The family only when it adds something ("Snapmaker U1 (PAXX)" already names the model).
+                    val family = identity.family.label
+                    Txt(if (family.contains(identity.model, ignoreCase = true)) family else "${identity.model} · $family", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                }
+                if (status.route != ConnectionRoute.NONE) StatusPill(status.state)
+                if (onEdit != null) NzButton("Edit", onEdit, Modifier.padding(start = 8.dp), kind = ButtonKind.SECONDARY, icon = NzIcon.TUNE, testTag = "edit-printer-${identity.id}")
+            }
+            val job = status.job
+            if (job != null) {
+                Txt(job.fileName, Nz.type.body, maxLines = 1)
+                ProgressBar(job.fraction, stateColor, label = "Print progress")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Metric("Done", "${(job.fraction * 100).toInt()}%")
+                    Metric("Elapsed", formatDuration(job.elapsedSeconds))
+                    job.totalLayers?.let { Metric("Layer", "${job.currentLayer ?: 0} of $it") }
+                }
+            } else {
+                Txt(status.message ?: entry.problem.value ?: status.state.description, Nz.type.body, c.textMuted, maxLines = 3)
+            }
+            Spacer(Modifier.weight(1f))
+            if (status.toolheads.isNotEmpty()) ToolheadStrip(status.toolheads)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RouteBadge(status.route)
+                Spacer(Modifier.weight(1f))
+                status.bed?.current?.let { Txt("Bed ${temp(it)}", Nz.type.metricSmall, c.textMuted, modifier = Modifier.padding(end = 8.dp)) }
+                if (onRemove != null) NzButton("Remove", onRemove, Modifier.padding(end = 8.dp), kind = ButtonKind.DANGER, testTag = "remove-printer-${identity.id}")
+                if (onPrepare != null) NzButton("Prepare a print", onPrepare, kind = ButtonKind.SECONDARY, icon = NzIcon.PREPARE, testTag = "prepare-for-${identity.id}")
+            }
+        }
+    }
+}
+
+/** The U1's four toolheads as the colours actually loaded, numbered from 1, active one outlined. */
+@Composable
+fun ToolheadStrip(heads: List<Toolhead>) {
+    val c = Nz.colors
+    // Wraps onto a second line in a narrow card rather than squeezing a chip.
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        heads.forEach { t ->
+            val color = parseHex(t.material?.colorHex)
+            val desc = "Toolhead ${t.index + 1}: " + (if (t.loaded) t.material?.label ?: "loaded" else "empty") + if (t.active) ", active" else ""
+            Row(Modifier.clip(RoundedCornerShape(10.dp)).background(c.surfaceRaised).border(if (t.active) 2.dp else 1.dp, if (t.active) c.accent else c.line, RoundedCornerShape(10.dp))
+                .padding(horizontal = 8.dp, vertical = 5.dp).semantics(mergeDescendants = true) { contentDescription = desc },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Txt("${t.index + 1}", Nz.type.label, c.textMuted)
+                Box(Modifier.size(14.dp).clip(CircleShape).background(color ?: c.surfaceSunken).border(1.dp, if (t.loaded) c.lineStrong else c.line, CircleShape))
+                Txt(t.material?.type ?: if (t.loaded) "?" else "Empty", Nz.type.bodySmall, if (t.loaded) c.text else c.textMuted, maxLines = 1)
+            }
+        }
+    }
+}

@@ -1,0 +1,50 @@
+package net.jamesjennison.klippercompanion
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.dp
+
+@Composable fun FileWorkspacePanel(workspace:FileWorkspace,state:ScreenState?=null,refresh:()->Unit={}) {
+    var fileChanges by remember {mutableStateOf(false)}
+    var livePreview by remember {mutableStateOf(false)}
+    if(livePreview&&state!=null)key(state.address,state.generation){LivePrintPreviewPanel(state){livePreview=false}}
+    var liveChanges by remember {mutableStateOf(false)}
+    if(liveChanges && state!=null)key(state.address,state.generation){LiveFilePanel(state,workspace,refresh,close={liveChanges=false})}
+    if(fileChanges) FileChangePanel {fileChanges=false}
+    val pick=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){it?.let(workspace::import)}
+    var exportSource by remember(workspace) {mutableStateOf<java.io.File?>(null)}
+    var exportUri by remember(workspace) {mutableStateOf<android.net.Uri?>(null)}
+    val save=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")){exportUri=it}
+    exportUri?.let {uri->AlertDialog(onDismissRequest={exportUri=null},title={Text("Write the selected document?")},text={Text("Save ${workspace.name} to the document you selected. Its provider may replace existing content. An interrupted export may leave a partial document.")},confirmButton={TextButton({exportUri=null;workspace.export(uri,exportSource)}){Text("Write copy")}},dismissButton={TextButton({exportUri=null}){Text("Cancel")}})}
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            // Both read Moonraker directly. Real bug fixed (Phase 2): this used to be
+            // `kindFor != BAMBU_LAB`, which left these two buttons visible for a Prusa printer
+            // too - PrusaLinkPrinterService implements none of the Moonraker-shaped endpoints
+            // LivePrintPreviewPanel/LiveFilePanel construct directly, so tapping either would
+            // have hit the wrong host/protocol against a real Prusa Link printer. Now gated on
+            // the real transport capability instead of excluding one vendor at a time.
+            val moonraker=state!=null&&state.capabilitiesFor(state.address).transport==PrinterTransport.MOONRAKER
+            if(moonraker)OutlinedButton({livePreview=true},enabled=state!!.connected){Text("Follow active print")}
+            if(moonraker)OutlinedButton({liveChanges=true},enabled=state!!.connected&&!workspace.loading){Text("Printer file changes")}
+            OutlinedButton({fileChanges=true}){Text("Preview file management")}
+            OutlinedButton({pick.launch(arrayOf("application/octet-stream","text/*","application/x-gcode"))},enabled=!workspace.loading){Text("Import G-code")}
+            if(workspace.localFile!=null) {
+                OutlinedButton(workspace::render,enabled=!workspace.loading){Text("Preview layers")}
+                OutlinedButton({exportSource=workspace.localFile;save.launch(workspace.name.substringAfterLast('/'))},enabled=!workspace.loading){Text("Save a copy")}
+            }
+            if(workspace.loading)TextButton(workspace::cancel){Text("Cancel transfer / preview")}
+        }
+        Text("Temporary workspace; old cache is reclaimed on the next import/download. Uploads, renames and confirmed deletion are available through Printer file changes while idle.",style=MaterialTheme.typography.bodySmall)
+        if(workspace.name.isNotBlank())Text(workspace.name)
+        if(workspace.loading)LinearProgressIndicator(Modifier.fillMaxWidth())
+        if(workspace.note.isNotBlank())Text(workspace.note,style=MaterialTheme.typography.bodySmall)
+        workspace.preview?.let { LayerPreview(it) }
+    }
+}
