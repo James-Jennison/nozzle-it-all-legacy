@@ -691,6 +691,8 @@ fun PrepareScreen(state: AppState) {
         val sel = onPlate.firstOrNull { it.id == p.selected }
         val forcedInspectorContext = p.paintKind != null || drawer == Drawer.CUT ||
             drawer == Drawer.MODEL || drawer == Drawer.AI || drawer == Drawer.SEND
+        val sendReviewOpen = sendPreflightVisible(p.showPreview, drawer == Drawer.SEND, done != null)
+        val dockSendReview = sendReviewOpen && !compactWorkspace
         val inspectorVisible = !previewFocused && workspaceUsesInspectorPane(
             compactWorkspace,
             requested = objectInspectorOpen && sel != null,
@@ -783,7 +785,7 @@ fun PrepareScreen(state: AppState) {
                 }
             }
             val previewLegendHeight = minOf(130.dp, maxHeight * 0.20f)
-            if (p.showPreview && done?.preview != null && drawer != Drawer.SEND) Column(
+            if (p.showPreview && done?.preview != null && !sendReviewOpen) Column(
                 Modifier.align(Alignment.TopEnd).padding(12.dp).padding(end = previewZWidth)
                     .heightIn(max = minOf(compactPreviewOverlayMaxHeight(maxHeight),
                         (maxHeight - previewFooterHeight - 12.dp).coerceAtLeast(0.dp)))
@@ -800,7 +802,7 @@ fun PrepareScreen(state: AppState) {
             if (p.showPreview && done != null && done.preview == null) Box(Modifier.align(Alignment.TopStart).padding(12.dp)) {
                 Banner("The sliced file has no available toolpath preview. Return to Plate or slice again before reviewing it.", BannerKind.WARNING)
             }
-            if (p.showPreview && done?.preview != null) {
+            if (p.showPreview && done?.preview != null && !sendReviewOpen) {
                 val cursor = previewLayerCursor(done.preview, p.previewLayer)
                 if (cursor != null) {
                     val slider = Modifier.align(Alignment.CenterEnd)
@@ -865,7 +867,7 @@ fun PrepareScreen(state: AppState) {
                     }
                 }
             }
-            if (inspectorVisible && !compactWorkspace) {
+            if (inspectorVisible && !compactWorkspace && !dockSendReview) {
                 WorkspaceInspector(
                     state,
                     drawer,
@@ -938,7 +940,7 @@ fun PrepareScreen(state: AppState) {
                     .onSizeChanged { previewFooterHeight = with(density) { it.height.toDp() } }.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (p.showPreview && done?.preview != null) {
+                if (p.showPreview && done?.preview != null && !sendReviewOpen) {
                     val cursor = previewLayerCursor(done.preview, p.previewLayer)
                     if (cursor == null) Floating(Modifier.fillMaxWidth()) {
                         Txt("This slice has no extrusion layers to preview.", Nz.type.metricSmall, c.textMuted)
@@ -996,6 +998,12 @@ fun PrepareScreen(state: AppState) {
                 StepObjects(state)
             }
             }
+        }
+        if (dockSendReview) {
+            WorkspaceInspector(state, drawer, modelingTool, done, sel,
+                setDrawer = { drawer = it },
+                closeObjectInspector = { objectInspectorOpen = false },
+                modifier = Modifier.fillMaxHeight())
         }
         }
     }
@@ -1064,7 +1072,7 @@ private fun WorkspaceInspector(
         ) {
             when {
                 sendPreflightVisible(p.showPreview, drawer == Drawer.SEND, done != null) -> {
-                    DrawerTitle("Preflight and send", { setDrawer(null) })
+                    DrawerTitle("Send review", { setDrawer(null) })
                     SendDrawer(state, done!!, showSetupContext = false) { setDrawer(it) }
                 }
                 p.showPreview && done?.preview != null -> {
@@ -2040,12 +2048,10 @@ private fun SendDrawer(
                 .distinct().joinToString(" ").ifBlank { "Unspecified" }
         }, Nz.type.bodySmall, c.textMuted)
     }
-    if (Nz.textScale >= 1.5f) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Metric("Time", formatDuration(st.seconds))
         Metric("Material", st.grams?.let { "%.1f g".format(it) } ?: "–")
         Metric("Layers", "${st.layers ?: "–"}")
-    } else Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-        Metric("Time", formatDuration(st.seconds)); Metric("Material", st.grams?.let { "%.1f g".format(it) } ?: "–"); Metric("Layers", "${st.layers ?: "–"}")
     }
     if (st.toolChanges > 0) Txt("${st.toolChanges} toolhead changes", Nz.type.bodySmall, c.textMuted)
     s.result.warnings.forEach { Banner(it, BannerKind.WARNING) }
@@ -3273,10 +3279,7 @@ private fun SendPanel(state: AppState) {
     }
     if (!readinessReviewed) {
         Txt("Review before Send", Nz.type.title)
-        Txt("Machine: ${p.slicingMachineLabel} · Nozzles: ${p.nozzleToolheadLabel}", Nz.type.bodySmall, c.textMuted)
-        Txt("Connection: ${entry.config.identity.displayName} · Profile: ${done.targetProfileId ?: "not recorded"}", Nz.type.bodySmall, c.textMuted)
-        Txt("Sliced material slots: " + done.materials.joinToString { it.type ?: "unspecified" }
-            .ifBlank { "not recorded" }, Nz.type.bodySmall, c.textMuted)
+        Txt("Connection: ${entry.config.identity.displayName}", Nz.type.bodySmall, c.textMuted)
         preflight.forEach { Banner(it.message, if (it.blocks) BannerKind.DANGER else BannerKind.WARNING) }
         bundleProblem?.let { Banner(it, BannerKind.DANGER) }
         if (profileMismatch) Banner("This file was sliced for ${done.targetProfileId}, but the printer reports ${entry.config.identity.profileId}. Choose a matching printer or slice again.", BannerKind.DANGER)
