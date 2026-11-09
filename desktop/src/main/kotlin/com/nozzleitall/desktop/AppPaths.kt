@@ -5,8 +5,9 @@ import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 
 /**
- * Where Nozzle It All keeps its own data. These locations belong to Nozzle only: nothing here is shared with, read
- * from, or written to OrcaSlicer's or Snapmaker Orca's folders (~/.config/OrcaSlicer, ~/.config/Snapmaker_Orca).
+ * Where Nozzle It All keeps its own data. These locations belong to Nozzle only: nothing is shared with or written to
+ * OrcaSlicer's or Snapmaker Orca's folders. The explicit migration flow may read a source the user chooses and writes
+ * only sanitized copies into these NIA-owned locations.
  *
  * Linux follows the XDG base-directory spec; Windows uses %APPDATA% / %LOCALAPPDATA%. NOZZLE_HOME overrides everything
  * (tests and portable installs).
@@ -15,6 +16,9 @@ class AppPaths(val config: File, val data: File, val cache: File) {
     val printers get() = File(config, "printers.json")
     val secrets get() = File(config, "printer-secrets.json")
     val settings get() = File(config, "settings.json")
+    val filamentPresets get() = File(config, "filament-presets.json")
+    val legacyProcessPresets get() = File(config, "legacy-process-presets.json")
+    val userPresets get() = File(config, "user-presets.json")
     val projects get() = File(data, "projects")
     val logs get() = File(cache, "logs")
     val slices get() = File(cache, "slices")

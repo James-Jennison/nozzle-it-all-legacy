@@ -80,9 +80,9 @@ object AdapterProtocol {
     }
 
     fun encode(m: Material) = JSONObject().putOpt("vendor", m.vendor).putOpt("type", m.type).putOpt("subType", m.subType)
-        .putOpt("colorHex", m.colorHex).put("fromTag", m.fromTag)
+        .putOpt("colorHex", m.colorHex).put("fromTag", m.fromTag).putOpt("spoolId", m.spoolId).putOpt("sku", m.sku)
     fun decodeMaterial(o: JSONObject) = Material(o.optStringOrNull("vendor"), o.optStringOrNull("type"), o.optStringOrNull("subType"),
-        o.optStringOrNull("colorHex"), o.optBoolean("fromTag"))
+        o.optStringOrNull("colorHex"), o.optBoolean("fromTag"), o.optStringOrNull("spoolId"), o.optStringOrNull("sku"))
 
     fun encode(s: PrinterStatus): JSONObject = JSONObject().put("state", s.state.name).put("route", s.route.name)
         .putOpt("job", s.job?.let { JSONObject().put("fileName", it.fileName).put("fraction", it.fraction.toDouble()).putOpt("elapsedSeconds", it.elapsedSeconds)

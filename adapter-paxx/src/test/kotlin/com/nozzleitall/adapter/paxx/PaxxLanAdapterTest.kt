@@ -15,8 +15,10 @@ class PaxxLanAdapterTest {
     /** Records every host the adapter opens a connection to. */
     private class HostRecorder : EventListener() {
         val hosts = CopyOnWriteArrayList<String>()
+        val completedBodies = CopyOnWriteArrayList<String>()
         override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) { hosts += inetSocketAddress.address.hostAddress }
         override fun dnsStart(call: Call, domainName: String) { hosts += "dns:$domainName" }
+        override fun responseBodyEnd(call: Call, byteCount: Long) { completedBodies += call.request().url.encodedPath }
     }
 
     private fun config(address: String, family: PrinterFamily = PrinterFamily.PAXX_U1) =
@@ -49,6 +51,8 @@ class PaxxLanAdapterTest {
             assertEquals(2, st.toolheads.single { it.active }.index)
             val t0 = st.toolheads[0].material!!
             assertEquals("Polymaker", t0.vendor); assertEquals("PLA", t0.type); assertEquals("#BE38F3", t0.colorHex); assertTrue(t0.fromTag)
+            assertNull(t0.spoolId); assertNull(t0.sku)
+            assertEquals("900000", st.toolheads[1].material!!.sku)
             assertEquals("TPU", st.toolheads[2].material!!.type)
             val fs = com.nozzleitall.printer.ext.FullSpectrumState.from(st)!!
             assertTrue(fs.available)
@@ -93,6 +97,28 @@ class PaxxLanAdapterTest {
             assertNotNull(s.liveStream(cam).use { MjpegReader(it).next() })
             val evil = cam.copy(liveUrl = "${fake.address}/webcam/offhost")
             assertTrue(runCatching { s.liveStream(evil).close() }.exceptionOrNull()?.message.orEmpty().contains("own host"))
+        }
+    }
+
+    @Test fun closingALiveCameraStreamClosesItsOwningHttpResponse() = FakeMoonraker().use { fake ->
+        val recorder = HostRecorder()
+        PaxxLanAdapter(recorder).open(config(fake.address)).use { session ->
+            val camera = session.cameras().first()
+            val before = recorder.completedBodies.count { it == "/webcam/stream.mjpg" }
+            session.liveStream(camera).use { MjpegReader(it).next() }
+            assertEquals(before + 1, recorder.completedBodies.count { it == "/webcam/stream.mjpg" })
+        }
+    }
+
+    @Test fun closingAnUnreadLiveCameraStreamIsIdempotentAndReleasesItsResponse() = FakeMoonraker().use { fake ->
+        val recorder = HostRecorder()
+        PaxxLanAdapter(recorder).open(config(fake.address)).use { session ->
+            val camera = session.cameras().first()
+            val before = recorder.completedBodies.count { it == "/webcam/stream.mjpg" }
+            val stream = session.liveStream(camera)
+            stream.close()
+            stream.close()
+            assertEquals(before + 1, recorder.completedBodies.count { it == "/webcam/stream.mjpg" })
         }
     }
 

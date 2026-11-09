@@ -25,8 +25,21 @@ import com.nozzleitall.printer.*
 
 fun parseHex(hex: String?): Color? = hex?.removePrefix("#")?.takeIf { it.length == 6 }?.toLongOrNull(16)?.let { Color(0xFF000000 or it) }
 
-fun formatDuration(seconds: Double?): String {
+fun formatDuration(seconds: Double?, includeSeconds: Boolean = false): String {
     if (seconds == null || !seconds.isFinite() || seconds < 0) return "–"
+    if (includeSeconds) {
+        val total = seconds.toLong()
+        val days = total / 86_400
+        val hours = total / 3_600 % 24
+        val minutes = total / 60 % 60
+        val remainder = total % 60
+        return buildList {
+            if (days > 0) add("${days}d")
+            if (hours > 0) add("${hours}h")
+            if (minutes > 0) add("${minutes}m")
+            add("${remainder}s")
+        }.joinToString(" ")
+    }
     val m = (seconds / 60).toLong()
     return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
 }
@@ -36,30 +49,72 @@ fun temp(t: Double?) = t?.let { "%.0f °C".format(it) } ?: "–"
 @Composable
 fun FleetScreen(state: AppState) {
     val fleet = state.fleet
-    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<String?>(null) }
+    var removing by remember { mutableStateOf<String?>(null) }
+    var removeError by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         SectionHeader("Printers", "Everything you print on, at a glance.") {
-            NzButton("Add printer", { adding = true }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, testTag = "add-printer")
+            NzButton("Add printer", { state.startPrinterSetup(autoScan = false) }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, testTag = "add-printer")
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Txt("Slicing machine", Nz.type.label, Nz.colors.textMuted)
+            Txt(state.prepare.slicingMachineLabel, Nz.type.title)
+            Txt(state.prepare.nozzleToolheadLabel, Nz.type.bodySmall, Nz.colors.textMuted)
+            Txt("Physical printer connections are listed separately below.", Nz.type.bodySmall, Nz.colors.textMuted)
         }
         val ids = fleet.order.value
         if (ids.isEmpty()) {
             Card(Modifier.fillMaxWidth()) {
                 EmptyState(NzIcon.FLEET, "Add your first printer",
                     Glossary.explanations.getValue("first-printer")) {
-                    NzButton("Add printer", { adding = true }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        NzButton("Find printers on my network", { state.startPrinterSetup(autoScan = true) }, kind = ButtonKind.PRIMARY, icon = NzIcon.SEARCH, testTag = "find-printers")
+                        NzButton("Add by address", { state.startPrinterSetup(autoScan = false) }, kind = ButtonKind.SECONDARY, icon = NzIcon.ADD)
+                    }
                 }
             }
         } else {
-            LazyVerticalGrid(GridCells.Adaptive(340.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(ids, key = { it }) { id -> fleet.printers[id]?.let { PrinterCard(it) { state.openPrinter(id) } } }
+            LazyVerticalGrid(GridCells.Adaptive(380.dp), Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                items(ids, key = { it }) { id -> fleet.printers[id]?.let {
+                    PrinterCard(it, onEdit = { editing = id }, onRemove = { removeError = null; removing = id },
+                        onPrepare = { state.prepare.choosePrinter(id); state.destination = com.nozzleitall.desktop.Destination.PREPARE }) { state.openPrinter(id) }
+                } }
             }
         }
     }
-    if (adding) AddPrinterDialog(state) { adding = false }
+    editing?.let { id -> fleet.printers[id]?.let { EditPrinterDialog(state, it) { editing = null } } ?: run { editing = null } }
+    removing?.let { id -> fleet.printers[id]?.let { entry ->
+        val identity = entry.config.identity
+        val active = entry.status.value.state.isActiveJob
+        ConfirmDialog(
+            title = "Remove ${identity.displayName}?",
+            body = "This removes the saved printer connection and unassigns queued jobs. It does not delete printer-side files or stop a print already running on the printer.",
+            detail = removeError ?: if (active) "${identity.displayName} currently reports ${entry.status.value.state.label}. Removing it stops monitoring, not the printer." else null,
+            confirmLabel = "Remove printer",
+            destructive = true,
+            onConfirm = {
+                if (fleet.remove(id)) {
+                    if (state.prepare.printerId == id) state.prepare.choosePrinter(null)
+                    if (state.selectedPrinter == id) {
+                        state.selectedPrinter = null
+                        if (state.destination == com.nozzleitall.desktop.Destination.MONITOR || state.destination == com.nozzleitall.desktop.Destination.PRINTER_MATERIALS)
+                            state.destination = com.nozzleitall.desktop.Destination.FLEET
+                    }
+                    removeError = null
+                    removing = null
+                } else {
+                    removeError = "${identity.displayName} could not be removed because the printer list could not be saved."
+                }
+                editing = null
+            },
+            onDismiss = { removeError = null; removing = null },
+        )
+    } ?: run { removing = null } }
 }
 
 @Composable
-fun PrinterCard(entry: PrinterEntry, onOpen: () -> Unit) {
+fun PrinterCard(entry: PrinterEntry, onEdit: (() -> Unit)? = null, onRemove: (() -> Unit)? = null,
+                onPrepare: (() -> Unit)? = null, onOpen: () -> Unit) {
     val c = Nz.colors
     val status = entry.status.value
     val identity = entry.config.identity
@@ -94,6 +149,7 @@ fun PrinterCard(entry: PrinterEntry, onOpen: () -> Unit) {
                     Txt(if (family.contains(identity.model, ignoreCase = true)) family else "${identity.model} · $family", Nz.type.bodySmall, c.textMuted, maxLines = 1)
                 }
                 if (status.route != ConnectionRoute.NONE) StatusPill(status.state)
+                if (onEdit != null) NzButton("Edit", onEdit, Modifier.padding(start = 8.dp), kind = ButtonKind.SECONDARY, icon = NzIcon.TUNE, testTag = "edit-printer-${identity.id}")
             }
             val job = status.job
             if (job != null) {
@@ -112,7 +168,9 @@ fun PrinterCard(entry: PrinterEntry, onOpen: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RouteBadge(status.route)
                 Spacer(Modifier.weight(1f))
-                status.bed?.current?.let { Txt("Bed ${temp(it)}", Nz.type.metricSmall, c.textMuted) }
+                status.bed?.current?.let { Txt("Bed ${temp(it)}", Nz.type.metricSmall, c.textMuted, modifier = Modifier.padding(end = 8.dp)) }
+                if (onRemove != null) NzButton("Remove", onRemove, Modifier.padding(end = 8.dp), kind = ButtonKind.DANGER, testTag = "remove-printer-${identity.id}")
+                if (onPrepare != null) NzButton("Prepare a print", onPrepare, kind = ButtonKind.SECONDARY, icon = NzIcon.PREPARE, testTag = "prepare-for-${identity.id}")
             }
         }
     }

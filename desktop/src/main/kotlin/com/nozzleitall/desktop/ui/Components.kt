@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.nozzleitall.desktop.ui
 
 import androidx.compose.foundation.*
@@ -26,9 +27,16 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindow
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.rememberDialogState
 import com.nozzleitall.design.NozzleTokens
 import com.nozzleitall.printer.PrinterState
@@ -47,7 +55,8 @@ enum class ButtonKind { PRIMARY, SECONDARY, QUIET, DANGER }
 
 @Composable
 fun NzButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, kind: ButtonKind = ButtonKind.SECONDARY, icon: NzIcon? = null,
-             enabled: Boolean = true, testTag: String? = null) {
+             enabled: Boolean = true, testTag: String? = null, accessibilityDescription: String? = null,
+             centerContent: Boolean = false) {
     val c = Nz.colors
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
@@ -62,19 +71,122 @@ fun NzButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, k
     Row(modifier.alpha(if (enabled) 1f else 0.45f).heightIn(min = 36.dp).clip(shape).background(bg).border(1.dp, border, shape).focusRing(focused, c.focus, shape)
         .hoverable(interaction).clickable(interaction, null, enabled = enabled, role = Role.Button, onClick = onClick)
         .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
-        .semantics { if (testTag != null) this.testTag = testTag }
-        .padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        .semantics {
+            if (testTag != null) this.testTag = testTag
+            if (accessibilityDescription != null) contentDescription = accessibilityDescription
+        }
+        .padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (centerContent) Arrangement.Center else Arrangement.spacedBy(8.dp)) {
         if (icon != null) Icon(icon, fg, 18.dp)
         Txt(text, Nz.type.label, fg)
     }
 }
 
+/**
+ * A compact plate or row action. The visible glyph is always backed by a worded tooltip,
+ * keyboard-focus tooltip and semantic name; icon-only is a density choice, never the only
+ * source of meaning.
+ */
 @Composable
-fun Card(modifier: Modifier = Modifier, raised: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+fun NzIconButton(
+    icon: NzIcon,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    kind: ButtonKind = ButtonKind.QUIET,
+    enabled: Boolean = true,
+    selected: Boolean = false,
+    testTag: String? = null,
+    tooltip: String = label,
+) {
+    val c = Nz.colors
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val hovered by interaction.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(NozzleTokens.Radius.control)
+    val resolvedKind = if (selected) ButtonKind.PRIMARY else kind
+    val (bg, fg, border) = when (resolvedKind) {
+        ButtonKind.PRIMARY -> Triple(c.accent, c.onAccent, c.accent)
+        ButtonKind.DANGER -> Triple(c.danger, c.onDanger, c.danger)
+        ButtonKind.SECONDARY -> Triple(if (hovered) c.surfaceRaised else c.surface, c.text, c.lineStrong)
+        ButtonKind.QUIET -> Triple(if (hovered) c.surfaceRaised else Color.Transparent, c.text, Color.Transparent)
+    }
+    val positionProvider = remember {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize,
+            ): IntOffset {
+                val x = (anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2)
+                    .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                val below = anchorBounds.bottom + 8
+                val y = if (below + popupContentSize.height <= windowSize.height) below
+                    else (anchorBounds.top - popupContentSize.height - 8).coerceAtLeast(0)
+                return IntOffset(x, y)
+            }
+        }
+    }
+    Box {
+        TooltipArea(
+            tooltip = { NzTooltip(tooltip) },
+            delayMillis = 500,
+        ) {
+            Box(
+                modifier
+                    .alpha(if (enabled) 1f else 0.45f)
+                    .sizeIn(minWidth = 36.dp, minHeight = 36.dp)
+                    .clip(shape)
+                    .background(bg)
+                    .border(1.dp, border, shape)
+                    .focusRing(focused, c.focus, shape)
+                    .hoverable(interaction)
+                    .clickable(interaction, null, enabled = enabled, role = Role.Button, onClick = onClick)
+                    .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default)
+                    .semantics {
+                        contentDescription = label
+                        if (testTag != null) this.testTag = testTag
+                        if (selected) this.selected = true
+                        if (!enabled) disabled()
+                    }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, fg, 18.dp)
+            }
+        }
+        if (focused) {
+            Popup(
+                popupPositionProvider = positionProvider,
+                properties = PopupProperties(focusable = false),
+            ) { NzTooltip(tooltip) }
+        }
+    }
+}
+
+@Composable
+private fun NzTooltip(text: String) {
+    val c = Nz.colors
+    Box(
+        Modifier.widthIn(max = 360.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(c.surfaceRaised)
+            .border(1.dp, c.lineStrong, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Txt(text, Nz.type.bodySmall, c.text)
+    }
+}
+
+@Composable
+fun Card(modifier: Modifier = Modifier, raised: Boolean = false, compact: Boolean = false,
+         content: @Composable ColumnScope.() -> Unit) {
     val c = Nz.colors
     val shape = RoundedCornerShape(NozzleTokens.Radius.card)
-    Column(modifier.clip(shape).background(if (raised) c.surfaceRaised else c.surface).border(1.dp, c.line, shape).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    Column(modifier.clip(shape).background(if (raised) c.surfaceRaised else c.surface).border(1.dp, c.line, shape)
+        .padding(if (compact) 8.dp else 16.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp), content = content)
 }
 
 fun stateIcon(state: PrinterState) = when (state) {
@@ -203,19 +315,38 @@ fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit, descrip
  * focus starts on Cancel so Enter never confirms by accident.
  */
 @Composable
-fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit, detail: String? = null) {
-    DialogWindow(onCloseRequest = onDismiss, title = title, state = rememberDialogState(width = 460.dp, height = 300.dp), resizable = false,
+fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit,
+                  detail: String? = null, acknowledgement: String? = null, cancelLabel: String = "Cancel",
+                  extraContent: (@Composable () -> Unit)? = null, confirmEnabled: Boolean = true) {
+    DialogWindow(onCloseRequest = onDismiss, title = title,
+        state = rememberDialogState(width = 460.dp,
+            height = if (extraContent != null) 490.dp else if (acknowledgement == null) 300.dp else 390.dp), resizable = false,
         onPreviewKeyEvent = { if (it.key == Key.Escape && it.type == KeyEventType.KeyDown) { onDismiss(); true } else false }) {
         val c = Nz.colors
         val cancelFocus = remember { FocusRequester() }
+        var acknowledged by remember(title, body, acknowledgement) { mutableStateOf(false) }
         Column(Modifier.fillMaxSize().background(c.surface).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Txt(title, Nz.type.title)
-            Txt(body, Nz.type.body, c.text)
-            detail?.let { Txt(it, Nz.type.bodySmall, c.textMuted) }
-            Spacer(Modifier.weight(1f))
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Txt(body, Nz.type.body, c.text)
+                detail?.let { Txt(it, Nz.type.bodySmall, c.textMuted) }
+                extraContent?.invoke()
+                acknowledgement?.let { label ->
+                    Row(Modifier.fillMaxWidth().toggleable(value = acknowledged, role = Role.Checkbox) { acknowledged = it }
+                        .padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.size(22.dp).border(1.dp, if (acknowledged) c.accent else c.line, RoundedCornerShape(4.dp))
+                            .background(if (acknowledged) c.accent.copy(alpha = 0.14f) else Color.Transparent), contentAlignment = Alignment.Center) {
+                            if (acknowledged) Icon(NzIcon.CHECK, c.accent, 18.dp)
+                        }
+                        Txt(label, Nz.type.bodySmall, c.text)
+                    }
+                }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
-                Box(Modifier.focusRequester(cancelFocus).focusable()) { NzButton("Don't send", onDismiss, kind = ButtonKind.SECONDARY) }
-                NzButton(confirmLabel, onConfirm, kind = if (destructive) ButtonKind.DANGER else ButtonKind.PRIMARY, testTag = "confirm-action")
+                Box(Modifier.focusRequester(cancelFocus).focusable()) { NzButton(cancelLabel, onDismiss, kind = ButtonKind.SECONDARY) }
+                NzButton(confirmLabel, onConfirm, kind = if (destructive) ButtonKind.DANGER else ButtonKind.PRIMARY,
+                    enabled = confirmEnabled && (acknowledgement == null || acknowledged), testTag = "confirm-action")
             }
         }
         LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
@@ -224,12 +355,20 @@ fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive
 
 @Composable
 fun SectionHeader(title: String, subtitle: String? = null, trailing: @Composable RowScope.() -> Unit = {}) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Txt(title, Nz.type.headline)
-            subtitle?.let { Txt(it, Nz.type.body, Nz.colors.textMuted) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 700.dp && Nz.textScale >= 1.5f) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Txt(title, Nz.type.headline)
+                subtitle?.let { Txt(it, Nz.type.body, Nz.colors.textMuted) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = trailing)
+            }
+        } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Txt(title, Nz.type.headline)
+                subtitle?.let { Txt(it, Nz.type.body, Nz.colors.textMuted) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = trailing)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = trailing)
     }
 }
 

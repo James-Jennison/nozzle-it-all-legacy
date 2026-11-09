@@ -29,7 +29,7 @@ export function normalizeColor(raw?: unknown): string | undefined {
 }
 
 type J = Record<string, any>;
-const str = (a: unknown[] | undefined, i: number) => { const v = a?.[i]; if (v === null || v === undefined) return undefined; const s = String(v).trim(); return s && s.toUpperCase() !== 'NONE' ? s : undefined; };
+const str = (a: unknown[] | undefined, i: number) => { const v = a?.[i]; if (v === null || v === undefined) return undefined; const s = String(v).trim(); return s && s !== '0' && s.toUpperCase() !== 'NONE' ? s : undefined; };
 const num = (o: J | undefined, k: string) => (typeof o?.[k] === 'number' && Number.isFinite(o[k]) ? o[k] as number : undefined);
 
 export function fullSpectrum(heads: Toolhead[], hasTaskConfig: boolean): FullSpectrum {
@@ -54,7 +54,8 @@ export function parseStatus(result: J, route: Route, observedAt = Date.now()): P
     const loaded = cfg?.filament_exist?.[i] === true;
     heads.push({ index: i, nozzle: num(ex, 'temperature'), target: num(ex, 'target'), diameter: num(ex, 'nozzle_diameter'), loaded, active: active === name,
       material: cfg && loaded ? { vendor: str(cfg.filament_vendor, i), type: str(cfg.filament_type, i)?.toUpperCase(), subType: str(cfg.filament_sub_type, i),
-        colorHex: normalizeColor(str(cfg.filament_color_rgba, i)), fromTag: cfg.filament_official?.[i] === true } : undefined });
+        colorHex: normalizeColor(str(cfg.filament_color_rgba, i)), fromTag: cfg.filament_official?.[i] === true,
+        spoolId: str(cfg.filament_spool_id, i), sku: str(cfg.filament_sku, i) } : undefined });
   }
   const stats: J | undefined = status.print_stats;
   const job = (state === 'printing' || state === 'paused') && stats ? {

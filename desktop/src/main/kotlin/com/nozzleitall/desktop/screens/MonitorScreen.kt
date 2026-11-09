@@ -29,10 +29,29 @@ fun PrinterPicker(state: AppState): PrinterEntry? {
     val current = state.selectedPrinter?.takeIf { it in ids } ?: ids.firstOrNull()
     if (ids.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.semantics { contentDescription = "Choose printer" }) {
         ids.forEach { id -> state.fleet.printers[id]?.let { e ->
-            NzButton(e.config.identity.displayName, { state.selectedPrinter = id }, kind = if (id == current) ButtonKind.PRIMARY else ButtonKind.SECONDARY)
+            NzButton(e.config.identity.displayName, { state.selectPrinter(id) }, kind = if (id == current) ButtonKind.PRIMARY else ButtonKind.SECONDARY)
         } }
     }
     return current?.let { state.fleet.printers[it] }
+}
+
+/**
+ * The top of one printer's page: back to the printers, the printer to look at, and its two tabs (the live Monitor and the
+ * Materials & toolheads it has loaded). Returns the printer, or null when there are none.
+ */
+@Composable
+fun PrinterHeader(state: AppState, on: com.nozzleitall.desktop.Destination, what: String): PrinterEntry? {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NzButton("Printers", { state.destination = com.nozzleitall.desktop.Destination.FLEET }, kind = ButtonKind.QUIET, icon = NzIcon.FLEET)
+        Spacer(Modifier.weight(1f))
+        listOf(com.nozzleitall.desktop.Destination.MONITOR to "Monitor", com.nozzleitall.desktop.Destination.PRINTER_MATERIALS to "Materials & toolheads", com.nozzleitall.desktop.Destination.HISTORY to "History").forEach { (d, label) ->
+            NzButton(label, { state.destination = d }, kind = if (d == on) ButtonKind.PRIMARY else ButtonKind.SECONDARY, testTag = "printer-tab-${d.name.lowercase()}")
+        }
+    }
+    val entry = PrinterPicker(state)
+    // The printer's name is on its own card below, so the heading here is only what the page is for.
+    Txt(what, Nz.type.bodySmall, Nz.colors.textMuted)
+    return entry
 }
 
 @Composable
@@ -45,30 +64,122 @@ fun NoPrinterYet(state: AppState, what: String) = Card(Modifier.fillMaxWidth()) 
 @Composable
 fun MonitorScreen(state: AppState) {
     Column(Modifier.fillMaxSize().padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        SectionHeader("Print & Monitor", "Watch a job and control the printer. Every command asks first.")
-        val entry = PrinterPicker(state) ?: run { NoPrinterYet(state, "live status, cameras and controls"); return@Column }
+        val workspacePreview = state.prepare.slice as? com.nozzleitall.desktop.prepare.SliceState.Done
+        PrintWorkflowBar(
+            active = PrintWorkflowStage.MONITOR,
+            hasPreview = workspacePreview?.preview != null,
+            hasPrinter = true,
+            onSelect = { stage -> when (stage) {
+                PrintWorkflowStage.PREPARE -> state.returnToWorkspace(preview = false)
+                PrintWorkflowStage.PREVIEW -> state.returnToWorkspace(preview = true)
+                PrintWorkflowStage.SEND -> state.returnToWorkspace(preview = true, send = true)
+                PrintWorkflowStage.MONITOR -> Unit
+            } },
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        )
+        val entry = PrinterHeader(state, com.nozzleitall.desktop.Destination.MONITOR, "Watch a job and control the printer. Every command asks first.") ?: run { NoPrinterYet(state, "live status, cameras and controls"); return@Column }
+        val sameWorkspacePrinter = state.prepare.printer()?.config?.identity?.id == entry.config.identity.id
         val status = entry.status.value
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            NzButton("Back to project", { state.returnToWorkspace(preview = false) },
+                kind = ButtonKind.SECONDARY, icon = NzIcon.PREPARE, testTag = "monitor-back-project")
+            if (sameWorkspacePrinter && state.prepare.slice is com.nozzleitall.desktop.prepare.SliceState.Done)
+                NzButton("Back to preview", { state.returnToWorkspace(preview = true) },
+                    kind = ButtonKind.QUIET, icon = NzIcon.LAYERS, testTag = "monitor-back-preview")
+        }
+        val handoff = state.monitorHandoff?.takeIf { it.printerId == entry.config.identity.id }
+        val handoffSuperseded = monitorHandoffSuperseded(status)
+        val showHandoff = handoff != null && !handoffSuperseded
+        LaunchedEffect(handoff, handoffSuperseded) {
+            if (handoff != null) state.reconcileMonitorHandoff(handoff, handoffSuperseded)
+        }
+        handoff?.takeIf { showHandoff }?.let {
+            Card(Modifier.fillMaxWidth(), raised = true) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(NzIcon.SEND, Nz.colors.accent, 20.dp)
+                    Column(Modifier.weight(1f)) {
+                        Txt(it.projectName, Nz.type.title)
+                        Txt("${it.state.label} · ${it.fileName}", Nz.type.bodySmall, Nz.colors.textMuted)
+                    }
+                    if (it.state == com.nozzleitall.desktop.MonitorHandoffState.QUEUED)
+                        NzButton("Open Jobs", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.PRIMARY)
+                }
+                Txt("Uploaded, queued, and actively printing are separate states. Live printer status below remains authoritative.", Nz.type.bodySmall, Nz.colors.textMuted)
+            }
+        }
+        val activeJobs = state.fleet.order.value.mapNotNull { id -> state.fleet.printers[id]?.let { id to it } }
+            .filter { (_, printer) -> printer.status.value.job != null && printer.status.value.state in setOf(PrinterState.PRINTING, PrinterState.PAUSED) }
+        if (activeJobs.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Txt("Active jobs", Nz.type.label, modifier = Modifier.padding(end = 4.dp))
+            activeJobs.forEach { (id, printer) ->
+                val job = printer.status.value.job ?: return@forEach
+                NzButton("${printer.config.identity.displayName} · ${job.fileName.substringAfterLast('/').substringAfterLast('\\')}",
+                    { state.openPrinter(id) }, kind = if (id == entry.config.identity.id) ButtonKind.PRIMARY else ButtonKind.SECONDARY,
+                    testTag = "active-job-$id")
+            }
+        }
+        if (!sameWorkspacePrinter) Txt("Prepare opens the current workspace; this printer's active job may be separate from it.", Nz.type.bodySmall, Nz.colors.textMuted)
         val caps = entry.capabilities.value
         val flow = rememberActionFlow(entry)
         ActionFlowUi(flow, entry)
         entry.problem.value?.let { Banner(it, BannerKind.WARNING) }
+        JobHero(entry, status, caps, flow)
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            Column(Modifier.weight(1.4f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                CameraPanel(entry)
-                JobPanel(entry, status)
-            }
+            Column(Modifier.weight(1.4f), verticalArrangement = Arrangement.spacedBy(18.dp)) { CameraPanel(entry) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                Card(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Txt(entry.config.identity.displayName, Nz.type.title, modifier = Modifier.weight(1f))
-                        StatusPill(status.state)
-                    }
-                    RouteBadge(status.route)
-                    status.message?.let { Txt(it, Nz.type.bodySmall, Nz.colors.textMuted) }
-                    Txt("Updated ${ago(status.observedAtMillis)}", Nz.type.bodySmall, Nz.colors.textMuted)
-                }
                 TemperaturePanel(status)
                 if (caps != null) ControlsPanel(entry, status, caps, flow)
+            }
+        }
+    }
+}
+
+/** A printer-reported job or terminal outcome supersedes the optimistic queue/upload handoff card. */
+internal fun monitorHandoffSuperseded(status: PrinterStatus): Boolean =
+    status.job != null || status.state.isActiveJob ||
+        status.state in setOf(PrinterState.FINISHED, PrinterState.CANCELLED, PrinterState.ERROR)
+
+/**
+ * The top of the Monitor: which printer, its state, and the job in one place. A running job shows its progress, the time left and when it
+ * should end; Pause, Resume and Cancel sit beside it, and only the ones the printer can do right now appear.
+ */
+@Composable
+fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flow: ActionFlow) {
+    val c = Nz.colors
+    val blocked = entry.guard?.needsReconcile == true || flow.busy
+    Card(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Txt(entry.config.identity.displayName, Nz.type.title, modifier = Modifier.weight(1f))
+            RouteBadge(status.route)
+            StatusPill(status.state)
+        }
+        val job = status.job
+        if (job == null) Txt(status.message ?: if (status.state == PrinterState.FINISHED) "The last job finished." else "Nothing is printing.", Nz.type.body, c.textMuted)
+        else {
+            val left = JobEta.remainingSeconds(job.fraction, job.elapsedSeconds)
+            Txt(job.fileName, Nz.type.headline)
+            ProgressBar(job.fraction, Nz.status.forState(status.state.glossaryId), label = "Print progress ${(job.fraction * 100).toInt()} percent")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Metric("Done", "${(job.fraction * 100).toInt()}%")
+                left?.let { Metric("Time left", formatDuration(it)); Metric("Finishes about", JobEta.finishesAt(System.currentTimeMillis(), it)) }
+                Metric("Elapsed", formatDuration(job.elapsedSeconds))
+                job.totalLayers?.let { Metric("Layer", "${job.currentLayer ?: 0} of $it") }
+            }
+            status.message?.let { Txt(it, Nz.type.bodySmall, c.textMuted) }
+        }
+        if (status.toolheads.isNotEmpty()) ToolheadStrip(status.toolheads)
+        if (caps != null) {
+            fun offer(a: PrinterAction) = !blocked && status.state in a.allowedStates
+            val show = listOfNotNull(
+                PrinterAction.Pause.takeIf { caps.pausePrint && offer(it) }, PrinterAction.Resume.takeIf { caps.resumePrint && offer(it) }, PrinterAction.Cancel.takeIf { caps.cancelPrint && offer(it) })
+            if (entry.guard?.needsReconcile == true) Txt("Commands are paused until Nozzle has checked the printer.", Nz.type.bodySmall, Nz.status.paused)
+            if (show.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                show.forEach { a -> when (a) {
+                    PrinterAction.Pause -> NzButton("Pause", { flow.request(a) }, icon = NzIcon.PAUSE, testTag = "job-pause")
+                    PrinterAction.Resume -> NzButton("Resume", { flow.request(a) }, icon = NzIcon.PLAY, kind = ButtonKind.PRIMARY, testTag = "job-resume")
+                    else -> NzButton("Cancel print", { flow.request(a) }, kind = ButtonKind.DANGER, icon = NzIcon.STOP, testTag = "job-cancel")
+                } }
             }
         }
     }
@@ -105,26 +216,6 @@ fun CameraPanel(entry: PrinterEntry) {
 }
 
 @Composable
-fun JobPanel(entry: PrinterEntry, status: PrinterStatus) {
-    val c = Nz.colors
-    Card(Modifier.fillMaxWidth()) {
-        Txt("Current job", Nz.type.title)
-        val job = status.job
-        if (job == null) Txt(if (status.state == PrinterState.FINISHED) "The last job finished." else "Nothing is printing.", Nz.type.body, c.textMuted)
-        else {
-            Txt(job.fileName, Nz.type.body)
-            ProgressBar(job.fraction, Nz.status.forState(status.state.glossaryId), label = "Print progress ${(job.fraction * 100).toInt()} percent")
-            Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-                Metric("Done", "${(job.fraction * 100).toInt()}%")
-                Metric("Elapsed", formatDuration(job.elapsedSeconds))
-                job.totalLayers?.let { Metric("Layer", "${job.currentLayer ?: 0} of $it") }
-            }
-        }
-        if (status.toolheads.isNotEmpty()) ToolheadStrip(status.toolheads)
-    }
-}
-
-@Composable
 fun TemperaturePanel(status: PrinterStatus) {
     Card(Modifier.fillMaxWidth()) {
         Txt("Temperatures", Nz.type.title)
@@ -142,15 +233,9 @@ fun ControlsPanel(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities
     val blocked = entry.guard?.needsReconcile == true || flow.busy
     Card(Modifier.fillMaxWidth()) {
         Txt("Controls", Nz.type.title)
-        if (blocked && entry.guard?.needsReconcile == true) Txt("Commands are paused until Nozzle has checked the printer.", Nz.type.bodySmall, Nz.status.paused)
         fun offer(a: PrinterAction) = !blocked && status.state in a.allowedStates
         // Each control appears only if this printer's adapter reports it; nothing here depends on the printer's make.
         if (!caps.anyControl) Txt("${entry.config.identity.displayName} can be monitored from Nozzle It All but not controlled.", Nz.type.body, c.textMuted)
-        if (caps.pausePrint || caps.resumePrint || caps.cancelPrint) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (caps.pausePrint) NzButton("Pause", { flow.request(PrinterAction.Pause) }, icon = NzIcon.PAUSE, enabled = offer(PrinterAction.Pause))
-            if (caps.resumePrint) NzButton("Resume", { flow.request(PrinterAction.Resume) }, icon = NzIcon.PLAY, enabled = offer(PrinterAction.Resume))
-            if (caps.cancelPrint) NzButton("Cancel print", { flow.request(PrinterAction.Cancel) }, kind = ButtonKind.DANGER, icon = NzIcon.STOP, enabled = offer(PrinterAction.Cancel))
-        }
         if (caps.temperatures) {
             var nozzle by remember { mutableStateOf("") }
             var bed by remember { mutableStateOf("") }

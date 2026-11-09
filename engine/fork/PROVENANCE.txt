@@ -1,5 +1,10 @@
-nozzle-engine (native Linux x86_64) built on gthost-build01 by nozzle-engine CI (run 36853299329), 2026-10-01T11:12:32Z from 5e8396c87026c280cdf1a02879b463d6bb7df7e9
-engine source: nozzle-engine 490e5b5255ffb96b1d8740677e4a6196acc3cca5 (engine/fork/ENGINE_PIN.json); built from pull request #11's test merge 5e8396c, whose tree 6ff689c is identical to 490e5b5's
-bridge: /home/jjennison/actions-runner-nozzle-engine/_work/nozzle-engine/nozzle-engine/engine/nozzle/bridge/native
-deps: /home/jjennison/nozzle-engine-ci/desktop-deps
-0d851ce739ef85127b4c2cb59d72dfe974e8ff7c604eadd26053546d94ef7e81  nozzle-engine
+nozzle-engine Desktop Linux x86_64 Release
+engine source: nozzle-engine 977fb64972f67b4b1c1b167ebf47c1d145787a25 (engine/fork/ENGINE_PIN.json), bridges from the engine (nozzle/bridge)
+Desktop predecessor: f86582604e36390bc66d0c567a68d47244af3109
+base source: 891d6af80e58bd8c1946ad1db2485ada8a841a17
+build host: gthost-build01
+build image: sha256:e1e4c697261e9072b02398c5bd48d9a9b29e24cebbea21105d7c5e786eda8f1a
+configuration: Release, GCC 13, SLIC3R_GUI=OFF, SLIC3R_CAD=ON, SLIC3R_STATIC=ON, network isolated
+dependency prefix: /vmdata/worktrees/nozzle-engine-2340ff3b/deps-prefix
+fixtures: parameter regeneration, analytic through hole volume, native STEP round-trip, checked-in three-body STEP and malformed input rejection
+fab18fe78f28ae72a3ada764fb7713a66aec62da8a129f9aa2bb85546b8a6c5b  nozzle-engine

@@ -34,14 +34,15 @@ class NozzleType(private val scale: Float) {
     val metricSmall = style(NozzleTokens.Type.metricSmall)
 }
 
-class NozzleThemeValues(val dark: Boolean, val palette: NozzlePalette, val status: NozzleStatusColors, val type: NozzleType)
+class NozzleThemeValues(val dark: Boolean, val palette: NozzlePalette, val status: NozzleStatusColors, val type: NozzleType, val textScale: Float)
 
-val LocalNozzle = staticCompositionLocalOf { NozzleThemeValues(true, NozzleTokens.darkPalette, NozzleTokens.darkStatus, NozzleType(1f)) }
+val LocalNozzle = staticCompositionLocalOf { NozzleThemeValues(true, NozzleTokens.darkPalette, NozzleTokens.darkStatus, NozzleType(1f), 1f) }
 
 object Nz {
     val colors: NozzlePalette @Composable get() = LocalNozzle.current.palette
     val status: NozzleStatusColors @Composable get() = LocalNozzle.current.status
     val type: NozzleType @Composable get() = LocalNozzle.current.type
+    val textScale: Float @Composable get() = LocalNozzle.current.textScale
     val dark: Boolean @Composable get() = LocalNozzle.current.dark
 }
 
@@ -49,7 +50,7 @@ object Nz {
 fun NozzleTheme(themeSetting: String = "system", textScale: Float = 1f, content: @Composable () -> Unit) {
     val dark = when (themeSetting) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }
     val values = remember(dark, textScale) {
-        NozzleThemeValues(dark, if (dark) NozzleTokens.darkPalette else NozzleTokens.lightPalette, if (dark) NozzleTokens.darkStatus else NozzleTokens.lightStatus, NozzleType(textScale))
+        NozzleThemeValues(dark, if (dark) NozzleTokens.darkPalette else NozzleTokens.lightPalette, if (dark) NozzleTokens.darkStatus else NozzleTokens.lightStatus, NozzleType(textScale), textScale)
     }
     CompositionLocalProvider(LocalNozzle provides values,
         LocalTextSelectionColors provides TextSelectionColors(values.palette.accent, values.palette.accent.copy(alpha = 0.35f))) { content() }

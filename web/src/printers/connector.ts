@@ -62,7 +62,8 @@ export class ConnectorClient {
       if (!r.ok) throw new Error(r.status === 401 ? 'This browser is no longer paired with Nozzle It All for Desktop.' : `The connector answered ${r.status}.`);
       const j = await r.json();
       const heads = (j.toolheads ?? []).map((t: any) => ({ index: t.index, nozzle: t.nozzleTemperature, target: t.nozzleTarget, diameter: t.nozzleDiameterMm, loaded: !!t.loaded, active: !!t.active,
-        material: t.material ? { vendor: t.material.vendor, type: t.material.type, subType: t.material.subType, colorHex: t.material.colorHex, fromTag: !!t.material.fromTag } : undefined }));
+        material: t.material ? { vendor: t.material.vendor, type: t.material.type, subType: t.material.subType, colorHex: t.material.colorHex,
+          fromTag: !!t.material.fromTag, spoolId: t.material.spoolId, sku: t.material.sku } : undefined }));
       return { state: STATE_BY_NAME[j.state] ?? 'unknown', route: ({ PRIVATE_NETWORK: 'private-network', VENDOR_CLOUD: 'vendor-cloud', NONE: 'none' } as Record<string, Route>)[j.route] ?? 'lan',
         job: j.job ? { fileName: j.job.fileName, fraction: j.job.fraction, elapsed: j.job.elapsedSeconds, layer: j.job.currentLayer, layers: j.job.totalLayers } : undefined,
         bed: j.bed ? { current: j.bed.current, target: j.bed.target } : undefined, toolheads: heads,

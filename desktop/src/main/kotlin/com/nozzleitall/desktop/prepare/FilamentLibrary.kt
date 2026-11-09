@@ -15,13 +15,27 @@ object FilamentLibrary {
         val displayName get() = name.substringBefore(" @").trim()
     }
 
+    interface CustomProfiles {
+        fun entries(profileId: String): List<Entry>
+        fun profileJson(profileId: String, filamentId: String): JSONObject?
+    }
+
     private val cache = HashMap<String, List<Entry>>()
+    @Volatile private var customProfiles: CustomProfiles? = null
+
+    fun installCustomProfiles(profiles: CustomProfiles?) { customProfiles = profiles }
 
     /**
      * Filament profiles for [profileId]: "<profile>@<machine>" reads that nozzle size's filaments from the printer's
      * profile family (PrinterLibrary); a plain profile id reads its bundled filament list (empty when none is).
      */
-    fun forProfile(profileId: String): List<Entry> = synchronized(cache) {
+    fun forProfile(profileId: String): List<Entry> = bundledForProfile(profileId) + customProfiles?.entries(profileId).orEmpty()
+
+    /** Native machine presets plus safe product identities from the four bundled source catalogs. */
+    fun bundledForProfile(profileId: String): List<Entry> = nativeBundledForProfile(profileId) + BundledFilamentCatalog.entriesFor(profileId)
+
+    /** Presets actually shipped for this machine family, without aggregate catalog identities. */
+    fun nativeBundledForProfile(profileId: String): List<Entry> = synchronized(cache) {
         cache.getOrPut(profileId) {
             libraryMachine(profileId)?.let { (lib, m) -> return@getOrPut lib.filamentsFor(m) }
             val text = FilamentLibrary::class.java.getResourceAsStream("/filaments/$profileId/index.json")?.readBytes()?.decodeToString() ?: return@getOrPut emptyList()
@@ -31,8 +45,19 @@ object FilamentLibrary {
     }
 
     fun profileJson(profileId: String, filamentId: String): JSONObject? =
+        customProfiles?.profileJson(profileId, filamentId) ?: bundledProfileJson(profileId, filamentId)
+
+    fun bundledProfileJson(profileId: String, filamentId: String): JSONObject? =
+        nativeBundledProfileJson(profileId, filamentId) ?: BundledFilamentCatalog.profileJson(profileId, filamentId)
+
+    fun nativeBundledProfileJson(profileId: String, filamentId: String): JSONObject? =
         libraryMachine(profileId)?.first?.json("filament", filamentId)
             ?: FilamentLibrary::class.java.getResourceAsStream("/filaments/$profileId/$filamentId.json")?.readBytes()?.decodeToString()?.let { JSONObject(it) }
+
+    fun savedProfile(id: String, savedProfiles: Map<String, String>): JSONObject? =
+        savedProfiles[id]?.let { text ->
+            runCatching { JSONObject(text) }.getOrElse { throw IllegalArgumentException("The saved filament preset '$id' is invalid.", it) }
+        }
 
     private fun libraryMachine(key: String): Pair<PrinterLibrary, PrinterLibrary.Machine>? {
         val parts = key.split('@')
@@ -50,6 +75,20 @@ object FilamentLibrary {
      */
     fun bestFor(profileId: String, vendor: String?, type: String?, subType: String? = null): Entry? {
         val all = forProfile(profileId).filter { type != null && it.type.equals(type, true) }
+        return bestFrom(all, vendor, type, subType)
+    }
+
+    fun bestBundledFor(profileId: String, vendor: String?, type: String?, subType: String? = null): Entry? {
+        val all = bundledForProfile(profileId).filter { type != null && it.type.equals(type, true) }
+        return bestFrom(all, vendor, type, subType)
+    }
+
+    fun bestNativeBundledFor(profileId: String, vendor: String?, type: String?, subType: String? = null): Entry? {
+        val all = nativeBundledForProfile(profileId).filter { type != null && it.type.equals(type, true) }
+        return bestFrom(all, vendor, type, subType)
+    }
+
+    private fun bestFrom(all: List<Entry>, vendor: String?, type: String?, subType: String?): Entry? {
         fun named(prefix: String) = all.filter { it.displayName.startsWith(prefix, true) }
         val v = vendor?.trim().orEmpty()
         val wanted = listOfNotNull(subType?.let { "$v $type $it" }, "$v $type Basic", "$v $type")
@@ -58,45 +97,25 @@ object FilamentLibrary {
     }
 
     /**
-     * The flow-variant settings: a filament holds one value per nozzle flow type it declares (filament_flow_support),
-     * and the combined config lays them out filament by filament (Snapmaker Orca's filament_flow_variant_options()).
-     */
-    val FLOW_VARIANT_KEYS = setOf("filament_flow_ratio", "enable_pressure_advance", "pressure_advance", "nozzle_temperature_initial_layer",
-        "nozzle_temperature", "filament_max_volumetric_speed", "fan_min_speed", "fan_max_speed", "additional_cooling_fan_speed",
-        "filament_retraction_length", "filament_retraction_speed", "filament_deretraction_speed", "filament_z_hop_types",
-        "filament_wipe_distance", "filament_retract_length_toolchange", "filament_multitool_ramming", "filament_multitool_ramming_volume",
-        "filament_multitool_ramming_flow", "filament_minimal_purge_on_wipe_tower")
-
-    /**
-     * One filament config for [perSlot] filaments, composed the way Snapmaker Orca's PresetBundle::full_fff_config()
-     * composes one filament preset per slot: an ordinary per-filament (list) setting takes each slot's first value; a
-     * flow-variant setting (and filament_flow_support) takes each slot's segment of as many values as that slot declares
-     * flow types, the first repeated where the profile has fewer; filament_flow_step_size records the segment lengths.
-     * A slot's values come from its own profile ([perSlot] entry), else [base] (the printer profile's own filament), else
-     * the setting's engine default; everything that isn't per filament comes from [base].
+     * One filament config for [perSlot] filaments: every per-filament (list) setting takes one value per slot, the slot's own
+     * profile's first value, else [base] (the printer profile's own filament), else the setting's engine default; everything
+     * that isn't per filament comes from [base]. OrcaSlicer 2.5.0 lays a multi-filament config out this way (one entry per
+     * filament, widened to its extruder variants by the engine's normalize_filament_values_to_variants); a profile's second
+     * and later values (Snapmaker's high-flow nozzle, or another extruder variant) are not carried into a per-slot slice yet.
      */
     fun combine(base: JSONObject, perSlot: List<JSONObject?>): JSONObject {
         val out = JSONObject(base.toString())
         val sources = perSlot.map { it ?: base }
-        val steps = sources.map { (it.opt("filament_flow_support") as? JSONArray)?.length()?.takeIf { n -> n > 0 } ?: 1 }
         val keys = LinkedHashSet<String>().apply { addAll(base.keySet()); perSlot.filterNotNull().forEach { addAll(it.keySet()) } }
         for (k in keys) {
             val listy = (base.opt(k) is JSONArray) || perSlot.any { it?.opt(k) is JSONArray }
-            if (!listy || k == "filament_flow_step_size") continue
+            // Snapmaker's flow-variant bookkeeping has no meaning on 2.5.0 (its engine reads extruder variants instead).
+            if (k == "filament_flow_step_size" || k == "filament_flow_support") { out.remove(k); continue }
+            if (!listy) continue
             fun values(src: JSONObject): JSONArray? = (src.opt(k) as? JSONArray)?.takeIf { it.length() > 0 } ?: (base.opt(k) as? JSONArray)?.takeIf { it.length() > 0 }
-            val segmented = k in FLOW_VARIANT_KEYS || k == "filament_flow_support"
-            val merged = ArrayList<Any?>()
-            sources.forEachIndexed { i, src ->
-                val v = values(src)
-                val n = if (segmented) steps[i] else 1
-                for (j in 0 until n) merged += v?.let { if (j < it.length()) it.opt(j) else it.opt(0) } ?: engineDefault(k)
-            }
-            if (merged.any { it == null }) {
-                // filament_flow_support has no default: a slot that declares none gets "standard", as a preset without it.
-                if (k == "filament_flow_support") out.put(k, JSONArray(merged.map { it ?: "standard" })) else out.remove(k)
-            } else out.put(k, JSONArray(merged))
+            val merged = sources.map { values(it)?.opt(0) ?: engineDefault(k) }
+            if (merged.any { it == null }) out.remove(k) else out.put(k, JSONArray(merged))
         }
-        out.put("filament_flow_step_size", JSONArray(steps.map { it.toString() }))
         out.put("name", "Nozzle per-slot filaments")
         return out
     }
@@ -110,9 +129,12 @@ object FilamentLibrary {
     }
 
     /** The per-slot filament file for a slice in [dir], or null when no slot has its own filament profile. */
-    fun writeCombined(profileId: String, profileDir: File, slots: List<com.nozzleitall.project.ProjectManifest.MaterialSlot>, dir: File): File? {
+    fun writeCombined(profileId: String, profileDir: File, slots: List<com.nozzleitall.project.ProjectManifest.MaterialSlot>, dir: File,
+                      savedProfiles: Map<String, String> = emptyMap()): File? {
         if (slots.none { it.filamentProfile != null }) return null
         val base = JSONObject(File(profileDir, "filament.json").readText())
-        return File(dir, "filaments.json").apply { writeText(combine(base, slots.map { s -> s.filamentProfile?.let { profileJson(profileId, it) } }).toString(1)) }
+        return File(dir, "filaments.json").apply { writeText(combine(base, slots.map { s -> s.filamentProfile?.let { id ->
+            savedProfile(id, savedProfiles) ?: profileJson(profileId, id)
+        } }).toString(1)) }
     }
 }

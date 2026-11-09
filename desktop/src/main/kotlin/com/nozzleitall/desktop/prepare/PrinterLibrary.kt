@@ -17,11 +17,24 @@ class PrinterLibrary private constructor(val profileId: String, val machines: Li
     data class Process(val id: String, val name: String, val label: String, val layerHeight: String, val madeBy: String? = null) {
         val displayLabel: String get() = madeBy?.let { "$label ($it)" } ?: label
     }
+    data class CustomProcess(val id: String, val profileId: String, val machineId: String, val baseProcessId: String,
+                             val name: String, val layerHeight: String, val source: String,
+                             val processOverrides: JSONObject, val machineOverrides: JSONObject)
+    interface CustomProcesses {
+        fun entries(profileId: String, machineId: String): List<CustomProcess>
+        fun find(profileId: String, id: String): CustomProcess?
+    }
 
     fun machineFor(nozzle: String?): Machine =
         machines.firstOrNull { it.nozzle == nozzle } ?: machines.firstOrNull { it.nozzle == "0.4" } ?: machines.first()
 
-    fun processesFor(m: Machine): List<Process> = m.processes.mapNotNull { processes[it] }
+    fun processesFor(m: Machine): List<Process> = m.processes.mapNotNull { processes[it] } +
+        customProcesses?.entries(profileId, m.id).orEmpty().map { Process(it.id, it.name, it.name, it.layerHeight, it.source) }
+    fun processFor(m: Machine, id: String?): Process? {
+        val selected = id ?: m.defaultProcess
+        return processes[selected] ?: customProcesses?.find(profileId, selected.orEmpty())
+            ?.takeIf { it.machineId == m.id }?.let { Process(it.id, it.name, it.name, it.layerHeight, it.source) }
+    }
     fun filamentsFor(m: Machine): List<FilamentLibrary.Entry> = m.filaments.mapNotNull { filaments[it] }
 
     private fun resource(kind: String, id: String): String? =
@@ -31,16 +44,24 @@ class PrinterLibrary private constructor(val profileId: String, val machines: Li
 
     /** A profile folder for the engine: this machine, this process, and the machine's default filament. */
     fun materialize(cache: File, m: Machine, processId: String?): File {
-        val p = processId?.takeIf { it in m.processes } ?: m.defaultProcess ?: m.processes.first()
+        val custom = processId?.let { customProcesses?.find(profileId, it) }?.takeIf { it.machineId == m.id }
+        val p = custom?.baseProcessId ?: processId?.takeIf { it in m.processes } ?: m.defaultProcess ?: m.processes.first()
         val f = m.defaultFilament ?: m.filaments.first()
-        val dir = File(cache, "profiles/$profileId@${m.id}@$p").apply { mkdirs() }
-        listOf("machine.json" to resource("machine", m.id), "process.json" to resource("process", p), "filament.json" to resource("filament", f))
+        val dir = File(cache, "profiles/$profileId@${m.id}@${custom?.id ?: p}").apply { mkdirs() }
+        fun merged(base: String?, overrides: JSONObject): String? = base?.let { text -> JSONObject(text).also { out ->
+            overrides.keySet().forEach { key -> out.put(key, overrides.opt(key)) }
+        }.toString(2) }
+        listOf("machine.json" to merged(resource("machine", m.id), custom?.machineOverrides ?: JSONObject()),
+            "process.json" to merged(resource("process", p), custom?.processOverrides ?: JSONObject()),
+            "filament.json" to resource("filament", f))
             .forEach { (name, text) -> text?.let { t -> File(dir, name).takeIf { !it.isFile || it.readText() != t }?.writeText(t) } }
         return dir
     }
 
     companion object {
         private val cache = HashMap<String, PrinterLibrary?>()
+        @Volatile private var customProcesses: CustomProcesses? = null
+        fun installCustomProcesses(processes: CustomProcesses?) { customProcesses = processes }
 
         /** The library for printer profile [profileId], or null when it has none. */
         fun of(profileId: String): PrinterLibrary? = synchronized(cache) {
