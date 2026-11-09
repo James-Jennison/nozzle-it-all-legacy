@@ -105,7 +105,9 @@ jobs:
           export DISPLAY=:197
           unset ANDROID_HOME ANDROID_SDK_ROOT
           bwrap --bind / / --dev /dev --ro-bind "$display_dir" /tmp/.X11-unix -- \
-            bash ./gradlew -c settings-desktop.gradle.kts :desktop:test --no-daemon --max-workers=4
+            bash ./gradlew -c settings-desktop.gradle.kts :desktop:verifyNozzleEngine :desktop:test \
+              -PnozzleEngine=/vmdata/build-cache/nia-ci-toolchain/nozzle-engine-fab18fe78f28 \
+              --no-daemon --max-workers=4
 
       - name: Assemble debug (native build, arm64-v8a)
         # -PdeviceFarmTests leaves out the LAN/printer-only tests: Device Farm rejects (at re-signing) a test package with too much code.
