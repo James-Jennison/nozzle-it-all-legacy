@@ -71,6 +71,27 @@ class ProjectRevisionTest {
         }
     }
 
+    @Test fun replacingProjectClearsPriorMachineMaterialsAndBatchResults() {
+        val root = Files.createTempDirectory("fresh-project-materials").toFile()
+        val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val app = AppState(paths, scope)
+        try {
+            val prepare = app.prepare
+            prepare.applySlicingSetup(SlicingSetup("elegoo_centauri_carbon_cosmos_afc", "CC1"))
+            prepare.manualSlots[0] = prepare.manualSlots[0].copy(type = "PETG", spoolId = "fixture-tag", fromTag = true)
+            prepare.newProject()
+            assertEquals("snapmaker_u1", prepare.profileId)
+            assertEquals("PLA", prepare.manualSlots[0].type)
+            assertNull(prepare.manualSlots[0].spoolId)
+            assertSame(SliceState.Idle, prepare.slice)
+        } finally {
+            scope.cancel()
+            app.fleet.shutdown()
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun printProjectResolvesItsArchivedRevisionAndRejectsAnotherPlate() {
         val root = Files.createTempDirectory("history-print-project").toFile()
         val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()

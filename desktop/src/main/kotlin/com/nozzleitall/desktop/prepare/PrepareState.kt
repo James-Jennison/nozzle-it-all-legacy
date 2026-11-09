@@ -482,10 +482,11 @@ class PrepareState(private val app: AppState) {
     var uploadProgress by mutableStateOf<Float?>(null)
     /** Material slots when no printer reports its toolheads (1-based). */
     // Enough slots for any bundled profile (the Prusa XL has five toolheads); a profile shows as many as it has tools.
-    val manualSlots = mutableStateListOf(ProjectManifest.MaterialSlot(1, "PLA", colorHex = "#A78BFA"), ProjectManifest.MaterialSlot(2, "PLA", colorHex = "#F2754E"),
+    private val defaultMaterialSlots = listOf(ProjectManifest.MaterialSlot(1, "PLA", colorHex = "#A78BFA"), ProjectManifest.MaterialSlot(2, "PLA", colorHex = "#F2754E"),
         ProjectManifest.MaterialSlot(3, "PLA", colorHex = "#EEF2F4"), ProjectManifest.MaterialSlot(4, "PLA", colorHex = "#1E2429"),
         ProjectManifest.MaterialSlot(5, "PLA", colorHex = "#4CAF50"), ProjectManifest.MaterialSlot(6, "PLA", colorHex = "#29B6F6"),
         ProjectManifest.MaterialSlot(7, "PLA", colorHex = "#FFB300"), ProjectManifest.MaterialSlot(8, "PLA", colorHex = "#8D6E63"))
+    val manualSlots = defaultMaterialSlots.toMutableStateList()
     private var engine: SliceEngine? = null
     private var nextId = 1
     internal val nextItemId get() = nextId
@@ -1109,9 +1110,9 @@ class PrepareState(private val app: AppState) {
     }
 
     fun newProject() {
-        manualSlots.replaceAll { slot ->
-            if (!slot.fromTag && SpoolReader.owns(slot.spoolId)) slot.copy(spoolId = null) else slot
-        }
+        invalidateSlice()
+        manualSlots.clear()
+        manualSlots.addAll(defaultMaterialSlots)
         bedType = null; nozzleFlows.clear(); nozzle = null; processId = null
         presetSnapshot = null; presetSnapshotProblem = null
         machineCache = null
@@ -1120,7 +1121,10 @@ class PrepareState(private val app: AppState) {
         items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap()
         plateNames.clear(); plateNames += "Plate 1"; plateIds.clear(); plateIds += UUID.randomUUID().toString(); currentPlate = 0
         showPlateOverview = false
-        slice = SliceState.Idle; showPreview = false; nextId = 1; calibration = null
+        nextId = 1; calibration = null
+        installedSetup = null
+        profileId = ProfileCatalog.DEFAULT_ID
+        app.fleet.settings.value.slicingSetup?.let(::applySlicingSetup)
         history.reset()
     }
 
@@ -1409,10 +1413,9 @@ class PrepareState(private val app: AppState) {
         discardMeshEditPreview()
         sliceGeneration++
         batchSlices = emptyMap()
-        if (slice !is SliceState.Running) {
-            slice = SliceState.Idle
-            showPreview = false
-        }
+        if (slice is SliceState.Running) engine?.cancel()
+        slice = SliceState.Idle
+        showPreview = false
     }
 
     private fun showCompletedSlice(completed: SliceState.Done, openPreview: Boolean = true) {
@@ -2249,11 +2252,7 @@ class PrepareState(private val app: AppState) {
                 } catch (error: Exception) {
                     SliceState.Failed(error.message ?: "The plate could not be sliced.")
                 }
-                if (generation != sliceGeneration) {
-                    slice = SliceState.Idle
-                    showPreview = false
-                    return@launch
-                }
+                if (generation != sliceGeneration) return@launch
                 if (sliceCancelRequested) {
                     slice = SliceState.Cancelled
                     showPreview = false
