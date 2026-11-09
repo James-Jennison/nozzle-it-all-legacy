@@ -55,6 +55,7 @@ fun PrintWorkflowBar(
     hasPrinter: Boolean,
     onSelect: (PrintWorkflowStage) -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     Row(
         modifier.semantics {
@@ -65,17 +66,19 @@ fun PrintWorkflowBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PrintWorkflowStage.entries.forEachIndexed { index, stage ->
-            NzButton(
-                stage.label,
-                { onSelect(stage) },
-                kind = if (stage == active) ButtonKind.PRIMARY else ButtonKind.QUIET,
-                icon = stage.icon,
-                enabled = printWorkflowStageEnabled(stage, hasPreview, hasPrinter),
-                testTag = "workflow-${stage.name.lowercase()}",
-                accessibilityDescription = printWorkflowStageDescription(stage, active, hasPreview, hasPrinter),
-            )
-            if (index != PrintWorkflowStage.entries.lastIndex) {
-                Txt("→", Nz.type.label, Nz.colors.textMuted)
+            val enabled = printWorkflowStageEnabled(stage, hasPreview, hasPrinter)
+            val description = printWorkflowStageDescription(stage, active, hasPreview, hasPrinter)
+            val tag = "workflow-${stage.name.lowercase()}"
+            if (compact) {
+                NzIconButton(stage.icon, stage.label, { onSelect(stage) },
+                    enabled = enabled, selected = stage == active, testTag = tag, tooltip = description)
+            } else {
+                NzButton(stage.label, { onSelect(stage) },
+                    kind = if (stage == active) ButtonKind.PRIMARY else ButtonKind.QUIET,
+                    icon = stage.icon, enabled = enabled, testTag = tag, accessibilityDescription = description)
+                if (index != PrintWorkflowStage.entries.lastIndex) {
+                    Txt("→", Nz.type.label, Nz.colors.textMuted)
+                }
             }
         }
     }

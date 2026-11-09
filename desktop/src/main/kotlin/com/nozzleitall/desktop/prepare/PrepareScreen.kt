@@ -586,8 +586,11 @@ fun PrepareScreen(state: AppState) {
             if (!previewFocused && compactWorkspace) NzButton("Setup & objects (${p.plateItems().size})", { compactObjectsOpen = !compactObjectsOpen },
                 kind = if (compactObjectsOpen) ButtonKind.PRIMARY else ButtonKind.SECONDARY, testTag = "compact-objects")
             Box(Modifier.weight(1f)) { PlateTabs(p) }
-            if (!previewFocused && p.plateNames.size > 1) NzButton("Plate overview", { p.showPlateOverview = true }, kind = ButtonKind.QUIET,
-                testTag = "plate-overview")
+            if (!previewFocused && p.plateNames.size > 1) {
+                if (workspaceWidth < 1120.dp && Nz.textScale >= 1.5f)
+                    NzIconButton(NzIcon.PROJECTS, "Plate overview", { p.showPlateOverview = true }, testTag = "plate-overview")
+                else NzButton("Plate overview", { p.showPlateOverview = true }, kind = ButtonKind.QUIET, testTag = "plate-overview")
+            }
             if (previewReady && drawer != Drawer.SEND) {
                 val sectionLabel = if (previewSection) "Exit Section View" else "Section View"
                 val realisticLabel = if (previewRealistic) "Exit Realistic View" else "Realistic View"

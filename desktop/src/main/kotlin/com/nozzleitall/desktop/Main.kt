@@ -13,6 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.DpSize
@@ -478,6 +480,8 @@ fun App(state: AppState) {
 private fun AppHeader(state: AppState) {
     val c = Nz.colors
     val done = state.prepare.slice as? com.nozzleitall.desktop.prepare.SliceState.Done
+    val windowWidth = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val compactWorkflow = windowWidth < if (Nz.textScale >= 1.5f) 1120.dp else 850.dp
     val activeWorkflow = when {
         state.destination == Destination.MONITOR -> PrintWorkflowStage.MONITOR
         state.workspaceSendOpen -> PrintWorkflowStage.SEND
@@ -508,6 +512,7 @@ private fun AppHeader(state: AppState) {
                         hasPrinter = state.prepare.printer() != null || state.selectedPrinter != null,
                         onSelect = state::openWorkflowStage,
                         modifier = Modifier.semantics { testTag = "header-workflow" },
+                        compact = compactWorkflow,
                     )
                 }
                 Box(Modifier.width(1.dp).height(32.dp).background(c.line))
