@@ -54,7 +54,8 @@ object U1Protocol {
         return "#" + s.substring(0, 6).uppercase()
     }
 
-    private fun JSONArray?.str(i: Int): String? = this?.opt(i)?.let { if (it == JSONObject.NULL) null else it.toString() }?.trim()?.takeIf { it.isNotEmpty() && !it.equals("NONE", true) }
+    private fun JSONArray?.str(i: Int): String? = this?.opt(i)?.let { if (it == JSONObject.NULL) null else it.toString() }?.trim()
+        ?.takeIf { it.isNotEmpty() && it != "0" && !it.equals("NONE", true) }
     private fun JSONArray?.bool(i: Int): Boolean = this?.opt(i) == true
 
     /** Parses the result of `printer/objects/query` with [statusQuery]. */
@@ -73,7 +74,8 @@ object U1Protocol {
             val material = if (cfg == null || !loaded) null else Material(
                 vendor = cfg.optJSONArray("filament_vendor").str(i), type = cfg.optJSONArray("filament_type").str(i)?.uppercase(),
                 subType = cfg.optJSONArray("filament_sub_type").str(i), colorHex = normalizeColor(cfg.optJSONArray("filament_color_rgba").str(i)),
-                fromTag = cfg.optJSONArray("filament_official").bool(i))
+                fromTag = cfg.optJSONArray("filament_official").bool(i), spoolId = cfg.optJSONArray("filament_spool_id").str(i),
+                sku = cfg.optJSONArray("filament_sku").str(i))
             Toolhead(i, num(ex, "temperature"), num(ex, "target"), num(ex, "nozzle_diameter"), loaded, material, active == name)
         }
         val job = if (state.isActiveJob) stats?.let {

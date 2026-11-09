@@ -53,3 +53,11 @@ object PrinterSetup {
     fun nozzles(machine: JSONObject): List<String> =
         machine.optJSONArray("nozzle_diameter")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: listOf(machine.optString("nozzle_diameter", "0.4"))
 }
+
+internal fun nozzleFlowOptions(highFlow: Boolean): List<String> =
+    if (highFlow) listOf("standard", "high_flow") else listOf("standard")
+
+internal fun nozzleFlowControlEnabled(options: List<String>): Boolean = options.isNotEmpty()
+
+internal fun effectiveNozzleFlow(options: List<String>, current: String): String =
+    current.takeIf { it in options } ?: options.firstOrNull() ?: "standard"

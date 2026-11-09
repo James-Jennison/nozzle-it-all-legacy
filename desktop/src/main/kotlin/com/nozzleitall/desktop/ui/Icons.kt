@@ -22,7 +22,11 @@ import androidx.compose.ui.unit.dp
  * Infill mark (rhombus lattice, nozzle tip) so the family is recognisable without copying any icon set.
  */
 enum class NzIcon { FLEET, PROJECTS, PREPARE, MONITOR, MATERIALS, SPECTRUM, WORKSPACE, SETTINGS, CAMERA, ADD, PLAY, PAUSE, STOP, HEAT, HOME, MOVE,
-    CHECK, ALERT, QUESTION, OFFLINE, NETWORK, PRIVATE_NETWORK, CLOUD, FOLDER, IMPORT, SLICE, SEND, ARROW_RIGHT, CLOSE, TOOLHEAD, LAYERS, EXPORT, SEARCH, TUNE }
+    ROTATE, SCALE, ARRANGE, ORIENT, PLACE, CUT, BOOLEAN, SIMPLIFY, REPAIR, MEASURE, TEXT, SVG, SPLIT,
+    PAINT_SUPPORT, PAINT_SEAM, PAINT_COLOR, PAINT_FUZZY, AI,
+    UNDO, REDO, SAVE, COMPARE, RESET_VIEW, DELETE,
+    CHECK, ALERT, QUESTION, OFFLINE, NETWORK, PRIVATE_NETWORK, CLOUD, FOLDER, IMPORT, SLICE, SEND, ARROW_RIGHT, CLOSE, TOOLHEAD, LAYERS, EXPORT, SEARCH, TUNE,
+    VISIBLE, HIDDEN }
 
 @Composable
 fun Icon(icon: NzIcon, tint: Color, size: Dp = 20.dp, description: String? = null, modifier: Modifier = Modifier) {
@@ -61,11 +65,37 @@ fun DrawScope.drawIcon(icon: NzIcon, tint: Color) {
         NzIcon.HEAT -> { line(12f, 3f, 16f, 9f, 15f, 14f, 12f, 21f, 9f, 14f, 8f, 9f, close = true); line(12f, 13f, 12f, 17f) }
         NzIcon.HOME -> { line(4f, 11f, 12f, 4f, 20f, 11f); line(6f, 10f, 6f, 20f, 18f, 20f, 18f, 10f) }
         NzIcon.MOVE -> { line(12f, 3f, 12f, 21f); line(3f, 12f, 21f, 12f); line(9f, 6f, 12f, 3f, 15f, 6f); line(9f, 18f, 12f, 21f, 15f, 18f); line(6f, 9f, 3f, 12f, 6f, 15f); line(18f, 9f, 21f, 12f, 18f, 15f) }
+        NzIcon.ROTATE -> { line(5f, 9f, 5f, 4f, 10f, 4f); line(5f, 4f, 8.5f, 7.5f); line(5f, 4f, 8.5f, 1f); line(5.2f, 12f, 7f, 16.5f, 11f, 19f, 16f, 18.5f, 19.5f, 15f, 20f, 10f, 18f, 6f, 14f, 4f) }
+        NzIcon.SCALE -> { rect(5f, 5f, 14f, 14f, 0f); line(8f, 16f, 16f, 8f); line(11f, 8f, 16f, 8f, 16f, 13f); line(8f, 11f, 8f, 16f, 13f, 16f) }
+        NzIcon.ARRANGE -> { rect(3f, 4f, 7f, 7f, 1f); rect(14f, 4f, 7f, 7f, 1f); rect(3f, 15f, 7f, 6f, 1f); rect(14f, 15f, 7f, 6f, 1f) }
+        NzIcon.ORIENT -> { line(4f, 19f, 20f, 19f); line(7f, 16f, 12f, 5f, 17f, 16f, close = true); line(17f, 5f, 21f, 5f, 21f, 9f) }
+        NzIcon.PLACE -> { line(3f, 20f, 21f, 20f); line(7f, 15f, 12f, 6f, 19f, 12f, 14f, 18f, close = true); line(5f, 5f, 5f, 13f); line(2f, 10f, 5f, 13f, 8f, 10f) }
+        NzIcon.CUT -> { circle(7f, 17f, 3f); circle(17f, 17f, 3f); line(9f, 15f, 20f, 4f); line(15f, 15f, 4f, 4f) }
+        NzIcon.BOOLEAN -> { circle(9f, 12f, 6f); circle(15f, 12f, 6f); line(12f, 7f, 12f, 17f) }
+        NzIcon.SIMPLIFY -> { line(4f, 19f, 12f, 4f, 20f, 19f, close = true); line(7f, 15f, 17f, 15f); line(9f, 11f, 15f, 11f) }
+        NzIcon.REPAIR -> { line(5f, 18f, 5f, 7f, 9f, 3f, 13f, 7f, 17f, 3f, 21f, 7f, 21f, 18f); line(3f, 18f, 23f, 18f); line(9f, 12f, 15f, 12f); line(12f, 9f, 12f, 15f) }
+        NzIcon.MEASURE -> { rect(3f, 7f, 18f, 10f, 1f); line(7f, 7f, 7f, 12f); line(11f, 7f, 11f, 10f); line(15f, 7f, 15f, 12f); line(19f, 7f, 19f, 10f) }
+        NzIcon.TEXT -> { line(4f, 5f, 20f, 5f); line(12f, 5f, 12f, 20f); line(8f, 20f, 16f, 20f) }
+        NzIcon.SVG -> { line(4f, 17f, 7f, 7f, 12f, 17f, 17f, 7f, 20f, 17f); circle(7f, 7f, 1f, fill = true); circle(12f, 17f, 1f, fill = true); circle(17f, 7f, 1f, fill = true) }
+        NzIcon.SPLIT -> { rect(3f, 5f, 7f, 14f, 1f); rect(14f, 5f, 7f, 14f, 1f); line(12f, 3f, 12f, 21f) }
+        NzIcon.PAINT_SUPPORT -> { line(4f, 18f, 10f, 18f, 10f, 8f, 14f, 4f, 20f, 10f, 16f, 14f, 16f, 18f); line(7f, 21f, 19f, 21f) }
+        NzIcon.PAINT_SEAM -> { line(4f, 19f, 8f, 5f, 12f, 19f, 16f, 5f, 20f, 19f); line(12f, 3f, 12f, 21f) }
+        NzIcon.PAINT_COLOR -> { circle(11f, 11f, 8f); circle(7.5f, 9f, 1.2f, fill = true); circle(11f, 6.5f, 1.2f, fill = true); circle(15f, 9f, 1.2f, fill = true); line(14f, 17f, 20f, 21f) }
+        NzIcon.PAINT_FUZZY -> { line(4f, 18f, 6f, 7f, 8f, 17f, 10f, 5f, 12f, 19f, 14f, 6f, 16f, 17f, 18f, 8f, 20f, 18f) }
+        NzIcon.AI -> { line(12f, 2f, 14f, 8f, 20f, 10f, 14f, 12f, 12f, 20f, 10f, 12f, 4f, 10f, 10f, 8f, close = true); circle(12f, 10f, 2f) }
+        NzIcon.UNDO -> { line(9f, 6f, 4f, 10f, 9f, 14f); line(5f, 10f, 14f, 10f, 19f, 14f, 19f, 19f) }
+        NzIcon.REDO -> { line(15f, 6f, 20f, 10f, 15f, 14f); line(19f, 10f, 10f, 10f, 5f, 14f, 5f, 19f) }
+        NzIcon.SAVE -> { rect(4f, 3f, 16f, 18f, 1f); rect(8f, 3f, 8f, 6f, 0f); rect(8f, 14f, 8f, 7f, 1f) }
+        NzIcon.COMPARE -> { rect(3f, 5f, 8f, 14f, 1f); rect(13f, 5f, 8f, 14f, 1f); line(7f, 9f, 7f, 15f); line(17f, 9f, 17f, 15f) }
+        NzIcon.RESET_VIEW -> { circle(12f, 12f, 7f); line(5f, 8f, 5f, 3f, 10f, 3f); line(5f, 3f, 8f, 6f); line(12f, 8f, 12f, 12f, 16f, 12f) }
+        NzIcon.DELETE -> { line(5f, 7f, 19f, 7f); line(9f, 4f, 15f, 4f); rect(7f, 7f, 10f, 14f, 1f); line(10f, 10f, 10f, 18f); line(14f, 10f, 14f, 18f) }
         NzIcon.CHECK -> line(5f, 12.5f, 10f, 17.5f, 19f, 7f)
         NzIcon.ALERT -> { line(12f, 3f, 21.5f, 20f, 2.5f, 20f, close = true); line(12f, 9f, 12f, 14f); circle(12f, 17f, 0.9f, fill = true) }
         NzIcon.SEARCH -> { circle(10.5f, 10.5f, 6f); line(15f, 15f, 20f, 20f) }
         // Three sliders: settings for this item.
         NzIcon.TUNE -> { line(4f, 7f, 20f, 7f); line(4f, 12f, 20f, 12f); line(4f, 17f, 20f, 17f); circle(9f, 7f, 1.8f, fill = true); circle(15f, 12f, 1.8f, fill = true); circle(8f, 17f, 1.8f, fill = true) }
+        NzIcon.VISIBLE -> { line(3f, 12f, 6.5f, 8f, 12f, 6f, 17.5f, 8f, 21f, 12f, 17.5f, 16f, 12f, 18f, 6.5f, 16f, close = true); circle(12f, 12f, 2.8f) }
+        NzIcon.HIDDEN -> { line(3f, 12f, 6.5f, 8f, 12f, 6f, 17.5f, 8f, 21f, 12f, 17.5f, 16f, 12f, 18f, 6.5f, 16f, close = true); circle(12f, 12f, 2.8f); line(4f, 4f, 20f, 20f) }
         NzIcon.QUESTION -> { circle(12f, 12f, 9f); line(9.5f, 9.5f, 10.5f, 7.5f, 13.5f, 7.5f, 14.5f, 9.5f, 12f, 12f, 12f, 13.5f); circle(12f, 16.8f, 0.9f, fill = true) }
         NzIcon.OFFLINE -> { circle(12f, 12f, 9f); line(5.5f, 5.5f, 18.5f, 18.5f) }
         NzIcon.NETWORK -> { rect(9f, 3f, 6f, 5f, 1f); rect(3f, 16f, 6f, 5f, 1f); rect(15f, 16f, 6f, 5f, 1f); line(12f, 8f, 12f, 12f); line(6f, 16f, 6f, 12f, 18f, 12f, 18f, 16f) }

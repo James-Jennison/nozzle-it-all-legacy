@@ -1,0 +1,13 @@
+{
+  "api": 1,
+  "kind": "cad-recipe",
+  "id": "round-spacer",
+  "name": "Round spacer",
+  "release": 1,
+  "recipe": {
+    "shape": "circle",
+    "diameterMm": 20,
+    "depthMm": 5,
+    "holeDiameterMm": 4
+  }
+}

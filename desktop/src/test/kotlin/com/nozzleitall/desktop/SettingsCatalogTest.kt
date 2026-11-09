@@ -1,5 +1,6 @@
 package com.nozzleitall.desktop
 
+import com.nozzleitall.project.MeshIO
 import com.nozzleitall.desktop.prepare.ProfileCatalog
 import com.nozzleitall.desktop.settings.*
 import org.json.JSONObject
@@ -22,13 +23,21 @@ class SettingsCatalogTest {
             .map { it.getString("scope") + ":" + it.getString("key") }
         assertTrue("settings with no group: $lost", lost.isEmpty())
         assertEquals("each setting appears once", grouped.size, catalog.groups.sumOf { it.settings.size })
-        assertTrue(catalog.all.size > 500) // 567 on nozzle-engine (engine/fork/ENGINE_PIN.json)
+        assertTrue(catalog.all.size > 700) // 762 on the Orca 2.5.0 engine (engine/fork/ENGINE_PIN.json)
     }
 
     @Test fun everyGroupIsInExactlyOneTabOfItsScope() {
         val tabbed = catalog.tabs.values.flatten().flatMap { t -> t.groups.map { g -> assertEquals(t.scope, g.scope); g.id } }
         assertEquals(catalog.groups.map { it.id }.sorted(), tabbed.sorted())
         assertEquals(listOf("Quality", "Strength", "Speed", "Supports", "Multi-material", "Others"), catalog.tabs.getValue(Scope.PROCESS).map { it.title })
+    }
+
+    @Test fun beltAndIndependentToolheadControlsAreGroupedInPrinterLayout() {
+        val layout = catalog.tabs.getValue(Scope.PRINTER).single { it.id == "machine-layout" }
+        val groups = layout.groups.associate { group -> group.id to group.settings.map { it.key }.toSet() }
+        assertTrue(groups.getValue("belt-layout").containsAll(setOf("belt_printer", "belt_slice_rotation_angle", "belt_frame_tilt_angle")))
+        assertFalse("the development-only rotation axis is not a production control", "belt_slice_rotation" in groups.getValue("belt-layout"))
+        assertTrue(groups.getValue("independent-toolheads").containsAll(setOf("is_imex", "imex_tool_layout", "imex_mode_names")))
     }
 
     @Test fun credentialsAreNeverShownAsSettings() {
@@ -90,7 +99,7 @@ class SettingsReachTheEngineTest {
             "seam_position" to cat.byKey.getValue("seam_position").serialize("back"),
             "filament_start_gcode" to cat.byKey.getValue("filament_start_gcode").serialize(gcodeText))
         val tmp = Files.createTempDirectory("ov").toFile()
-        val cube = com.nozzleitall.desktop.prepare.MeshIO.readStl(File(root, "site-src/assets/test-cube-20mm.stl").readBytes())
+        val cube = com.nozzleitall.project.MeshIO.readStl(File(root, "site-src/assets/test-cube-20mm.stl").readBytes())
         val prof = ProfileCatalog.byId("snapmaker_u1")!!
         val obj = com.nozzleitall.project.ModelObject(1, "cube", cube, com.nozzleitall.project.Transform.translate(prof.bedW / 2.0 - 10, prof.bedD / 2.0 - 10, 0.0))
         val m = com.nozzleitall.project.ProjectManifest("p", 1, "n", com.nozzleitall.project.ProjectManifest.Producer("t", "desktop", "t"),

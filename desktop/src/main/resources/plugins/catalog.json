@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "listings": [
+    {
+      "id": "round-spacer",
+      "release": 1,
+      "summary": "A circular spacer with a centered through hole.",
+      "sha256": "76cafd53068c3d381a4a407b5ac21ad3e6337602c1610495723a976b297865e7"
+    },
+    {
+      "id": "rectangular-drill-guide",
+      "release": 1,
+      "summary": "A rectangular guide block with a centered through hole.",
+      "sha256": "a84db1f05c21e182f326071ca660d83b0c74db938f6baa755eef0c55f4d05c93"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "api": 1,
+  "kind": "cad-recipe",
+  "id": "rectangular-drill-guide",
+  "name": "Rectangular drill guide",
+  "release": 1,
+  "recipe": {
+    "shape": "rectangle",
+    "widthMm": 30,
+    "heightMm": 20,
+    "depthMm": 8,
+    "holeDiameterMm": 6
+  }
+}

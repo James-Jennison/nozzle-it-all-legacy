@@ -15,7 +15,7 @@ export const familyLabel = (f: Family) => (glossary.terms as Record<string, { la
 export const familyDescription = (f: Family) => (glossary.terms as Record<string, { label: string; description?: string }>)[`family.${f}`]?.description ?? '';
 export const isActiveJob = (s: PrinterState) => s === 'printing' || s === 'paused';
 
-export interface Material { vendor?: string; type?: string; subType?: string; colorHex?: string; fromTag: boolean }
+export interface Material { vendor?: string; type?: string; subType?: string; colorHex?: string; fromTag: boolean; spoolId?: string; sku?: string }
 export interface Toolhead { index: number; nozzle?: number; target?: number; diameter?: number; loaded: boolean; material?: Material; active: boolean }
 export interface Job { fileName: string; fraction: number; elapsed?: number; layer?: number; layers?: number }
 export interface FullSpectrum { available: boolean; palette: string[]; reason?: string }

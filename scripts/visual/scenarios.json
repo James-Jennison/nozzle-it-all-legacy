@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "scenarios": {
+    "process-modified-100": {
+      "geometry": [1360, 860],
+      "text_scale": 1.0,
+      "theme": "dark",
+      "actions": [
+        {"click": [300, 747]}, {"key": "ctrl+a"}, {"type": "6"}, {"key": "Return"},
+        {"click": [800, 700]}, {"sleep": 2}
+      ]
+    },
+    "process-modified-150": {
+      "geometry": [1360, 860],
+      "text_scale": 1.5,
+      "theme": "dark",
+      "actions": [
+        {"click": [510, 795]}, {"key": "ctrl+a"}, {"type": "6"}, {"key": "Return"},
+        {"click": [800, 700]}, {"sleep": 2}
+      ]
+    },
+    "process-save-new-100": {
+      "geometry": [1360, 860], "text_scale": 1.0, "theme": "dark",
+      "actions": [
+        {"click": [300, 747]}, {"key": "ctrl+a"}, {"type": "6"}, {"key": "Return"},
+        {"click": [800, 700]}, {"sleep": 1}, {"click": [374, 583]}, {"sleep": 2}
+      ]
+    },
+    "process-save-new-150": {
+      "geometry": [1360, 860], "text_scale": 1.5, "theme": "dark",
+      "actions": [
+        {"click": [510, 795]}, {"key": "ctrl+a"}, {"type": "6"}, {"key": "Return"},
+        {"click": [800, 700]}, {"sleep": 1}, {"click": [576, 627]}, {"sleep": 2}
+      ]
+    },
+    "process-compare-100": {
+      "geometry": [1360, 860], "text_scale": 1.0, "theme": "dark",
+      "actions": [{"click": [411, 583]}, {"sleep": 2}]
+    },
+    "process-compare-150": {
+      "geometry": [1360, 860], "text_scale": 1.5, "theme": "dark",
+      "actions": [{"click": [611, 627]}, {"sleep": 2}]
+    }
+  }
+}

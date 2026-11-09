@@ -6,8 +6,11 @@ import com.nozzleitall.printer.PrinterIdentity
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 
@@ -46,9 +49,15 @@ class PrinterStore(private val paths: AppPaths) {
         fun atomicWrite(target: File, text: String, private: Boolean) {
             target.parentFile.mkdirs()
             val tmp = File(target.parentFile, ".${target.name}.tmp")
-            tmp.writeText(text)
+            FileOutputStream(tmp).use { output ->
+                output.write(text.toByteArray(Charsets.UTF_8))
+                output.fd.sync()
+            }
             if (private) runCatching { Files.setPosixFilePermissions(tmp.toPath(), PosixFilePermissions.fromString("rw-------")) }
             Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+                FileChannel.open(target.parentFile.toPath(), StandardOpenOption.READ).use { it.force(true) }
+            }
         }
     }
 }

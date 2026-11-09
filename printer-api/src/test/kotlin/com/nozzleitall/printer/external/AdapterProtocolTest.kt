@@ -9,7 +9,8 @@ import java.io.File
 class AdapterProtocolTest {
     @Test fun statusRoundTrips() {
         val s = PrinterStatus(PrinterState.PRINTING, ConnectionRoute.PRIVATE_NETWORK, JobProgress("cube.gcode", 0.25f, 60.0, 3, 100),
-            Temperature(60.0, 60.0), listOf(Toolhead(0, 210.0, 210.0, 0.4, true, Material("Polymaker", "PLA", "Basic", "#BE38F3", true), true)),
+            Temperature(60.0, 60.0), listOf(Toolhead(0, 210.0, 210.0, 0.4, true,
+                Material("Polymaker", "PLA", "Basic", "#BE38F3", true, "rfid-123", "PA02001"), true)),
             "hello", 42, mapOf("snapmaker.full-spectrum" to mapOf("available" to true, "palette" to listOf("#BE38F3")), "bambu.ams" to listOf(1, 2)))
         assertEquals(s, AdapterProtocol.decodeStatus(JSONObject(AdapterProtocol.encode(s).toString())))
     }

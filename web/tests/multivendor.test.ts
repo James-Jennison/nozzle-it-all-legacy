@@ -44,7 +44,7 @@ describe('profiles (slicing needs no connection)', () => {
     expect(index.profiles.length).toBeGreaterThan(100);
   });
   it('ships only profile files in every profile folder (no stray slicer output)', () => {
-    for (const p of index.profiles) expect(readdirSync(new URL(`app/src/main/assets/slicer_profiles/${p.id}/`, root)).sort(), p.id).toEqual(['filament.json', 'machine.json', 'process.json']);
+    for (const p of index.profiles) expect(readdirSync(new URL(`app/src/main/assets/slicer_profiles/${p.id}/`, root)).sort(), p.id).toEqual(['filament.json', 'machine.json', 'process.json', 'processes.json']);
   });
   it('finds profiles from several makers', () => {
     expect(searchProfiles(index.profiles, 'prusa mk4').length).toBeGreaterThan(0);

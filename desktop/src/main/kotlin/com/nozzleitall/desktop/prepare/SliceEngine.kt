@@ -1,11 +1,14 @@
 package com.nozzleitall.desktop.prepare
 
 import net.jamesjennison.klippercompanion.FlushVolumes
+import com.nozzleitall.desktop.jobs.preparedOutput
 import com.nozzleitall.project.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -29,13 +32,19 @@ data class SliceRequest(
     val applyPreset: Boolean = true,
     /** The user's own flushing-volume matrix over every material slot (row = from), or null to work it out from the colours. */
     val flushMatrix: List<Int>? = null,
-    /** PrusaSlicer ColorMix virtual extruders (its sidecar JSON), or null. */
-    val virtualExtruders: String? = null,
+    /** Exact filament preset JSON captured with the saved project, until its update is reviewed. */
+    val savedFilamentProfiles: Map<String, String> = emptyMap(),
+    val bambuBundle: Boolean = false,
 )
 
 data class SliceStats(val layers: Int?, val seconds: Double?, val grams: Double?, val metres: Double?, val toolChanges: Int)
 sealed class SliceOutcome {
-    data class Done(val gcode: File, val stats: SliceStats, val warnings: List<String>) : SliceOutcome()
+    data class Done(val gcode: File, val stats: SliceStats, val warnings: List<String>,
+                    val engineSha256: String? = null, val inputSha256: String? = null,
+                    val nozzleDiameters: List<Double?> = emptyList(), val bundle: File? = null) : SliceOutcome() {
+        val printFile: File get() = bundle ?: gcode
+        val output: String get() = preparedOutput(printFile.name)
+    }
     data class Failed(val message: String, val log: String) : SliceOutcome()
     object Cancelled : SliceOutcome()
 }
@@ -58,14 +67,23 @@ class SliceEngine(private val binary: File, private val workDir: File) {
         const val NATIVE_BUILD_OUTPUT = "/mnt/faststorage/build-work/nozzle-native-fork/dist/nozzle-engine"
 
         /**
-         * The native engine: next to the app (the packaged resources directory, where build.gradle.kts bundles it), then
-         * the NOZZLE_ENGINE environment variable or the nozzle.engine / NOZZLE_ENGINE system property, then the build output.
+         * A packaged app uses the engine in its own resources directory. Development runs without a packaged resources
+         * directory may use an explicit override or the native build output.
          */
-        fun locateNative(env: Map<String, String> = System.getenv(), props: (String) -> String? = System::getProperty): File? {
+        fun locateNative(env: Map<String, String> = System.getenv(), props: (String) -> String? = System::getProperty,
+                         expectedPackagedSha256: String? = null): File? {
             val resources = props("compose.application.resources.dir")?.let { File(it) }
+            // A packaged app must use only its own bundled engine. A missing resource must be reported, not hidden by a
+            // developer machine's build output or an environment override from an unrelated installation.
+            if (resources != null) {
+                val expected = expectedPackagedSha256 ?: packagedEngineSha256() ?: return null
+                if (!Regex("[0-9a-f]{64}").matches(expected)) return null
+                val bundled = File(resources, NATIVE_ENGINE_NAME)
+                if (!bundled.isFile || sha256(bundled) != expected) return null
+                val selected = runnable(bundled, env, expected) ?: return null
+                return selected.takeIf { sha256(it) == expected }
+            }
             val candidates = listOfNotNull(
-                resources?.let { File(it, NATIVE_ENGINE_NAME) },
-                resources?.parentFile?.parentFile?.let { File(it, "lib/engine/$NATIVE_ENGINE_NAME") },
                 env["NOZZLE_ENGINE"]?.takeIf { it.isNotBlank() }?.let { File(it) },
                 props("nozzle.engine")?.takeIf { it.isNotBlank() }?.let { File(it) },
                 props("NOZZLE_ENGINE")?.takeIf { it.isNotBlank() }?.let { File(it) },
@@ -74,22 +92,49 @@ class SliceEngine(private val binary: File, private val workDir: File) {
             return candidates.firstNotNullOfOrNull { f -> if (f.isFile) runnable(f, env) else null }
         }
 
+        private fun packagedEngineSha256(): String? = runCatching {
+            val stream = SliceEngine::class.java.classLoader.getResourceAsStream("engine/ENGINE_PIN.json") ?: return@runCatching null
+            stream.bufferedReader().use { JSONObject(it.readText()).getJSONObject("base").getString("desktop_binary_sha256") }
+        }.getOrNull()
+
+        private fun sha256(file: File): String? = runCatching {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().buffered().use { input ->
+                val bytes = ByteArray(1024 * 1024)
+                while (true) {
+                    val read = input.read(bytes)
+                    if (read < 0) break
+                    digest.update(bytes, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }.getOrNull()
+
         /**
          * [f] itself when it can be executed. Packaged app resources lose the executable bit, and a system-wide install is
          * read-only, so a bundled engine that can't be made executable in place is copied to Nozzle's own cache first.
          */
-        private fun runnable(f: File, env: Map<String, String>): File? {
-            if (f.canExecute() || runCatching { f.setExecutable(true) }.getOrDefault(false)) return f
+        private fun runnable(f: File, env: Map<String, String>, expectedSha256: String? = null): File? {
+            if (f.canExecute()) return f
+            runCatching { f.setExecutable(true) }
+            if (f.canExecute()) return f
             return runCatching {
-                val copy = File(com.nozzleitall.desktop.AppPaths.resolve(env).cache, "engine/$NATIVE_ENGINE_NAME")
-                if (!copy.isFile || copy.length() != f.length() || copy.lastModified() < f.lastModified()) {
+                val sourceSha = expectedSha256 ?: sha256(f) ?: return@runCatching null
+                // Different selected engines must not replace one another's verified cache entry.
+                val copy = File(com.nozzleitall.desktop.AppPaths.resolve(env).cache, "engine/$sourceSha/$NATIVE_ENGINE_NAME")
+                val reusable = copy.isFile && sha256(copy) == sourceSha
+                if (reusable && !copy.canExecute()) runCatching { copy.setExecutable(true) }
+                if (!reusable || !copy.canExecute()) {
                     copy.parentFile.mkdirs()
-                    val tmp = File(copy.parentFile, "$NATIVE_ENGINE_NAME.tmp")
-                    f.copyTo(tmp, overwrite = true)
-                    tmp.setExecutable(true)
-                    java.nio.file.Files.move(tmp.toPath(), copy.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+                    val tmp = java.nio.file.Files.createTempFile(copy.parentFile.toPath(), "$NATIVE_ENGINE_NAME.", ".tmp").toFile()
+                    try {
+                        f.copyTo(tmp, overwrite = true)
+                        tmp.setExecutable(true)
+                        if (sha256(tmp) != sourceSha) return@runCatching null
+                        java.nio.file.Files.move(tmp.toPath(), copy.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+                    } finally { tmp.delete() }
                 }
-                copy.takeIf { it.canExecute() }
+                copy.takeIf { it.canExecute() && sha256(it) == sourceSha }
             }.getOrNull()
         }
 
@@ -136,16 +181,7 @@ class SliceEngine(private val binary: File, private val workDir: File) {
         }.getOrDefault(270.0 to 270.0)
 
         /** A binary STL of the object's own (untransformed) mesh, as the Web App's writeStl(). */
-        fun stlBytes(mesh: Mesh): ByteArray {
-            val n = mesh.triangleCount
-            val b = java.nio.ByteBuffer.allocate(84 + n * 50).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            b.position(80); b.putInt(n)
-            for (i in 0 until n) {
-                b.position(84 + i * 50 + 12)
-                for (c in 0..2) { val vi = mesh.triangles[i * 3 + c] * 3; for (a in 0..2) b.putFloat(mesh.vertices[vi + a]) }
-            }
-            return b.array()
-        }
+        fun stlBytes(mesh: Mesh): ByteArray = com.nozzleitall.project.MeshIO.stlBytes(mesh)
 
         /**
          * The engine request, in the Web App's format and with its choices (web/src/app/state.ts slice()): the three profile
@@ -154,21 +190,24 @@ class SliceEngine(private val binary: File, private val workDir: File) {
          */
         fun nativeRequest(req: SliceRequest, job: File, gcode: File): String {
             val lines = mutableListOf("out\t${gcode.absolutePath}")
+            if (req.bambuBundle) lines += "format\tbambu-bundle"
             val entries = req.project.manifest?.plates?.flatMap { it.objects }?.associateBy { it.objectId } ?: emptyMap()
             val objectSlots = entries.mapValues { it.value.materialSlot ?: 1 }
             // Painted objects print their colours in the slots chosen for them; the highest slot in use sets the tool count.
-            val paint = req.project.objects.associate { o -> o.id to (if (o.mesh.isPainted) paintInSlots(o.mesh, entries[o.id]?.paintSlots.orEmpty(), objectSlots[o.id] ?: 1) else null) }
+            val paint = req.project.objects.associate { o -> o.id to (if (o.mesh.hasAnyPaint) paintInSlots(o.mesh, entries[o.id]?.paintSlots.orEmpty(), objectSlots[o.id] ?: 1) else null) }
             val usedSlots = req.project.objects.maxOfOrNull { o -> maxOf(objectSlots[o.id] ?: 1, paint[o.id]?.second ?: 1) } ?: 1
             val materials = req.materials.sortedBy { it.slot }.ifEmpty { listOf(ProjectManifest.MaterialSlot(1, "PLA", colorHex = "#FFFFFF")) }
-            // Full Spectrum mixes name physical slots by number, so with any mixes every loaded slot is passed to the engine.
-            val mixing = !req.extraOverrides[FullSpectrum.DEFINITIONS_KEY].isNullOrBlank() || req.virtualExtruders != null
+            // A mixed filament names loaded filaments by number, so with any mixed filament every loaded slot is passed to the engine.
+            val mixing = req.extraOverrides["filament_is_mixed"]?.split(',')?.any { it.trim() == "1" } == true
             val slots = if (mixing) materials else materials.take(maxOf(usedSlots, 1))
             // Each slot slices with its own filament profile when it has one (one combined per-slot filament file, as a
             // slicer combines its filament presets); otherwise the printer profile's own filament.
-            val filaments = FilamentLibrary.writeCombined(FilamentLibrary.keyForDir(req.profileDir.name), req.profileDir, slots, job) ?: File(req.profileDir, "filament.json")
+            val filaments = FilamentLibrary.writeCombined(FilamentLibrary.keyForDir(req.profileDir.name), req.profileDir, slots, job,
+                req.savedFilamentProfiles) ?: File(req.profileDir, "filament.json")
             listOf(File(req.profileDir, "machine.json"), File(req.profileDir, "process.json"), filaments).forEach { lines += "profile\t${it.absolutePath}" }
             val baseNozzleC = runCatching { JSONObject(File(req.profileDir, "filament.json").readText()).optJSONArray("nozzle_temperature")?.optString(0)?.toIntOrNull() }.getOrNull()
-            fun slotNozzleC(s: ProjectManifest.MaterialSlot): Int? = (s.filamentProfile?.let { FilamentLibrary.profileJson(FilamentLibrary.keyForDir(req.profileDir.name), it) }
+            fun slotNozzleC(s: ProjectManifest.MaterialSlot): Int? = (s.filamentProfile?.let { id -> FilamentLibrary.savedProfile(id, req.savedFilamentProfiles)
+                ?: FilamentLibrary.profileJson(FilamentLibrary.keyForDir(req.profileDir.name), id) }
                 ?.optJSONArray("nozzle_temperature")?.optString(0)?.toIntOrNull()) ?: baseNozzleC
             val overrides = LinkedHashMap<String, String>()
             if (req.applyPreset) overrides += req.preset.overrides
@@ -185,8 +224,6 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                 require(!Regex("[\t\n\r]").containsMatchIn(k + v)) { "Settings may not contain tabs or line breaks." }
                 lines += "set\t$k\t$v"
             }
-            // PrusaSlicer ColorMix: the virtual extruders, in PrusaSlicer's own file format, for the engine to print.
-            req.virtualExtruders?.let { json -> lines += "virtual_extruders\t" + File(job, "virtual_extruders.json").apply { writeText(json) }.absolutePath }
             val (bedW, bedD) = bedOf(File(req.profileDir, "machine.json").readText())
             req.project.objects.forEachIndexed { i, o ->
                 // A painted object goes as a 3MF, which the engine's own importer reads paint from; others as STL.
@@ -195,10 +232,23 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                 val m = o.placement.m
                 val scale = Math.hypot(m[0], m[1]).takeIf { it > 0 } ?: 1.0
                 val rot = Math.toDegrees(Math.atan2(m[1], m[0]))
+                // The other axes relative to X: Y's length (negative when the turn is left-handed, a mirror) and Z's length and sign.
+                val yLen = Math.hypot(m[3], m[4]).takeIf { it > 0 } ?: scale
+                val relY = (if (m[0] * m[4] - m[1] * m[3] < 0) -yLen else yLen) / scale
+                val relZ = (m[8].takeIf { it != 0.0 } ?: scale) / scale
                 val b = o.mesh.bounds(); val cx = (b[0] + b[3]) / 2.0; val cy = (b[1] + b[4]) / 2.0
                 val x = cx * m[0] + cy * m[3] + m[9]; val y = cx * m[1] + cy * m[4] + m[10]
                 val tool = if (slots.size > 1) objectSlots[o.id] ?: 1 else 0
                 lines += "object\t${stl.absolutePath}\t${x - bedW / 2}\t${y - bedD / 2}\t$rot\t$scale\t$tool"
+                if (abs(relY) != 1.0 || abs(relZ) != 1.0 || relY < 0 || relZ < 0)
+                    lines += "object_scale\t${i + 1}\t1\t${abs(relY)}\t${abs(relZ)}\t${(if (relY < 0) "y" else "") + (if (relZ < 0) "z" else "")}"
+                entries[o.id]?.let { e ->
+                    e.parts.forEach { lines += "object_part\t${i + 1}\t${it.spec()}" }
+                    e.heightRanges.forEach { r -> r.settings.toSortedMap().forEach { (k, v) ->
+                        require(!Regex("[\t\n\r]").containsMatchIn(k + v)) { "Settings may not contain tabs or line breaks." }
+                        lines += "object_range\t${i + 1}\t${r.from}\t${r.to}\t$k\t$v" } }
+                    if (e.layerProfile.size >= 4) lines += "object_layers\t${i + 1}\t${e.layerProfile.joinToString(",")}"
+                }
                 // The object's own settings (Orca's per-object settings), after the whole-plate ones.
                 entries[o.id]?.settings?.toSortedMap()?.forEach { (k, v) ->
                     require(!Regex("[\t\n\r]").containsMatchIn(k + v)) { "Settings may not contain tabs or line breaks." }
@@ -220,7 +270,7 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                     runCatching { Paint.remap(s) { n -> if (n == 0) 0 else (paintSlots.getOrNull(n - 1) ?: objectSlot).also { highest = maxOf(highest, it) } } }.getOrNull()
                 } }
             }
-            return Mesh(mesh.vertices, mesh.triangles, out) to highest
+            return mesh.withPaint(paint = out) to highest   // support, seam and fuzzy-skin paint are not tied to filament slots
         }
 
         fun parseStats(gcode: File): SliceStats {
@@ -267,38 +317,101 @@ class SliceEngine(private val binary: File, private val workDir: File) {
 
     fun slice(req: SliceRequest, onProgress: (Float, String) -> Unit): SliceOutcome {
         cancelled = false
-        val engine = binary.takeIf { it.canExecute() } ?: locateNative()
-            ?: return SliceOutcome.Failed("The slicing engine isn't installed with this copy of Nozzle It All. Reinstall the package.", "")
-        return sliceNative(engine, req, onProgress)
+        val engine = binary.takeIf { it.isFile && it.canExecute() }
+            ?: return SliceOutcome.Failed("The slicing engine is missing, invalid, or cannot run. Check the Desktop installation and engine permissions.", "")
+        return try { sliceNative(engine, req, onProgress) }
+        catch (e: Exception) {
+            running?.destroyForcibly()
+            SliceOutcome.Failed("The slicing engine could not complete: ${e.message}", "")
+        } finally { running = null }
     }
 
     private val nativeStages = listOf(0 to "Preparing the plate", 10 to "Slicing layers", 40 to "Generating walls and infill", 70 to "Generating supports and paths", 90 to "Writing instructions")
 
     private fun sliceNative(engine: File, req: SliceRequest, onProgress: (Float, String) -> Unit): SliceOutcome {
-        val job = File(workDir, "slice-${System.currentTimeMillis()}").apply { mkdirs() }
+        // Only this engine process can populate the new slice directory and its optional planner sidecar.
+        val root = java.nio.file.Files.createDirectories(workDir.toPath())
+        val job = java.nio.file.Files.createTempDirectory(root, "slice-").toFile()
         onProgress(0.02f, "Preparing the plate")
-        val gcode = File(job, "plate.gcode")
+        val outputDir = if (req.bambuBundle) File(job, "output") else job
+        val gcode = File(outputDir, "plate.gcode")
+        val bundle = if (req.bambuBundle) File(outputDir, "plate.gcode.3mf") else null
         val request = File(job, "request.txt")
-        try { request.writeText(nativeRequest(req, job, gcode)) } catch (e: IllegalArgumentException) { return SliceOutcome.Failed(e.message ?: "The slice request is invalid.", "") }
+        val requestText = try { nativeRequest(req, job, gcode) }
+            catch (e: IllegalArgumentException) { return SliceOutcome.Failed(e.message ?: "The slice request is invalid.", "") }
+        request.writeText(requestText)
+        // These sources follow nativeRequest's precedence. Keep invalid entries in place so indices never shift.
+        val nozzleOverride = req.extraOverrides["nozzle_diameter"]
+            ?: req.preset.overrides["nozzle_diameter"]?.takeIf { req.applyPreset }
+        val nozzleValues = nozzleOverride?.split(',') ?: runCatching {
+            val machine = JSONObject(File(req.profileDir, "machine.json").readText())
+            if (machine.has("nozzle_diameter")) PrinterSetup.nozzles(machine) else emptyList()
+        }.getOrDefault(emptyList())
+        val nozzleDiameters = nozzleValues.map { it.trim().toDoubleOrNull()?.takeIf { mm -> mm.isFinite() && mm > 0 } }
+        val inputs = request.readLines().mapNotNull { line ->
+            val fields = line.split('\t')
+            if (fields.firstOrNull() in setOf("profile", "object") && fields.size > 1) File(fields[1]) else null
+        }
+        val fingerprints = runCatching { hashInputs(listOf(engine)) to hashInputs(listOf(request) + inputs, job) }
+            .getOrElse { return SliceOutcome.Failed("A slicing input changed or became unreadable: ${it.message}", "") }
+        val (engineSha256, inputSha256) = fingerprints
         val log = File(job, "engine.log")
         val pb = ProcessBuilder(engine.absolutePath, request.absolutePath).directory(job).redirectError(log)
-        pb.environment().apply { remove("DISPLAY"); remove("WAYLAND_DISPLAY") }
+        pb.environment().apply {
+            remove("DISPLAY")
+            remove("WAYLAND_DISPLAY")
+            put("NOZZLE_DESKTOP_PREVIEW", "1")
+        }
         val p = pb.start(); running = p
         p.inputStream.bufferedReader().useLines { lines -> lines.forEach { l ->
             l.removePrefix("progress ").trim().toIntOrNull()?.takeIf { l.startsWith("progress ") }?.let { pct ->
-                onProgress(0.05f + 0.93f * pct.coerceIn(0, 100) / 100f, nativeStages.last { pct >= it.first }.second)
+                val bounded = pct.coerceIn(0, 100)
+                onProgress(0.05f + 0.93f * bounded / 100f, nativeStages.last { bounded >= it.first }.second)
             }
         } }
         val exit = p.waitFor()
         running = null
         val text = runCatching { log.readText() }.getOrDefault("")
-        if (cancelled || exit == 3) { gcode.delete(); return SliceOutcome.Cancelled }
+        if (cancelled || exit == 3) { gcode.delete(); bundle?.delete(); return SliceOutcome.Cancelled }
         if (exit != 0 || !gcode.isFile || gcode.length() == 0L) {
-            val reason = text.lines().map(String::trim).lastOrNull { it.isNotEmpty() }?.takeIf { exit != 0 } ?: "The engine stopped (code $exit)."
+            val diagnostic = text.lines().map(String::trim).lastOrNull { it.isNotEmpty() }
+            val reason = if (exit != 0) "The engine stopped (code $exit)." + (diagnostic?.let { " Last engine output: $it" } ?: "")
+                else "The engine completed without producing G-code."
             return SliceOutcome.Failed(reason, text.takeLast(8000))
         }
+        if (bundle != null && (!bundle.isFile || bundle.length() == 0L))
+            return SliceOutcome.Failed("The engine completed without producing the Bambu print bundle.", text.takeLast(8000))
+        val unchanged = runCatching { hashInputs(listOf(engine)) == engineSha256 &&
+            hashInputs(listOf(request) + inputs, job) == inputSha256 }.getOrDefault(false)
+        if (!unchanged) return SliceOutcome.Failed("A slicing input changed while the engine was running; review and slice again.", text.takeLast(8000))
         onProgress(1f, "Done")
-        return SliceOutcome.Done(gcode, parseStats(gcode), emptyList())
+        return SliceOutcome.Done(gcode, parseStats(gcode), emptyList(), engineSha256, inputSha256, nozzleDiameters, bundle)
+    }
+
+    private fun hashInputs(files: List<File>, transientRoot: File? = null): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val root = transientRoot?.canonicalPath
+        files.forEach { file ->
+            require(file.isFile) { "Slicing input is missing: ${file.name}" }
+            val canonical = file.canonicalPath
+            val logical = if (root != null && canonical.startsWith(root + File.separator))
+                "<slice>/" + canonical.removePrefix(root + File.separator).replace(File.separatorChar, '/') else canonical
+            val path = logical.toByteArray(Charsets.UTF_8)
+            md.update(java.nio.ByteBuffer.allocate(8).putLong(path.size.toLong()).array())
+            md.update(path)
+            if (root != null && file.name == "request.txt" && file.parentFile.canonicalPath == root) {
+                val normalized = file.readText().replace(requireNotNull(transientRoot).absolutePath, "<slice>")
+                    .replace(root, "<slice>").toByteArray(Charsets.UTF_8)
+                md.update(java.nio.ByteBuffer.allocate(8).putLong(normalized.size.toLong()).array())
+                md.update(normalized)
+            } else {
+                md.update(java.nio.ByteBuffer.allocate(8).putLong(file.length()).array())
+                file.inputStream().use { input -> val buffer = ByteArray(8192); while (true) {
+                    val n = input.read(buffer); if (n < 0) break; md.update(buffer, 0, n)
+                } }
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** Fallback only (nozzle-engine missing): the Orca-fork CLI, fed a 3MF with per-object slots. */

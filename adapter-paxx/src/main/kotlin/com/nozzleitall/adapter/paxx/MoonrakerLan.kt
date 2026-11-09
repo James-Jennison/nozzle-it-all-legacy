@@ -8,7 +8,9 @@ import okio.BufferedSink
 import okio.source
 import org.json.JSONObject
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
 
 class PrinterRejected(message: String) : IOException(message)
@@ -142,7 +144,22 @@ class MoonrakerLan(address: String, private val apiKey: String = "", eventListen
         if (!r.isSuccessful) { r.close(); throw IOException("Camera stream unavailable (HTTP ${r.code}).") }
         val type = r.header("Content-Type").orEmpty()
         if (multipart && !type.startsWith("multipart/", ignoreCase = true)) { r.close(); throw IOException("The camera didn't answer with a video stream.") }
-        return r.body!!.byteStream()
+        val body = r.body ?: run { r.close(); throw IOException("The camera stream had no body.") }
+        // Keep explicit ownership of the whole OkHttp response until the UI closes the stream. Returning only the
+        // body's byteStream lets the Response itself become unreachable first on long-lived camera requests, which
+        // OkHttp reports as a leaked connection even when the stream is later closed.
+        return object : FilterInputStream(body.byteStream()) {
+            private val closed = AtomicBoolean()
+
+            override fun close() {
+                if (!closed.compareAndSet(false, true)) return
+                try {
+                    super.close()
+                } finally {
+                    r.close()
+                }
+            }
+        }
     }
 
     /** Multipart upload to the gcodes root. Throws [UploadInterrupted] if the connection dropped after bytes were sent. */

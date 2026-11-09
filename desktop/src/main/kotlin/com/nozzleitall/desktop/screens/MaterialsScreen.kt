@@ -11,7 +11,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import com.nozzleitall.desktop.AppState
+import com.nozzleitall.desktop.Destination
 import com.nozzleitall.desktop.PrinterEntry
+import com.nozzleitall.desktop.prepare.BundledFilamentCatalog
 import com.nozzleitall.desktop.ui.*
 import com.nozzleitall.printer.*
 
@@ -19,11 +21,159 @@ import com.nozzleitall.printer.*
 val materialTypes = listOf("PLA", "PETG", "ABS", "ASA", "TPU", "PVA", "PA", "PC")
 val materialFinishes = listOf("Basic", "Matte", "Silk", "SnapSpeed", "Support", "HF", "95A")
 
+/** Workshop entry point for bundled presets and material information printers currently report. */
+@Composable
+fun WorkshopMaterialsScreen(state: AppState) {
+    val c = Nz.colors
+    Column(Modifier.fillMaxSize().padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        SectionHeader("Materials", "Filament presets by brand, plus what your printers report loaded.")
+        val slicingSetup = state.fleet.settings.value.slicingSetup
+        Card(Modifier.fillMaxWidth(), raised = true) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Txt("Installed filament library", Nz.type.title)
+                    Txt(
+                        slicingSetup?.let { setup ->
+                            "${state.prepare.slicingMachineLabel} · ${state.prepare.nozzleToolheadLabel} · " +
+                                "${setup.installedFilamentProfiles.size} compatible preset${if (setup.installedFilamentProfiles.size == 1) "" else "s"} installed"
+                        } ?: "Finish slicer setup to choose the machine and compatible filament presets you use.",
+                        Nz.type.bodySmall,
+                        c.textMuted,
+                    )
+                }
+                NzButton(
+                    if (slicingSetup == null) "Set up slicer" else "Manage presets",
+                    state::reopenFirstRun,
+                    kind = ButtonKind.PRIMARY,
+                    testTag = "materials-manage-presets",
+                )
+            }
+        }
+        FilamentCatalogBrowser()
+        Txt("Loaded on printers", Nz.type.headline)
+        val entries = state.fleet.order.value.mapNotNull { id -> state.fleet.printers[id]?.let { id to it } }
+        if (entries.isEmpty()) Card(Modifier.fillMaxWidth()) {
+            Txt("No printers added", Nz.type.title)
+            Txt("Add a printer to see its reported material.", Nz.type.bodySmall, c.textMuted)
+            NzButton("Open Printers", { state.destination = Destination.FLEET }, kind = ButtonKind.PRIMARY)
+        }
+        entries.forEach { (id, entry) ->
+            Card(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Txt(entry.config.identity.displayName, Nz.type.title, modifier = Modifier.weight(1f))
+                    NzButton("Open printer materials", { state.selectedPrinter = id; state.destination = Destination.PRINTER_MATERIALS }, kind = ButtonKind.SECONDARY)
+                }
+                val heads = entry.status.value.toolheads
+                if (heads.isEmpty()) Txt("No toolhead material reported.", Nz.type.bodySmall, c.textMuted)
+                heads.forEach { head ->
+                    Txt("Toolhead ${head.index + 1}: " + if (!head.loaded) "empty" else head.material?.label ?: "loaded, material unknown",
+                        Nz.type.bodySmall, c.textMuted)
+                }
+            }
+        }
+    }
+}
+
+/** Case-insensitive brand grouping with one human-friendly label, matching the setup wizard and mainstream slicers. */
+internal fun catalogVendorGroups(products: List<BundledFilamentCatalog.Product>): List<Pair<String, List<BundledFilamentCatalog.Product>>> =
+    products.groupBy { it.vendor.trim().ifBlank { "Other" }.lowercase() }
+        .map { (_, rows) ->
+            val labels = rows.map { it.vendor.trim().ifBlank { "Other" } }.distinct()
+            val label = labels.firstOrNull { it.any(Char::isUpperCase) && it.any(Char::isLowerCase) } ?: labels.first()
+            label to rows
+        }
+        .sortedWith(compareBy<Pair<String, List<BundledFilamentCatalog.Product>>> {
+            when (it.first.lowercase()) { "generic" -> 1; "other" -> 2; else -> 0 }
+        }.thenBy { it.first.lowercase() })
+
+internal data class CatalogMaterialTypeGroup(
+    val key: String,
+    val materialType: String,
+    val products: List<BundledFilamentCatalog.Product>,
+)
+
+private fun catalogMaterialTypeLabel(value: String): String = value.trim().ifBlank { "Other" }
+
+/** The second level of the catalog browser: Vendor -> Material type -> Material. */
+internal fun catalogMaterialTypeGroups(products: List<BundledFilamentCatalog.Product>): List<CatalogMaterialTypeGroup> =
+    products.groupBy { catalogMaterialTypeLabel(it.baseMaterial).lowercase() }
+        .map { (key, rows) ->
+            val labels = rows.map { catalogMaterialTypeLabel(it.baseMaterial) }.distinct()
+            val label = labels.firstOrNull { it.any(Char::isUpperCase) } ?: labels.first()
+            CatalogMaterialTypeGroup(key, label, rows.sortedBy { it.name.lowercase() })
+        }
+        .sortedWith(compareBy<CatalogMaterialTypeGroup> { if (it.key == "other") 1 else 0 }
+            .thenBy { it.materialType.lowercase() })
+
+/** The complete normalized product list; machine selectors show the compatible subset. */
+@Composable
+private fun FilamentCatalogBrowser() {
+    val c = Nz.colors
+    val all = remember { BundledFilamentCatalog.all() }
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(all, query) {
+        val words = query.trim().lowercase().split(Regex("\\s+")).filter(String::isNotBlank)
+        if (words.isEmpty()) all else all.filter { product ->
+            val haystack = listOf(product.vendor, product.name, product.material, product.baseMaterial,
+                product.sources.joinToString(" ") { it.catalog }).joinToString(" ").lowercase()
+            words.all(haystack::contains)
+        }
+    }
+    val groups = remember(filtered) { catalogVendorGroups(filtered) }
+    var selectedVendor by remember { mutableStateOf<String?>(null) }
+    var selectedMaterialType by remember { mutableStateOf<String?>(null) }
+    val active = groups.firstOrNull { it.first == selectedVendor } ?: groups.firstOrNull()
+    val materialTypeGroups = remember(active) { active?.let { catalogMaterialTypeGroups(it.second) }.orEmpty() }
+    val activeMaterialType = materialTypeGroups.firstOrNull { it.key == selectedMaterialType }
+        ?: materialTypeGroups.firstOrNull()
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Txt("Filament presets", Nz.type.title)
+                Txt("${all.size} products grouped by vendor, material type and material. A machine picker shows only products NIA can derive from " +
+                    "that machine's compatible material presets.", Nz.type.bodySmall, c.textMuted)
+            }
+            Txt("${groups.size} brands", Nz.type.metricSmall, c.textMuted)
+        }
+        Field("Search brands, products or materials", query, { query = it }, placeholder = "Polymaker PLA")
+        if (active == null) Txt("No matching filament products.", Nz.type.bodySmall, c.textMuted)
+        else Row(Modifier.fillMaxWidth().height(360.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.width(220.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                groups.forEach { (vendor, products) ->
+                    NzButton("$vendor (${products.size})", { selectedVendor = vendor; selectedMaterialType = null }, Modifier.fillMaxWidth(),
+                        kind = if (vendor == active.first) ButtonKind.PRIMARY else ButtonKind.SECONDARY)
+                }
+            }
+            Column(Modifier.width(150.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                materialTypeGroups.forEach { group ->
+                    NzButton("${group.materialType} (${group.products.size})", { selectedMaterialType = group.key }, Modifier.fillMaxWidth(),
+                        kind = if (group.key == activeMaterialType?.key) ButtonKind.PRIMARY else ButtonKind.SECONDARY)
+                }
+            }
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                activeMaterialType?.products.orEmpty().forEach { product ->
+                    Row(Modifier.fillMaxWidth().border(1.dp, c.line, RoundedCornerShape(7.dp)).padding(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Txt(product.name, Nz.type.body)
+                            if (!product.material.equals(activeMaterialType?.materialType, true))
+                                Txt(product.material, Nz.type.bodySmall, c.textMuted)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun MaterialsScreen(state: AppState) {
     Column(Modifier.fillMaxSize().padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        SectionHeader("Materials & Toolheads", "What's loaded in each toolhead or material slot, as the printer reports it.")
-        val entry = PrinterPicker(state) ?: run { NoPrinterYet(state, "what's loaded in each toolhead"); return@Column }
+        val entry = PrinterHeader(state, com.nozzleitall.desktop.Destination.PRINTER_MATERIALS, "What's loaded in each toolhead or material slot, as the printer reports it.") ?: run { NoPrinterYet(state, "what's loaded in each toolhead"); return@Column }
         val status = entry.status.value
         val caps = entry.capabilities.value
         val flow = rememberActionFlow(entry)

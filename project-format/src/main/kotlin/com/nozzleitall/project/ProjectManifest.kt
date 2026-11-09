@@ -2,6 +2,8 @@ package com.nozzleitall.project
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 /**
  * The Nozzle project manifest, schema `nozzle.project` 1.x (schemas/project-manifest/project-manifest-1.schema.json).
@@ -38,21 +40,38 @@ data class ProjectManifest(
      */
     data class PrinterTarget(val model: String, val firmware: String? = null, val printerId: String? = null, val nozzleDiameters: List<Double> = emptyList(),
                              val unknown: JSONObject = JSONObject(), val profileId: String? = null, val family: String? = null)
-    data class PlateEntry(val index: Int, val name: String = "", val objects: List<ObjectEntry> = emptyList(), val unknown: JSONObject = JSONObject())
+    data class PlateEntry(val index: Int, val name: String = "", val objects: List<ObjectEntry> = emptyList(), val unknown: JSONObject = JSONObject(),
+                          val id: String? = null)
     /**
      * [objectId] is the 3MF `<object id>` of a build item on this plate. [materialSlot] is 1-based, like Orca's filament index.
      * [paintSlots] maps the object's painted colours to slots: entry N-1 is the slot that the file's filament N prints with.
      * [settings] are the object's own print settings (engine keys to serialized values), as Orca's object list sets them.
      */
     data class ObjectEntry(val objectId: Int, val name: String = "", val materialSlot: Int? = null, val unknown: JSONObject = JSONObject(), val paintSlots: List<Int> = emptyList(),
-                           val settings: Map<String, String> = emptyMap())
+                           val settings: Map<String, String> = emptyMap(), val parts: List<ObjectPart> = emptyList(), val heightRanges: List<HeightRange> = emptyList(),
+                           val layerProfile: List<Double> = emptyList(),
+                           /** Orca's instances: this object is another instance of object [instanceOf], sharing its mesh, settings, parts, ranges, layer profile and paint; only its place, turn and size are its own. */
+                           val instanceOf: Int? = null)
+    /**
+     * An extra volume on an object, as Orca's object list adds them: [kind] "negative" (cuts material away), "modifier" (applies [settings]
+     * inside it), "blocker" / "enforcer" (support) or "part" (adds material), a primitive [shape] ("box", "cylinder", "sphere") of [size]
+     * (x, y, z, mm) centred on [center] (x, y, z) in the object's own mesh coordinates, so it stays put when the object moves or turns.
+     */
+    data class ObjectPart(val kind: String, val shape: String, val center: List<Double>, val size: List<Double>, val settings: Map<String, String> = emptyMap()) {
+        /** The engine's volume spec (nozzle/bridge/android/slic3r_engine.cpp apply_volume_specs). */
+        fun spec(): String = "$kind:$shape:${center.joinToString(",")}:${size.joinToString(",")}" +
+            (if (settings.isNotEmpty() && (kind == "modifier" || kind == "part")) ":" + settings.toSortedMap().entries.joinToString("|") { "${it.key}=${it.value}" } else "")
+    }
+    /** Orca's height range modifier: [settings] for the layers from [from] to [to] mm up the object. */
+    data class HeightRange(val from: Double, val to: Double, val settings: Map<String, String>)
     /**
      * [slot] is 1-based. [toolhead] is the 0-based physical toolhead it is loaded in, when known. [filamentProfile] names
      * the filament profile this slot slices with (an id in the printer's filament library), or null for the printer
      * profile's own filament.
      */
     data class MaterialSlot(val slot: Int, val type: String? = null, val vendor: String? = null, val subType: String? = null, val colorHex: String? = null, val toolhead: Int? = null,
-                            val unknown: JSONObject = JSONObject(), val filamentProfile: String? = null)
+                            val unknown: JSONObject = JSONObject(), val filamentProfile: String? = null,
+                            val spoolId: String? = null, val sku: String? = null, val fromTag: Boolean = false)
     /** [preset] names a guided choice ("standard", "fine", "draft", ...); [overrides] are explicit engine setting keys. */
     data class SettingsChoice(val preset: String? = null, val overrides: Map<String, String> = emptyMap(), val unknown: JSONObject = JSONObject())
     data class Attribution(val title: String, val creator: String? = null, val source: String? = null, val license: String? = null, val unknown: JSONObject = JSONObject())
@@ -67,6 +86,10 @@ data class ProjectManifest(
         const val META_PROJECT_ID = "nozzle:ProjectId"
         const val META_REVISION = "nozzle:Revision"
         const val META_MANIFEST_SHA256 = "nozzle:ManifestSha256"
+
+        /** Stable in-memory identity for an older manifest with positional plates and no stored plate UUID. */
+        fun legacyPlateId(projectId: String, index: Int): String = UUID.nameUUIDFromBytes(
+            "nozzle-plate:$projectId:$index".toByteArray(StandardCharsets.UTF_8)).toString()
 
         private fun JSONObject.rest(vararg known: String): JSONObject {
             val out = JSONObject()
@@ -92,13 +115,22 @@ data class ProjectManifest(
             }
             val plates = o.optJSONArray("plates")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map { p ->
                 PlateEntry(p.optInt("index"), p.optString("name"), p.optJSONArray("objects")?.let { oa -> (0 until oa.length()).mapNotNull { oa.optJSONObject(it) }.map { e ->
-                    ObjectEntry(e.optInt("objectId"), e.optString("name"), e.intOrNull("materialSlot"), e.rest("objectId", "name", "materialSlot", "paintSlots", "settings"),
+                    ObjectEntry(e.optInt("objectId"), e.optString("name"), e.intOrNull("materialSlot"), e.rest("objectId", "name", "materialSlot", "paintSlots", "settings", "parts", "heightRanges", "layerProfile", "instanceOf"),
                         e.optJSONArray("paintSlots")?.let { ps -> (0 until ps.length()).map { ps.optInt(it, 1).coerceAtLeast(1) } } ?: emptyList(),
-                        e.optJSONObject("settings")?.let { st -> st.keySet().filter { st.opt(it) is String }.associateWith { st.getString(it) } } ?: emptyMap()) } } ?: emptyList(),
-                    p.rest("index", "name", "objects")) } } ?: emptyList()
+                        e.optJSONObject("settings")?.let { st -> st.keySet().filter { st.opt(it) is String }.associateWith { st.getString(it) } } ?: emptyMap(),
+                        e.optJSONArray("parts")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.mapNotNull { q ->
+                            val center = q.optJSONArray("center")?.let { v -> (0 until v.length()).map { v.optDouble(it) } }
+                            val size = q.optJSONArray("size")?.let { v -> (0 until v.length()).map { v.optDouble(it) } }
+                            if (center?.size == 3 && size?.size == 3 && q.optString("kind").isNotEmpty()) ObjectPart(q.optString("kind"), q.optString("shape", "box"), center, size, q.optJSONObject("settings")?.let { st -> st.keySet().filter { st.opt(it) is String }.associateWith { st.getString(it) } } ?: emptyMap()) else null } } ?: emptyList(),
+                        e.optJSONArray("heightRanges")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map { q ->
+                            HeightRange(q.optDouble("from"), q.optDouble("to"), q.optJSONObject("settings")?.let { st -> st.keySet().filter { st.opt(it) is String }.associateWith { st.getString(it) } } ?: emptyMap()) } } ?: emptyList(),
+                        e.optJSONArray("layerProfile")?.let { a -> (0 until a.length()).map { a.optDouble(it) } } ?: emptyList(),
+                        e.intOrNull("instanceOf")) } } ?: emptyList(),
+                    p.rest("index", "name", "objects", "id"), p.strOrNull("id")) } } ?: emptyList()
             val materials = o.optJSONArray("materials")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map { m ->
                 MaterialSlot(m.optInt("slot"), m.strOrNull("type"), m.strOrNull("vendor"), m.strOrNull("subType"), m.strOrNull("colorHex"), m.intOrNull("toolhead"),
-                    m.rest("slot", "type", "vendor", "subType", "colorHex", "toolhead", "filamentProfile"), m.strOrNull("filamentProfile")) } } ?: emptyList()
+                    m.rest("slot", "type", "vendor", "subType", "colorHex", "toolhead", "filamentProfile", "spoolId", "sku", "fromTag"),
+                    m.strOrNull("filamentProfile"), m.strOrNull("spoolId"), m.strOrNull("sku"), m.optBoolean("fromTag")) } } ?: emptyList()
             val settings = o.optJSONObject("settings")?.let { s ->
                 SettingsChoice(s.strOrNull("preset"), s.optJSONObject("overrides")?.let { ov -> ov.keySet().associateWith { ov.optString(it) } } ?: emptyMap(), s.rest("preset", "overrides"))
             } ?: SettingsChoice()
@@ -120,11 +152,16 @@ data class ProjectManifest(
         printer?.let { p -> o.put("printer", merge(JSONObject().put("model", p.model).putOpt("firmware", p.firmware).putOpt("printerId", p.printerId)
             .putOpt("profileId", p.profileId).putOpt("family", p.family)
             .apply { if (p.nozzleDiameters.isNotEmpty()) put("nozzleDiameters", JSONArray(p.nozzleDiameters)) }, p.unknown)) }
-        o.put("plates", JSONArray(plates.map { p -> merge(JSONObject().put("index", p.index).put("name", p.name)
+        o.put("plates", JSONArray(plates.map { p -> merge(JSONObject().put("index", p.index).put("name", p.name).putOpt("id", p.id)
             .put("objects", JSONArray(p.objects.map { e -> merge(JSONObject().put("objectId", e.objectId).put("name", e.name).putOpt("materialSlot", e.materialSlot)
-                .apply { if (e.paintSlots.isNotEmpty()) put("paintSlots", JSONArray(e.paintSlots)); if (e.settings.isNotEmpty()) put("settings", JSONObject(e.settings.toSortedMap())) }, e.unknown) })), p.unknown) }))
+                .apply { if (e.paintSlots.isNotEmpty()) put("paintSlots", JSONArray(e.paintSlots)); if (e.settings.isNotEmpty()) put("settings", JSONObject(e.settings.toSortedMap()))
+                    if (e.parts.isNotEmpty()) put("parts", JSONArray(e.parts.map { q -> JSONObject().put("kind", q.kind).put("shape", q.shape).put("center", JSONArray(q.center)).put("size", JSONArray(q.size))
+                        .apply { if (q.settings.isNotEmpty()) put("settings", JSONObject(q.settings.toSortedMap())) } }))
+                    if (e.heightRanges.isNotEmpty()) put("heightRanges", JSONArray(e.heightRanges.map { q -> JSONObject().put("from", q.from).put("to", q.to).put("settings", JSONObject(q.settings.toSortedMap())) }))
+                    if (e.layerProfile.isNotEmpty()) put("layerProfile", JSONArray(e.layerProfile)); e.instanceOf?.let { put("instanceOf", it) } }, e.unknown) })), p.unknown) }))
         o.put("materials", JSONArray(materials.map { m -> merge(JSONObject().put("slot", m.slot).putOpt("type", m.type).putOpt("vendor", m.vendor)
-            .putOpt("subType", m.subType).putOpt("colorHex", m.colorHex).putOpt("toolhead", m.toolhead).putOpt("filamentProfile", m.filamentProfile), m.unknown) }))
+            .putOpt("subType", m.subType).putOpt("colorHex", m.colorHex).putOpt("toolhead", m.toolhead).putOpt("filamentProfile", m.filamentProfile)
+            .putOpt("spoolId", m.spoolId).putOpt("sku", m.sku).put("fromTag", m.fromTag), m.unknown) }))
         o.put("settings", merge(JSONObject().putOpt("preset", settings.preset).put("overrides", JSONObject(settings.overrides)), settings.unknown))
         o.put("attribution", JSONArray(attribution.map { a -> merge(JSONObject().put("title", a.title).putOpt("creator", a.creator).putOpt("source", a.source).putOpt("license", a.license), a.unknown) }))
         o.put("extensions", extensions)

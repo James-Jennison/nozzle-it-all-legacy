@@ -104,7 +104,10 @@ data class PrinterIdentity(
     val family: PrinterFamily,
     /** The address the user gave (http://192.168.1.40, u1.tailnet.ts.net, a Bambu host); empty for export-only. */
     val address: String,
-    /** Which slicing profile this printer uses; independent of the connection. */
+    /**
+     * Optional compatibility identity for preflight/send checks. This does not install, select or own a slicing
+     * configuration; the desktop's offline slicing setup is stored separately.
+     */
     val profileId: String? = null,
 )
 
@@ -117,6 +120,10 @@ data class Material(
     val colorHex: String? = null,
     /** True when the printer read the spool from a tag (RFID/NFC) rather than a manual entry. */
     val fromTag: Boolean = false,
+    /** Stable spool/tag identity reported by the printer, when its protocol exposes one. */
+    val spoolId: String? = null,
+    /** Vendor product/SKU identity reported with the scanned spool. */
+    val sku: String? = null,
 ) {
     val label: String get() = listOfNotNull(vendor, type, subType).joinToString(" ").ifBlank { "Unknown material" }
 }
