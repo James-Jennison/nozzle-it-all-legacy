@@ -128,12 +128,10 @@ fun MonitorScreen(state: AppState) {
         ActionFlowUi(flow, entry)
         entry.problem.value?.let { Banner(it, BannerKind.WARNING) }
         JobHero(entry, status, caps, flow)
+        if (caps != null) ControlsPanel(entry, status, caps, flow)
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            Column(Modifier.weight(1.4f), verticalArrangement = Arrangement.spacedBy(18.dp)) { CameraPanel(entry) }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                TemperaturePanel(status)
-                if (caps != null) ControlsPanel(entry, status, caps, flow)
-            }
+            Column(Modifier.weight(1.4f)) { CameraPanel(entry) }
+            Column(Modifier.weight(1f)) { TemperaturePanel(status) }
         }
     }
 }
@@ -207,13 +205,21 @@ fun CameraPanel(entry: PrinterEntry) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(c.surfaceSunken), contentAlignment = Alignment.Center) {
             when {
                 camera == null -> Txt(if (entry.capabilities.value?.camera == false) "Nozzle It All can't show this printer's camera." else "No camera found on this printer.", Nz.type.body, c.textMuted)
-                image != null -> androidx.compose.foundation.Image(image, "Live camera view of ${entry.config.identity.displayName}", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                image != null -> {
+                    val label = when {
+                        live -> "Live camera view"
+                        problem != null -> "Last available camera image"
+                        else -> "Camera image"
+                    }
+                    androidx.compose.foundation.Image(image, "$label of ${entry.config.identity.displayName}", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                }
                 else -> Txt(problem ?: "Connecting to the camera…", Nz.type.body, c.textMuted)
             }
         }
         when {
-            camera?.liveUrl == null && image != null -> Txt("This camera only offers still images, so they refresh every second or so.", Nz.type.bodySmall, c.textMuted)
-            !live && image != null && problem != null -> Txt("The live feed dropped ($problem). Reconnecting…", Nz.type.bodySmall, c.textMuted)
+            image != null && problem != null -> Txt("$problem Reconnecting…", Nz.type.bodySmall, c.textMuted)
+            camera?.liveUrl == null && camera?.videoUrl == null && image != null ->
+                Txt("This camera refreshes still images periodically.", Nz.type.bodySmall, c.textMuted)
         }
     }
 }

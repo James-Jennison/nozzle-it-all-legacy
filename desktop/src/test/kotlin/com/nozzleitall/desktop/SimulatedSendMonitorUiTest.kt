@@ -11,6 +11,7 @@ import com.nozzleitall.desktop.prepare.SliceOutcome
 import com.nozzleitall.desktop.prepare.SliceState
 import com.nozzleitall.desktop.prepare.SliceStats
 import com.nozzleitall.project.ProjectManifest
+import com.nozzleitall.desktop.screens.MonitorScreen
 import com.nozzleitall.desktop.screens.QueuePanel
 import com.nozzleitall.desktop.ui.NozzleTheme
 import com.nozzleitall.printer.*
@@ -44,7 +45,8 @@ class SimulatedSendMonitorUiTest {
             return reading
         }
         override fun cameras() = emptyList<CameraEndpoint>()
-        override fun snapshot(camera: CameraEndpoint): ByteArray = error("Unexpected camera access")
+        @Volatile var cameraFrame: ByteArray? = null
+        override fun snapshot(camera: CameraEndpoint): ByteArray = cameraFrame ?: error("Simulated camera failure")
         override fun upload(file: File, remoteName: String, progress: UploadProgress): UploadResult {
             check(file.readText() == "G28\n")
             remoteNames += remoteName
@@ -75,6 +77,45 @@ class SimulatedSendMonitorUiTest {
 
     private fun awaitText(text: String) {
         compose.waitUntil(15_000) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test fun cameraSnapshotFailureAndRecoveryKeepTheSameJobVisible() {
+        val root = Files.createTempDirectory("nia-camera-recovery").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val app = AppState(AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure(), scope)
+            val session = FakeSession()
+            val entry = PrinterEntry(PrinterConfig(session.identity, "moonraker"))
+            entry.session = session
+            entry.capabilities.value = session.capabilities.copy(camera = true)
+            entry.status.value = session.reading.copy(state = PrinterState.PRINTING, job = JobProgress("fixture.gcode", 0.25f))
+            entry.cameras.value = listOf(CameraEndpoint("fixture", "Fixture camera", CameraKind.SNAPSHOT,
+                "http://127.0.0.1:1"))
+            app.fleet.printers[session.identity.id] = entry
+            app.fleet.order.value = listOf(session.identity.id)
+            app.openPrinter(session.identity.id)
+            val frame = java.io.ByteArrayOutputStream().also {
+                javax.imageio.ImageIO.write(java.awt.image.BufferedImage(8, 8, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+            }.toByteArray()
+            session.cameraFrame = frame
+            compose.setContent { NozzleTheme("dark") { MonitorScreen(app) } }
+            fun awaitImage(label: String) = compose.waitUntil(15_000) {
+                compose.onAllNodesWithContentDescription("$label of Simulated printer").fetchSemanticsNodes().isNotEmpty()
+            }
+            awaitImage("Camera image")
+            session.cameraFrame = null
+            awaitImage("Last available camera image")
+            awaitText("The camera snapshot is unavailable. Reconnecting")
+            compose.onNodeWithText("fixture.gcode").assertIsDisplayed()
+            session.cameraFrame = frame
+            awaitImage("Camera image")
+            compose.onNodeWithText("fixture.gcode").assertIsDisplayed()
+            assertEquals(0, session.uploads)
+            assertEquals(0, session.starts)
+        } finally {
+            scope.cancel()
+            root.deleteRecursively()
+        }
     }
 
     @Test fun interruptedUploadRetriesAndUnknownStartStaysHeldAcrossMonitorReconnect() {

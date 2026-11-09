@@ -7,6 +7,7 @@ import com.nozzleitall.desktop.PrinterEntry
 import com.nozzleitall.printer.CameraEndpoint
 import com.nozzleitall.printer.MjpegReader
 import com.nozzleitall.printer.PrinterState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -36,7 +37,11 @@ fun rememberLiveCamera(entry: PrinterEntry, width: Int = 1280): LiveCameraState 
         var videoWorks = true // a video attempt that produced no frame falls back to MJPEG from then on
         while (isActive && camera != null) {
             val s = entry.session
-            if (s == null || entry.status.value.state == PrinterState.OFFLINE) { delay(2_000); continue }
+            if (s == null || entry.status.value.state == PrinterState.OFFLINE) {
+                state.problem = "Waiting for the printer connection."
+                delay(2_000)
+                continue
+            }
             if (camera.liveUrl != null || (videoWorks && camera.videoUrl != null && ffmpeg != null)) {
                 try {
                     withContext(Dispatchers.IO) {
@@ -56,14 +61,23 @@ fun rememberLiveCamera(entry: PrinterEntry, width: Int = 1280): LiveCameraState 
                             if (video != null && shown == 0 && camera.liveUrl != null) videoWorks = false
                         }
                     }
-                } catch (e: Exception) { if (isActive) state.problem = e.message ?: "Camera unavailable." }
+                    state.problem = "The camera stream ended."
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    state.problem = "The camera stream is unavailable."
+                }
                 finally { openStream.set(null); state.live = false }
                 delay(2_000)
             } else {
                 try {
                     val bytes = withContext(Dispatchers.IO) { s.snapshot(camera) }
                     state.image = org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap(); state.problem = null
-                } catch (e: Exception) { state.problem = e.message ?: "Camera unavailable." }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    state.problem = "The camera snapshot is unavailable."
+                }
                 delay(if (entry.status.value.state.isActiveJob) 1_000 else 3_000)
             }
         }
