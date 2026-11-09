@@ -65,6 +65,9 @@ class PreparePrinterPickerUiTest {
         val profile = app.prepare.profileId
         try {
             setContent { NozzleTheme("dark", textScale = scale) { App(app) } }
+            listOf("prepare", "preview", "send", "monitor").forEach { stage ->
+                onNodeWithTag("workflow-$stage").assertIsDisplayed()
+            }
             onNodeWithTag("setup-connection").assertHasClickAction()
             onNodeWithTag("setup-printer").assertTextContains("Export only")
             onNodeWithContentDescription("Nozzle diameter, 0.4").assertIsDisplayed()

@@ -52,6 +52,11 @@ class EditPrinterTest {
             val file = File(p.data, "profile-link.gcode").apply { writeText("G28\n") }
             val job = fleet.enqueue("Fixture", file, "u1", emptyList())
             fleet.associatePrinterProfile(old, "snapmaker_u1")
+            val rejected = runCatching {
+                fleet.enqueue("Wrong prepared target", file, "u1", emptyList(), targetProfileId = "elegoo_centauri_carbon_cosmos_afc")
+            }
+            assertTrue(rejected.isFailure)
+            assertEquals(1, fleet.queue.value.size)
             assertTrue(old.retired)
             assertEquals("u1", fleet.queue.value.single { it.id == job.id }.printerId)
             assertEquals("snapmaker_u1", PrinterStore(p).load().single().identity.profileId)
