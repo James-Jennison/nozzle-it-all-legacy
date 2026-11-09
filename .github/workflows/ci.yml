@@ -91,7 +91,7 @@ jobs:
           display_dir="$(mktemp -d /vmdata/worktrees/nia-ci-display.XXXXXX)"
           chmod 1777 "$display_dir"
           display_container="nia-ci-xvfb-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          trap 'docker rm -f "$display_container" >/dev/null 2>&1 || true; rmdir "$display_dir" || true' EXIT
+          trap 'docker rm -f "$display_container" >/dev/null 2>&1 || true; rm -f "$display_dir/X197"; rmdir "$display_dir" || true' EXIT
           docker run -d --rm --name "$display_container" --network none \
             --userns=host --user "$(id -u):$(id -g)" \
             -v "$display_dir:/tmp/.X11-unix" \
@@ -104,7 +104,7 @@ jobs:
           test -S "$display_dir/X197"
           export DISPLAY=:197
           unset ANDROID_HOME ANDROID_SDK_ROOT
-          bwrap --bind / / --ro-bind "$display_dir" /tmp/.X11-unix -- \
+          bwrap --bind / / --dev /dev --ro-bind "$display_dir" /tmp/.X11-unix -- \
             bash ./gradlew -c settings-desktop.gradle.kts :desktop:test --no-daemon --max-workers=4
 
       - name: Assemble debug (native build, arm64-v8a)
