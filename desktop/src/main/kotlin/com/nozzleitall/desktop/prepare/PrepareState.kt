@@ -538,7 +538,14 @@ class PrepareState(private val app: AppState) {
             currentPlate = i
             selected = null
             val prepared = batchSlices[plateIds[i]]
-            if (prepared == null) invalidateSlice() else showCompletedSlice(prepared)
+            when {
+                prepared != null -> showCompletedSlice(prepared, openPreview = showPreview)
+                batchSlices.isNotEmpty() -> {
+                    slice = SliceState.Idle
+                    showPreview = false
+                }
+                else -> invalidateSlice()
+            }
         }
     } }
 
@@ -1407,12 +1414,12 @@ class PrepareState(private val app: AppState) {
         }
     }
 
-    private fun showCompletedSlice(completed: SliceState.Done) {
+    private fun showCompletedSlice(completed: SliceState.Done, openPreview: Boolean = true) {
         slice = completed
         previewFirstLayer = 0
         previewLayer = ((completed.preview?.layers?.size ?: 1) - 1).coerceAtLeast(0)
         previewMove = Int.MAX_VALUE
-        showPreview = true
+        showPreview = openPreview
     }
 
     /** Shelf packing by footprint, largest first, with a 6 mm gap, centred on the bed. Objects that can't fit are reported. */

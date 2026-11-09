@@ -4,6 +4,7 @@ import com.nozzleitall.printer.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -34,6 +35,32 @@ class EditPrinterTest {
         fleet.shutdown(); scope.coroutineContext[Job]?.cancel()
         val reloaded = PrinterStore(p).load().associateBy { it.identity.id }
         assertEquals("http://192.168.1.77", reloaded.getValue("u1").identity.address); assertEquals("192.168.1.114", reloaded.getValue("cc1").identity.address)
+    }
+
+    @Test fun reviewedProfileLinkKeepsQueuedTargetAndRejectsStaleConnection() = runBlocking {
+        val p = paths()
+        val scope = CoroutineScope(Dispatchers.Default)
+        val fleet = Fleet(p, scope, stockHelper = { null })
+        try {
+            val config = PrinterConfig(
+                PrinterIdentity("u1", "Fixture U1", "Snapmaker U1", PrinterFamily.PAXX_U1, "127.0.0.1:1"),
+                EXPORT_ONLY,
+            )
+            assertTrue(fleet.add(config, persist = false))
+            val old = fleet.printers.getValue("u1")
+            old.status.value = PrinterStatus(PrinterState.READY, ConnectionRoute.LAN)
+            val file = File(p.data, "profile-link.gcode").apply { writeText("G28\n") }
+            val job = fleet.enqueue("Fixture", file, "u1", emptyList())
+            fleet.associatePrinterProfile(old, "snapmaker_u1")
+            assertTrue(old.retired)
+            assertEquals("u1", fleet.queue.value.single { it.id == job.id }.printerId)
+            assertEquals("snapmaker_u1", PrinterStore(p).load().single().identity.profileId)
+            assertTrue(runCatching { fleet.associatePrinterProfile(old, "snapmaker_u1") }.isFailure)
+        } finally {
+            fleet.shutdown()
+            scope.coroutineContext[Job]?.cancel()
+            p.config.parentFile.deleteRecursively()
+        }
     }
 
     @Test fun aRemovedPrinterIsForgottenAndQueuedJobsBecomeUnassigned() {
