@@ -55,7 +55,13 @@ import com.nozzleitall.desktop.ui.*
  * essentials (plus anything already changed). Search looks across the whole scope.
  */
 @Composable
-fun SettingsSheet(catalog: SettingsCatalog, profile: ProfileValues, p: PrepareState, modifier: Modifier = Modifier) {
+fun SettingsSheet(
+    catalog: SettingsCatalog,
+    profile: ProfileValues,
+    p: PrepareState,
+    modifier: Modifier = Modifier,
+    processActionsInHeader: Boolean = false,
+) {
     val c = Nz.colors
     val scope = p.settingsScope
     val tabs = catalog.tabs[scope].orEmpty()
@@ -89,13 +95,15 @@ fun SettingsSheet(catalog: SettingsCatalog, profile: ProfileValues, p: PrepareSt
                 IconToggle(NzIcon.SAVE, "Save ${scopeActionName(scope)} preset", false) { saveOpen = true }
                 if (p.selectedUserPreset(scope) != null)
                     IconToggle(NzIcon.DELETE, "Delete ${scopeActionName(scope)} user preset", false) { deleteOpen = true }
-                IconToggle(NzIcon.COMPARE, "Compare ${scopeActionName(scope)} presets", false) { compareOpen = true }
+                if (!processActionsInHeader) IconToggle(NzIcon.COMPARE, "Compare ${scopeActionName(scope)} presets", false) { compareOpen = true }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Spacer(Modifier.weight(1f))
                 IconToggle(NzIcon.SEARCH, "Find a setting", searching) { searching = !searching; if (!searching) query = "" }
-                Txt("Advanced", Nz.type.label, c.textMuted, maxLines = 1)
-                MiniSwitch(p.advancedSettings, "Show every setting") { p.advancedSettings = it }
+                if (!processActionsInHeader) {
+                    Txt("Advanced", Nz.type.label, c.textMuted, maxLines = 1)
+                    MiniSwitch(p.advancedSettings, "Show every setting") { p.advancedSettings = it }
+                }
             }
         }
         if (p.changedSettings(scope).isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -378,7 +386,7 @@ private fun SaveUserPresetDialog(scope: Scope, p: PrepareState, profile: Profile
 }
 
 @Composable
-private fun ComparePresetsDialog(catalog: SettingsCatalog, scope: Scope, p: PrepareState, profile: ProfileValues, onDismiss: () -> Unit) {
+internal fun ComparePresetsDialog(catalog: SettingsCatalog, scope: Scope, p: PrepareState, profile: ProfileValues, onDismiss: () -> Unit) {
     val c = Nz.colors
     val snapshots = p.presetSnapshots(scope, profile)
     var leftId by remember(scope, snapshots) { mutableStateOf(p.selectedPresetId(scope).takeIf { id -> snapshots.any { it.id == id } } ?: snapshots.firstOrNull()?.id.orEmpty()) }

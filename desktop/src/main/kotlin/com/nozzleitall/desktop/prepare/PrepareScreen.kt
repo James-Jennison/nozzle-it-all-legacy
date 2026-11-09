@@ -1302,9 +1302,9 @@ private fun WorkspaceSetupStack(
     val connected = p.printer()
     val status = connected?.status?.value?.state
     var editConnection by remember(connected) { mutableStateOf(false) }
-    var reviewSync by remember(connected) { mutableStateOf(false) }
-    if (reviewSync && connected != null) {
-        val reported = connected.status.value.toolheads
+    var syncReview by remember(connected) { mutableStateOf<List<com.nozzleitall.printer.Toolhead>?>(null) }
+    val reported = syncReview
+    if (reported != null && connected != null) {
         val details = reported.mapNotNull { head ->
             head.material?.let { material ->
                 val detected = listOfNotNull(material.vendor, material.subType, material.type)
@@ -1321,8 +1321,12 @@ private fun WorkspaceSetupStack(
             confirmLabel = "Sync filament",
             destructive = false,
             confirmEnabled = details.isNotEmpty(),
-            onConfirm = { p.notice = p.syncFromPrinter(); reviewSync = false },
-            onDismiss = { reviewSync = false },
+            onConfirm = {
+                p.notice = if (p.printer() === connected && connected.status.value.toolheads == reported) p.syncFromPrinter()
+                    else "Loaded filament changed. Review the current spools before syncing."
+                syncReview = null
+            },
+            onDismiss = { syncReview = null },
         )
     }
     if (editConnection && connected != null) {
@@ -1430,7 +1434,7 @@ private fun WorkspaceSetupStack(
                     if (p.printer() != null) NzIconButton(
                         NzIcon.IMPORT,
                         "Sync filament from printer",
-                        { reviewSync = true },
+                        { syncReview = p.printer()?.status?.value?.toolheads },
                         testTag = "sync-filament",
                     )
                     if (flushingVolumesVisible(slots.size, p.primeTowerEnabled())) NzIconButton(
@@ -1877,6 +1881,21 @@ private fun WorkspaceLeftPanel(
 ) {
     val p = state.prepare
     val c = Nz.colors
+    val profileValues = profileValuesFor(p)
+    val processValues = profileValues?.getOrNull()
+    val processScope = com.nozzleitall.desktop.settings.Scope.PROCESS
+    val processControls = drawer == Drawer.PROCESS && p.settingsScope == processScope
+    var compare by remember { mutableStateOf(false) }
+    var objectSettings by remember { mutableStateOf(false) }
+    if (compare && processValues != null) {
+        com.nozzleitall.desktop.settings.ComparePresetsDialog(
+            com.nozzleitall.desktop.settings.SettingsCatalog.bundled, processScope, p, processValues,
+            onDismiss = { compare = false },
+        )
+    }
+    if (objectSettings && processValues != null) {
+        PlateObjectSettingsDialog(p, processValues) { objectSettings = false }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1887,15 +1906,22 @@ private fun WorkspaceLeftPanel(
             NzButton("Objects", { setDrawer(null) }, Modifier.weight(1f),
                 kind = if (!drawer.isGlobalSetup()) ButtonKind.PRIMARY else ButtonKind.SECONDARY,
                 testTag = "workspace-objects-tab", centerContent = true)
+            if (processControls) {
+                NzIconButton(NzIcon.TUNE, if (p.advancedSettings) "Show essential settings" else "Show advanced settings",
+                    { p.advancedSettings = !p.advancedSettings }, selected = p.advancedSettings)
+                NzIconButton(NzIcon.COMPARE, "Compare process presets",
+                    { if (processValues != null) compare = true })
+            }
+            NzIconButton(NzIcon.LAYERS, "Object settings on this plate",
+                { if (processValues != null) objectSettings = true })
         }
         when (drawer) {
             Drawer.PROCESS -> {
-                val profileValues = profileValuesFor(p)
                 if (profileValues == null) Txt("Loading process settings…", Nz.type.bodySmall, c.textMuted)
                 else profileValues.onSuccess { values ->
                     com.nozzleitall.desktop.settings.SettingsSheet(
                         com.nozzleitall.desktop.settings.SettingsCatalog.bundled, values, p,
-                        Modifier.weight(1f).fillMaxWidth())
+                        Modifier.weight(1f).fillMaxWidth(), processActionsInHeader = processControls)
                 }.onFailure { Txt("Process settings unavailable: ${it.message}", Nz.type.bodySmall, c.danger) }
             }
             Drawer.PRINTER -> Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),

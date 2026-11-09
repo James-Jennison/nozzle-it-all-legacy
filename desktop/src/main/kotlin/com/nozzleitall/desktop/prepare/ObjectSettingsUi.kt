@@ -1,10 +1,15 @@
 package com.nozzleitall.desktop.prepare
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogWindow
+import androidx.compose.ui.window.rememberDialogState
 import com.nozzleitall.desktop.settings.Choice
 import com.nozzleitall.desktop.settings.DenseRow
 import com.nozzleitall.desktop.settings.DenseSelect
@@ -40,6 +45,34 @@ fun ObjectSettingsSection(p: PrepareState, item: PrepItem, profile: ProfileValue
             // Starts from the plate's value, as upstream copies the current value when a setting is added to an object.
             item.settings[key] = p.setting(key, profile) ?: def.default ?: ""
             p.changed()
+        }
+    }
+}
+
+@Composable
+internal fun PlateObjectSettingsDialog(p: PrepareState, profile: ProfileValues, close: () -> Unit) {
+    val plate = p.currentPlate
+    val objects = p.plateItems(plate)
+    DialogWindow(onCloseRequest = close, title = "Object settings",
+        state = rememberDialogState(width = 540.dp, height = 580.dp)) {
+        val c = Nz.colors
+        Column(Modifier.fillMaxSize().background(c.surface).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Txt("Object settings · ${p.plateNames[plate]}", Nz.type.title)
+            Txt("Settings without an override use the plate value.", Nz.type.bodySmall, c.textMuted)
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (objects.isEmpty()) Txt("No objects on this plate.", Nz.type.bodySmall, c.textMuted)
+                objects.forEach { item ->
+                    key(item.id) {
+                        Card(Modifier.fillMaxWidth()) {
+                            Txt(item.name, Nz.type.label)
+                            ObjectSettingsSection(p, item, profile)
+                        }
+                    }
+                }
+            }
+            NzButton("Close", close, Modifier.align(Alignment.End))
         }
     }
 }

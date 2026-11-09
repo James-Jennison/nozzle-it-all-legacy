@@ -77,8 +77,11 @@ class PreparePrinterPickerUiTest {
                 }
                 onNodeWithTag("setup-printer").assertTextContains(printer.displayName)
                 System.getenv("NIA_SIDEBAR_CAPTURE_DIR")?.let { folder ->
-                    val bounds = java.awt.Rectangle(java.awt.Toolkit.getDefaultToolkit().screenSize)
-                    val capture = java.awt.Robot().createScreenCapture(bounds)
+                    val bitmap = captureToImage()
+                    val pixels = IntArray(bitmap.width * bitmap.height)
+                    bitmap.readPixels(pixels)
+                    val capture = java.awt.image.BufferedImage(bitmap.width, bitmap.height, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                    capture.setRGB(0, 0, bitmap.width, bitmap.height, pixels, 0, bitmap.width)
                     javax.imageio.ImageIO.write(capture, "png",
                         File(folder, "${printer.id}-${(scale * 100).toInt()}.png"))
                 }
