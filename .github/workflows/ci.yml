@@ -89,25 +89,35 @@ jobs:
           set -euo pipefail
           test -s "$JAVA_HOME/lib/libawt_xawt.so"
           display_dir="$(mktemp -d /vmdata/worktrees/nia-ci-display.XXXXXX)"
-          chmod 1777 "$display_dir"
+          mkdir -m 1777 "$display_dir/socket"
+          display=$((1000 + GITHUB_RUN_ID % 50000))
+          socket="$display_dir/socket/X$display"
+          client_socket="/tmp/.X11-unix/X$display"
           display_container="nia-ci-xvfb-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          trap 'docker rm -f "$display_container" >/dev/null 2>&1 || true; rm -f "$display_dir/X197"; rmdir "$display_dir" || true' EXIT
+          cleanup() {
+            if [ "$(readlink "$client_socket" || true)" = "$socket" ]; then rm -- "$client_socket"; fi
+            docker rm -f "$display_container" >/dev/null 2>&1 || true
+            rm -f -- "$socket"
+            rmdir "$display_dir/socket" "$display_dir" || true
+          }
+          trap cleanup EXIT
           docker run -d --rm --name "$display_container" --network none \
             --userns=host --user "$(id -u):$(id -g)" \
-            -v "$display_dir:/tmp/.X11-unix" \
+            -v "$display_dir/socket:/tmp/.X11-unix" \
             sha256:a7b7e622ea745b4c6d7748fefee031697a591074306169dd9e0884042e6dd4a9 \
-            Xvfb :197 -screen 0 1360x860x24 -nolisten tcp -ac
+            Xvfb ":$display" -screen 0 1360x860x24 -nolisten tcp -ac
           for i in {1..50}; do
-            [ ! -S "$display_dir/X197" ] || break
+            [ ! -S "$socket" ] || break
             sleep 0.2
           done
-          test -S "$display_dir/X197"
-          export DISPLAY=:197
+          test -S "$socket"
+          # The owner-only parent protects the socket; the symlink gives X11 its conventional path.
+          ln -s -- "$socket" "$client_socket"
+          export DISPLAY=":$display"
           unset ANDROID_HOME ANDROID_SDK_ROOT
-          bwrap --bind / / --dev /dev --ro-bind "$display_dir" /tmp/.X11-unix -- \
-            bash ./gradlew -c settings-desktop.gradle.kts :desktop:verifyNozzleEngine :desktop:test \
-              -PnozzleEngine=/vmdata/build-cache/nia-ci-toolchain/nozzle-engine-fab18fe78f28 \
-              --no-daemon --max-workers=4
+          bash ./gradlew -c settings-desktop.gradle.kts :desktop:verifyNozzleEngine :desktop:test \
+            -PnozzleEngine=/vmdata/build-cache/nia-ci-toolchain/nozzle-engine-fab18fe78f28 \
+            --no-daemon --max-workers=4
 
       - name: Assemble debug (native build, arm64-v8a)
         # -PdeviceFarmTests leaves out the LAN/printer-only tests: Device Farm rejects (at re-signing) a test package with too much code.
