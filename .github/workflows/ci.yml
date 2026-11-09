@@ -58,7 +58,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, android-native]
     timeout-minutes: 60
     env:
-      ANDROID_DEPS_PREFIX: /home/jjennison/orcaslicer-android-engine/deps/install/arm64-v8a
+      ANDROID_DEPS_PREFIX: /home/jjennison/orcaslicer-android-engine-2.5/deps/install/arm64-v8a
       NOZZLE_ENGINE_CACHE: /home/jjennison/nozzle-engine-ci
       ANDROID_HOME: /opt/android-sdk
       ANDROID_SDK_ROOT: /opt/android-sdk
@@ -116,7 +116,7 @@ jobs:
           export DISPLAY=":$display"
           unset ANDROID_HOME ANDROID_SDK_ROOT
           bash ./gradlew -c settings-desktop.gradle.kts :desktop:verifyNozzleEngine :desktop:test \
-            -PnozzleEngine=/vmdata/build-cache/nia-ci-toolchain/nozzle-engine-fab18fe78f28 \
+            -PnozzleEngine=/vmdata/build-cache/nia-ci-toolchain/engine-fab18fe78f28/nozzle-engine \
             --no-daemon --max-workers=4
 
       - name: Assemble debug (native build, arm64-v8a)
@@ -277,7 +277,7 @@ jobs:
       id-token: write
       attestations: write
     env:
-      ANDROID_DEPS_PREFIX: /home/jjennison/orcaslicer-android-engine/deps/install/arm64-v8a
+      ANDROID_DEPS_PREFIX: /home/jjennison/orcaslicer-android-engine-2.5/deps/install/arm64-v8a
       NOZZLE_ENGINE_CACHE: /home/jjennison/nozzle-engine-ci
       ANDROID_HOME: /opt/android-sdk
       ANDROID_SDK_ROOT: /opt/android-sdk
