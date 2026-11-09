@@ -520,7 +520,6 @@ class PrepareState(private val app: AppState) {
     val plateIds = androidx.compose.runtime.mutableStateListOf(UUID.randomUUID().toString())
     var currentPlate by mutableStateOf(0)
     var showPlateOverview by mutableStateOf(false)
-    init { history.reset() }   // after the fields it records
     fun plateItems(plate: Int = currentPlate): List<PrepItem> = items.filter { it.plate == plate }
 
     /** Shows plate [i]; a slice result belongs to the plate it was made for. */
@@ -2222,6 +2221,9 @@ class PrepareState(private val app: AppState) {
             }
         } finally { uploadProgress = null }
     }
+
+    init { history.reset() }
+
 }
 
 /** The 2D convex hull (monotone chain) of a mesh's vertices seen from above, relative to ([cx], [cy]), as x,y pairs. */
