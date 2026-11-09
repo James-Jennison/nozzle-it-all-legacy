@@ -417,15 +417,14 @@ private fun runApp(open: List<File>) = application {
             if (osName.startsWith("Linux")) {
                 Toolkit.getDefaultToolkit().systemEventQueue.push(LinuxCloseEventQueue(window, closeWindow))
             }
-            val dropTarget = workspaceDropTarget(window, state::receiveWorkspaceDrop)
             val listener = com.nozzleitall.desktop.environment.DesktopMonitoringWindowListener(state.environment::foreground)
             state.environment.foreground(true)
             window.addWindowListener(listener)
-            onDispose {
-                dropTarget.component = null
-                window.removeWindowListener(listener)
-                state.environment.foreground(false)
-            }
+            onDispose { window.removeWindowListener(listener); state.environment.foreground(false) }
+        }
+        DisposableEffect(window) {
+            val dropTarget = workspaceDropTarget(window, state::receiveWorkspaceDrop)
+            onDispose { dropTarget.component = null }
         }
         NozzleTheme(state.fleet.settings.value.theme, state.fleet.settings.value.textScale) {
             Column(Modifier.fillMaxSize()) {
