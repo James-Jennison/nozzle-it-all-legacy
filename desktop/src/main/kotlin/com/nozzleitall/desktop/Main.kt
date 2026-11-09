@@ -173,7 +173,10 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         private set
 
     internal fun guardProjectReplacement(action: () -> Unit) {
-        if (pendingProjectAction != null) return
+        if (pendingProjectAction != null) {
+            if (projectSaveProblem == null) projectSaveProblem = "Finish this project decision before starting another."
+            return
+        }
         if (prepare.dirty) pendingProjectAction = action else action()
     }
 
@@ -213,7 +216,11 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     }
 
     internal fun receiveWorkspaceDrop(files: List<File>) {
-        if (pendingProjectAction != null || pendingMachineSelection != null || droppedProject != null || gcodeInspection != null) return
+        if (pendingProjectAction != null) {
+            if (projectSaveProblem == null) projectSaveProblem = "Finish this project decision before opening dropped files."
+            return
+        }
+        if (pendingMachineSelection != null || droppedProject != null || gcodeInspection != null) return
         when {
             files.size == 1 && files.single().extension.equals("3mf", true) -> droppedProject = files.single()
             files.size == 1 && files.single().extension.equals("gcode", true) -> gcodeInspection = files.single()

@@ -111,7 +111,11 @@ class MenusTest {
         p.addPlate()
         val plates = p.plateIds.toList()
         a.item("File", "New project").run()
-        assertNotNull(a.pendingProjectAction)
+        val pending = a.pendingProjectAction
+        assertNotNull(pending)
+        a.guardProjectReplacement { error("A second replacement must not run") }
+        assertSame(pending, a.pendingProjectAction)
+        assertNotNull(a.projectSaveProblem)
         a.cancelProjectReplacement()
         assertEquals(plates, p.plateIds.toList())
         assertTrue(p.dirty)

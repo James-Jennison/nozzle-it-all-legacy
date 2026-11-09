@@ -545,6 +545,7 @@ class PrepareState(private val app: AppState) {
             selected = null
             val prepared = batchSlices[plateIds[i]]
             when {
+                slice is SliceState.Running && slicingBatch -> discardMeshEditPreview()
                 prepared != null -> showCompletedSlice(prepared, openPreview = showPreview)
                 batchSlices.isNotEmpty() -> {
                     slice = SliceState.Idle
@@ -1414,6 +1415,7 @@ class PrepareState(private val app: AppState) {
     @Volatile private var sliceGeneration = 0L
     @Volatile private var sliceCancelRequested = false
     private var batchSlices: Map<String, SliceState.Done> = emptyMap()
+    private var slicingBatch = false
 
     private fun invalidateSlice() {
         discardMeshEditPreview()
@@ -2208,6 +2210,7 @@ class PrepareState(private val app: AppState) {
             return
         }
         sliceCancelRequested = false
+        slicingBatch = batch
         slice = SliceState.Running(0f, "Starting")
         val results = linkedMapOf<String, SliceState.Done>()
         scope.launch(Dispatchers.Main) {

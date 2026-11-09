@@ -372,9 +372,9 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
                 inputDigest: String? = null, sourceJobId: String? = null,
                 expectedSha256: String? = null, draftPlateId: String? = null,
                 materialPlan: com.nozzleitall.desktop.prepare.PreparedMaterialPlan? = null): com.nozzleitall.desktop.queue.QueueItem {
-        if (sourceJobId != null && printerId != null) {
+        if (printerId != null) {
             check(!printerProfileMismatch(targetProfileId, printers[printerId]?.config?.identity?.profileId)) {
-                "This reprint was sliced for a different machine profile. Choose a matching printer or slice again."
+                "This file was sliced for a different machine profile. Choose a matching printer or slice again."
             }
         }
         val sourceDigest = sourceJobId?.let { sourceId ->

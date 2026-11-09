@@ -390,9 +390,11 @@ fun SetupWizardDialog(state: AppState) {
 
     fun openProject() {
         val file = chooseFiles("Open a project", listOf("3mf"), multiple = false).firstOrNull() ?: return
-        state.prepare.notice = null
-        runCatching { state.prepare.open(file); state.destination = Destination.PREPARE; state.completeFirstRun() }
-            .onFailure { state.prepare.notice = it.message ?: "That project could not be opened." }
+        state.guardProjectReplacement {
+            state.prepare.notice = null
+            runCatching { state.prepare.open(file); state.returnToWorkspace(preview = false); state.completeFirstRun() }
+                .onFailure { state.prepare.notice = it.message ?: "That project could not be opened." }
+        }
     }
     fun setup() = SlicingSetup(profileId, setupName.ifBlank { profile?.model ?: "Offline machine" }, if (customOffline) customNozzle else nozzle,
         processId, tools, effectiveFilamentProfiles, customOffline,

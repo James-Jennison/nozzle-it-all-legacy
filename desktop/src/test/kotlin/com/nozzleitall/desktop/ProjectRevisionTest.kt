@@ -49,16 +49,20 @@ class ProjectRevisionTest {
                     prepare.save()
                     val plateIds = prepare.plateIds.toList()
                     prepare.sliceAll(scope)
+                    prepare.showPlate(0)
+                    assertTrue(prepare.slice is SliceState.Running)
                     withTimeout(120_000) { while (prepare.slice is SliceState.Running) delay(25) }
                     assertTrue(prepare.slice.toString(), prepare.slice is SliceState.Done)
-                    val second = prepare.slice as SliceState.Done
-                    assertEquals(plateIds[1], second.savedPlateId)
-                    prepare.showPlate(0)
                     val first = prepare.slice as SliceState.Done
                     assertEquals(plateIds[0], first.savedPlateId)
+                    prepare.showPlate(1)
+                    val second = prepare.slice as SliceState.Done
+                    assertEquals(plateIds[1], second.savedPlateId)
                     assertNotEquals(first.result.inputSha256, second.result.inputSha256)
                     assertNotEquals(first.result.stats.layers, second.result.stats.layers)
                     prepare.changed()
+                    prepare.showPlate(0)
+                    assertSame(SliceState.Idle, prepare.slice)
                     prepare.showPlate(1)
                     assertSame(SliceState.Idle, prepare.slice)
                     assertFalse(prepare.showPreview)
