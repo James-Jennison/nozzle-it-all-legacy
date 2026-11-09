@@ -13,6 +13,8 @@ import com.nozzleitall.desktop.prepare.ProfileCatalog
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performClick
 import com.nozzleitall.desktop.ui.NozzleTheme
 import com.nozzleitall.printer.PrinterConfig
@@ -31,15 +33,19 @@ import java.io.File
 class PreparePrinterPickerUiTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun savedPrintersAndManagementAt100Percent() = verifySidebar(1f)
+    @Test fun savedPrintersAndManagementAt150Percent() = verifySidebar(1.5f)
+
     @OptIn(ExperimentalTestApi::class)
-    @Test fun savedPrintersAndManagementAreReachableFromPrepare() = runDesktopComposeUiTest(960, 640) {
+    private fun verifySidebar(scale: Float) = runDesktopComposeUiTest(960, 640) {
         val root = temporary.newFolder()
         val paths = AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val app = AppState(paths, scope)
         val u1 = PrinterIdentity("u1", "Snapmaker U1", "Snapmaker U1", PrinterFamily.PAXX_U1,
             "http://127.0.0.1:9", "snapmaker_u1")
-        val cc1 = PrinterIdentity("cc1", "CC1", "Elegoo CC1", PrinterFamily.KLIPPER, "http://127.0.0.1:9")
+        val cc1Profile = ProfileCatalog.search("Centauri Carbon").first()
+        val cc1 = PrinterIdentity("cc1", "CC1", "Elegoo CC1", PrinterFamily.KLIPPER, "http://127.0.0.1:9", cc1Profile.id)
         app.fleet.printers[u1.id] = PrinterEntry(PrinterConfig(u1, "paxx-lan"))
         app.fleet.printers[cc1.id] = PrinterEntry(PrinterConfig(cc1, "moonraker"))
         val extras = (1..14).map { cc1.copy(id = "extra-$it", displayName = "Fixture printer $it") }
@@ -48,7 +54,7 @@ class PreparePrinterPickerUiTest {
         app.destination = Destination.PREPARE
         val profile = app.prepare.profileId
         try {
-            setContent { NozzleTheme("dark", textScale = 1.5f) { App(app) } }
+            setContent { NozzleTheme("dark", textScale = scale) { App(app) } }
             onNodeWithTag("setup-connection").assertHasClickAction()
             onNodeWithTag("setup-printer").assertTextContains("Export only")
             onNodeWithContentDescription("Nozzle diameter, 0.4").assertIsDisplayed()
@@ -59,10 +65,26 @@ class PreparePrinterPickerUiTest {
                 onNodeWithTag("saved-printer-u1").assertIsDisplayed()
                 onNodeWithTag("saved-printer-cc1").assertIsDisplayed()
                 onNodeWithTag("saved-printer-${printer.id}").performClick()
+                if (printer == cc1) {
+                    onNodeWithText("Cancel").performSemanticsAction(SemanticsActions.OnClick)
+                    runOnIdle {
+                        assertEquals(u1.id, app.prepare.printerId)
+                        assertEquals(profile, app.prepare.profileId)
+                    }
+                    openPicker()
+                    onNodeWithTag("saved-printer-cc1").performClick()
+                    onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
+                }
                 onNodeWithTag("setup-printer").assertTextContains(printer.displayName)
+                System.getenv("NIA_SIDEBAR_CAPTURE_DIR")?.let { folder ->
+                    val bounds = java.awt.Rectangle(java.awt.Toolkit.getDefaultToolkit().screenSize)
+                    val capture = java.awt.Robot().createScreenCapture(bounds)
+                    javax.imageio.ImageIO.write(capture, "png",
+                        File(folder, "${printer.id}-${(scale * 100).toInt()}.png"))
+                }
                 runOnIdle {
                     assertEquals(printer, app.prepare.printer()?.config?.identity)
-                    assertEquals(profile, app.prepare.profileId)
+                    assertEquals(printer.profileId, app.prepare.profileId)
                 }
             }
             openPicker()
@@ -71,7 +93,6 @@ class PreparePrinterPickerUiTest {
             onNodeWithTag("saved-printer-extra-14").performScrollTo().assertIsDisplayed()
             val search = onNodeWithContentDescription("Search machine profiles")
             search.performScrollTo().assertIsDisplayed().performTextInput("Centauri Carbon")
-            val cc1Profile = ProfileCatalog.search("Centauri Carbon").first()
             onNodeWithTag("slicing-profile-${cc1Profile.id}").performScrollTo().assertIsDisplayed().performClick()
             runOnIdle {
                 assertEquals(cc1.id, app.prepare.printerId)
@@ -95,9 +116,13 @@ class PreparePrinterPickerUiTest {
             onNodeWithText("Everything you print on, at a glance.").assertIsDisplayed()
             runOnIdle { app.destination = Destination.PREPARE }
             onNodeWithText("Add or remove printers…").assertDoesNotExist()
+            openPicker()
+            onNodeWithTag("saved-printer-u1").performClick()
+            onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
+            onNodeWithTag("setup-printer").assertTextContains(u1.displayName)
             runOnIdle {
-                assertEquals(cc1.id, app.prepare.printerId)
-                assertEquals(cc1Profile.id, app.prepare.profileId)
+                assertEquals(u1.id, app.prepare.printerId)
+                assertEquals(u1.profileId, app.prepare.profileId)
             }
         } finally {
             scope.cancel()

@@ -1299,12 +1299,44 @@ private fun WorkspaceSetupStack(
     }
     val scroll = rememberScrollState()
     var flushing by remember { mutableStateOf(false) }
+    val connected = p.printer()
+    val status = connected?.status?.value?.state
+    var editConnection by remember(connected) { mutableStateOf(false) }
+    var reviewSync by remember(connected) { mutableStateOf(false) }
+    if (reviewSync && connected != null) {
+        val reported = connected.status.value.toolheads
+        val details = reported.mapNotNull { head ->
+            head.material?.let { material ->
+                val detected = listOfNotNull(material.vendor, material.subType, material.type)
+                    .distinct().joinToString(" ").ifBlank { "Unidentified filament" }
+                val selected = slots.firstOrNull { it.slot == head.index + 1 }?.filamentProfile
+                    ?.let(library::get)?.name
+                "Slot ${head.index + 1}: $detected" + (selected?.let { " · slicing preset: $it" } ?: "")
+            }
+        }
+        ConfirmDialog(
+            title = "Sync filament from printer?",
+            body = "Copy the loaded spool details from ${connected.config.identity.displayName} into this project.",
+            detail = details.joinToString("\n"),
+            confirmLabel = "Sync filament",
+            destructive = false,
+            confirmEnabled = details.isNotEmpty(),
+            onConfirm = { p.notice = p.syncFromPrinter(); reviewSync = false },
+            onDismiss = { reviewSync = false },
+        )
+    }
+    if (editConnection && connected != null) {
+        com.nozzleitall.desktop.screens.EditPrinterDialog(state, connected) { editConnection = false }
+    }
     Column(modifier.verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         SetupSection(
             "Printer",
             p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel(),
             expanded = printerKey !in collapsed,
             onExpandedChange = { state.fleet.updateSettingGroupCollapsed(printerKey, !it) },
+            action = {
+                NzIconButton(NzIcon.TUNE, "Manage printers", { state.destination = Destination.FLEET })
+            },
         ) {
             val nozzle = machine?.nozzle ?: p.nozzle ?: "0.4"
             val nozzleSizes = p.library()?.machines?.map { it.nozzle }.orEmpty()
@@ -1314,7 +1346,7 @@ private fun WorkspaceSetupStack(
                 PrinterCardField("Printer", Modifier.weight(0.47f)) {
                     PrinterPicker(state, Modifier.fillMaxWidth())
                 }
-                PrinterCardField("Nozzle", Modifier.weight(0.19f)) {
+                PrinterCardField("Variant", Modifier.weight(0.19f)) {
                     val choices = nozzleSizes.ifEmpty { listOf(nozzle) }
                     com.nozzleitall.desktop.settings.DenseSelect("Nozzle diameter",
                         choices.map { com.nozzleitall.desktop.settings.Choice(it, it) },
@@ -1351,16 +1383,32 @@ private fun WorkspaceSetupStack(
                     if (tools.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
-            val connected = p.printer()
-            val status = connected?.status?.value?.state
+            val machineName = p.profile?.model ?: p.profileId
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Txt("Machine profile: $machineName", Nz.type.bodySmall, c.textMuted,
+                    modifier = Modifier.weight(1f), maxLines = 1)
+                NzIconButton(NzIcon.TUNE, "Edit machine settings", { setDrawer(Drawer.PRINTER) })
+            }
+            connected?.config?.identity?.let { identity ->
+                val association = identity.profileId
+                when {
+                    association == null || ProfileCatalog.byId(association) == null ->
+                        Txt("Printer profile unknown. Verify the machine profile before sending.", Nz.type.bodySmall, c.textMuted)
+                    association != p.profileId ->
+                        Txt("Profile mismatch. Select ${ProfileCatalog.byId(association)?.model} for ${identity.displayName}.",
+                            Nz.type.bodySmall, c.danger)
+                }
+            }
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
-                .clickable(onClickLabel = "Set up printer connection") { state.startPrinterSetup(autoScan = true) }
+                .clickable(onClickLabel = "Open printer connection") {
+                    if (connected == null) state.startPrinterSetup(autoScan = true) else editConnection = true
+                }
                 .padding(horizontal = 6.dp, vertical = 5.dp).semantics { testTag = "setup-connection" },
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(status?.let { Nz.status.forState(it.glossaryId) } ?: c.textMuted))
                 Txt("Connection", Nz.type.bodySmall, c.textMuted,
                     modifier = Modifier.width(setupRowLabelWidth(Nz.textScale)), maxLines = 1)
-                Txt(status?.label ?: disconnectedConnectionLabel(), Nz.type.bodySmall,
+                Txt(status?.label ?: if (connected == null) disconnectedConnectionLabel() else "Status unavailable", Nz.type.bodySmall,
                     modifier = Modifier.weight(1f), maxLines = 1)
             }
         }
@@ -1382,7 +1430,7 @@ private fun WorkspaceSetupStack(
                     if (p.printer() != null) NzIconButton(
                         NzIcon.IMPORT,
                         "Sync filament from printer",
-                        { p.notice = p.syncFromPrinter() },
+                        { reviewSync = true },
                         testTag = "sync-filament",
                     )
                     if (flushingVolumesVisible(slots.size, p.primeTowerEnabled())) NzIconButton(
@@ -1489,6 +1537,31 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
     val c = Nz.colors
     var open by remember { mutableStateOf(false) }
     val current = ProfileCatalog.byId(p.profileId)
+    var pending by remember { mutableStateOf<Pair<String?, String>?>(null) }
+    pending?.let { (destinationId, profileId) ->
+        val target = ProfileCatalog.byId(profileId)
+        val entry = destinationId?.let { state.fleet.printers[it] }
+        val associationValid = destinationId == null || entry?.config?.identity?.profileId == profileId
+        ConfirmDialog(
+            title = "Switch machine profile?",
+            body = "Switch from ${current?.model ?: p.profileId} to ${target?.model ?: profileId}." +
+                (entry?.let { " Use ${it.config.identity.displayName} as the destination." } ?: ""),
+            detail = "This resets the nozzle, build plate, Process preset and printer-specific filament choices. " +
+                "Plate objects and their assignments stay in the project. Review settings and slice again.",
+            confirmLabel = "Switch profile",
+            destructive = false,
+            confirmEnabled = target != null && associationValid,
+            onConfirm = {
+                if (target != null && associationValid) {
+                    val availableIds = FilamentLibrary.forProfile(target.id).mapTo(linkedSetOf()) { it.id }
+                    p.switchWorkspaceMachine(SlicingSetup(target.id, target.name, toolheads = target.tools,
+                        installedFilamentProfiles = availableIds), destinationId)
+                }
+                pending = null
+            },
+            onDismiss = { pending = null },
+        )
+    }
     val viewport = LocalWindowInfo.current.containerSize
     val popupWidth = with(LocalDensity.current) { minOf(320.dp, viewport.width.takeIf { it > 0 }?.toDp() ?: 320.dp) }
     val popupHeight = with(LocalDensity.current) { minOf(330.dp, viewport.height.takeIf { it > 0 }?.toDp() ?: 330.dp) }
@@ -1531,7 +1604,12 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                     Txt("Saved printers", Nz.type.label, c.textMuted, Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
                     state.fleet.order.value.mapNotNull { state.fleet.printers[it]?.config?.identity }.forEach { printer ->
                         PrinterPickerOption(printer.displayName, p.printerId == printer.id, "saved-printer-${printer.id}") {
-                            p.choosePrinter(printer.id)
+                            val associated = printer.profileId?.let(ProfileCatalog::byId)
+                            if (associated != null && associated.id != p.profileId) {
+                                pending = printer.id to associated.id
+                            } else {
+                                p.choosePrinter(printer.id)
+                            }
                             open = false
                         }
                     }
@@ -1546,13 +1624,7 @@ private fun PrinterPicker(state: AppState, modifier: Modifier = Modifier) {
                     profiles.forEach { profile ->
                         PrinterPickerOption("${profile.vendor} · ${profile.model}", profile.id == p.profileId,
                             "slicing-profile-${profile.id}") {
-                            val available = FilamentLibrary.forProfile(profile.id)
-                            val availableIds = available.mapTo(linkedSetOf()) { it.id }
-                            val filaments = p.materials().mapNotNull { slot ->
-                                slot.filamentProfile?.takeIf { it in availableIds }?.let { slot.slot to it }
-                            }.toMap()
-                            p.applySlicingSetup(SlicingSetup(profile.id, profile.name, toolheads = profile.tools,
-                                filamentProfiles = filaments, installedFilamentProfiles = availableIds))
+                            if (profile.id != p.profileId) pending = null to profile.id
                             open = false
                         }
                     }

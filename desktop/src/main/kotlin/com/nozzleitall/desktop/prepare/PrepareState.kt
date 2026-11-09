@@ -595,7 +595,19 @@ class PrepareState(private val app: AppState) {
 
     /** Choosing a physical destination never changes the independently installed slicing configuration. */
     fun choosePrinter(id: String?) {
+        if (printerId == id) return
+        headProfiles.clear()
         printerId = id
+        changed()
+    }
+
+    internal fun switchWorkspaceMachine(setup: SlicingSetup, destinationId: String?) {
+        bedType = null
+        nozzleFlows.clear()
+        presetSnapshot = null
+        presetSnapshotProblem = null
+        applySlicingSetup(setup)
+        if (destinationId != null) printerId = destinationId
         changed()
     }
 
