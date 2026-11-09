@@ -216,14 +216,14 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
             check(expectedSha256 == null || hash == expectedSha256) {
                 "The prepared file changed after review. Slice or review it again."
             }
+            val item = QueueItem(id, name, stored, printerId, toolheadMap, clock(), hash, jobId, artifactId, pendingLink,
+                projectId, projectRevision, plateId, targetProfileId, engineBuild, inputDigest,
+                sourceJobId = sourceJobId, draftPlateId = draftPlateId, materialPlan = materialPlan)
+            requireSafeName(item)
             Files.move(tmp.toPath(), File(dir, stored).toPath(), StandardCopyOption.ATOMIC_MOVE)
             LocalFileDurability.syncDirectory(dir)
-            QueueItem(id, name, stored, printerId, toolheadMap, clock(), hash, jobId, artifactId, pendingLink,
-                projectId, projectRevision, plateId, targetProfileId, engineBuild, inputDigest,
-                sourceJobId = sourceJobId, draftPlateId = draftPlateId, materialPlan = materialPlan).also {
-                requireSafeName(it)
-                save(list + it)
-            }
+            save(list + item)
+            item
         } finally { tmp.delete() }
     }
 

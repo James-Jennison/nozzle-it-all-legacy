@@ -16,6 +16,19 @@ class PrintQueueTest {
     private fun tmp() = Files.createTempDirectory("queue").toFile()
     private fun gcode(dir: File, text: String = "G28\n") = File.createTempFile("job", ".gcode", dir).apply { writeText(text) }
 
+    @Test fun invalidDraftIdentityLeavesNoUnindexedFile() {
+        val root = Files.createTempDirectory("queue-invalid-draft").toFile()
+        try {
+            val source = File(root, "fixture.gcode").apply { writeText("G28\n") }
+            val queue = PrintQueue(File(root, "queue"))
+            assertTrue(runCatching { queue.add("Fixture", source, null, draftPlateId = "bad-id") }.isFailure)
+            assertTrue(queue.items().isEmpty())
+            assertTrue(queue.problems().isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun duplicateSendUsesPreparedOutputRatherThanInputModelDigest() {
         val d = tmp()
         val queue = PrintQueue(File(d, "q"))
