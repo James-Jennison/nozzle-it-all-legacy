@@ -1,6 +1,7 @@
 package com.nozzleitall.desktop.prepare
 
 import com.nozzleitall.project.Mesh
+import com.nozzleitall.project.MeshIO
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -35,17 +36,24 @@ object PaintOps {
         File.createTempFile("nozzle-paint", ".stl").apply { deleteOnExit(); writeBytes(SliceEngine.stlBytes(mesh)) }
     }
 
-    private fun run(request: JSONObject, timeoutSeconds: Long = 120): JSONObject {
+    private fun withRequest(request: JSONObject, use: (File, File) -> JSONObject): JSONObject {
         val engine = SliceEngine.locateEngine() ?: throw EngineError("The slicing engine isn't installed with this copy of Nozzle It All.")
-        val req = File.createTempFile("nozzle-paint", ".json").apply { deleteOnExit(); writeText(request.toString()) }
+        val req = File.createTempFile("nozzle-paint", ".json")
         try {
-            val p = ProcessBuilder(engine.absolutePath, "--paint", req.absolutePath).redirectError(ProcessBuilder.Redirect.DISCARD).start()
-            val out = p.inputStream.bufferedReader().readText()
-            if (!p.waitFor(timeoutSeconds, TimeUnit.SECONDS)) { p.destroyForcibly(); throw EngineError("Painting took too long.") }
-            val json = runCatching { JSONObject(out) }.getOrElse { throw EngineError("This engine doesn't have the paint tools yet.") }
-            json.optString("error").takeIf { it.isNotBlank() }?.let { throw EngineError(it) }
-            return json
-        } finally { req.delete() }
+            req.writeText(request.toString())
+            return use(engine, req)
+        } finally {
+            req.delete()
+        }
+    }
+
+    private fun run(request: JSONObject, timeoutSeconds: Long = 120): JSONObject = withRequest(request) { engine, req ->
+        val p = ProcessBuilder(engine.absolutePath, "--paint", req.absolutePath).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val out = p.inputStream.bufferedReader().readText()
+        if (!p.waitFor(timeoutSeconds, TimeUnit.SECONDS)) { p.destroyForcibly(); throw EngineError("Painting took too long.") }
+        val json = runCatching { JSONObject(out) }.getOrElse { throw EngineError("This engine doesn't have the paint tools yet.") }
+        json.optString("error").takeIf { it.isNotBlank() }?.let { throw EngineError(it) }
+        json
     }
 
     private fun toWire(paint: Array<String?>?): JSONArray {
@@ -59,6 +67,25 @@ object PaintOps {
         val out = arrayOfNulls<String>(triangles)
         for (k in 0 until wire.length()) { val e = wire.getJSONArray(k); out[e.getInt(0)] = e.getString(1) }
         return out
+    }
+
+    data class GapFill(val mesh: Mesh, val changedPatches: Int)
+
+    fun gapFill(mesh: Mesh, maxAreaMm2: Double, scale: List<Double>): GapFill {
+        require(maxAreaMm2.isFinite() && maxAreaMm2 > 0 && maxAreaMm2 <= 5.0) { "Enter a gap area from 0 to 5 mm²." }
+        require(scale.size == 3 && scale.all { it.isFinite() && it != 0.0 })
+        if (!mesh.isPainted) return GapFill(mesh, 0)
+        val req = JSONObject().put("op", "gap_fill").put("model", stlOf(mesh).absolutePath)
+            .put("paint", toWire(mesh.paint)).put("area_mm2", maxAreaMm2).put("scale", JSONArray(scale))
+        val out = withRequest(req) { engine, request ->
+            ModelingOps.runProcess(ProcessBuilder(engine.absolutePath, "--paint", request.absolutePath),
+                timeoutSeconds = 120, responseLimit = 32 * 1024 * 1024)
+        }
+        val changed = out.getInt("changed_patches")
+        if (changed == 0) return GapFill(mesh, 0)
+        val painted = Kind.COLOUR.with(mesh, fromWire(out.getJSONArray("paint"), mesh.triangleCount))
+        val result = if (MeshIO.paintedFilaments(painted).isEmpty()) Kind.COLOUR.with(painted, null) else painted
+        return GapFill(result, changed)
     }
 
     /** [mesh] with [strokes] applied to the paint of [kind]. */

@@ -3,8 +3,8 @@
     "name": "nozzle-engine",
     "repo": "https://github.com/James-Jennison/nozzle-engine.git",
     "commit": "891d6af80e58bd8c1946ad1db2485ada8a841a17",
-    "desktop_commit": "56bb39dc20f0a3cfc372478cde4edbae58be711c",
-    "desktop_binary_sha256": "e4cf7bca83f8dc9f4f35d41be705ddc4a88b438da7a22c3a0fa8c5a423377d85",
+    "desktop_commit": "465fa1f7064938a246ba3a0c15562fb80334715d",
+    "desktop_binary_sha256": "991251f9bcbd41b967d261b3be80147249876e1b7705d19cb4a82d23f30f4179",
     "local_checkout": "/mnt/faststorage/Snapmaker-Orca/hybrid-orca-intake/nozzle-engine-integration-20261105",
     "licence": "AGPL-3.0",
     "branch": "engine/orca-2.5-base"

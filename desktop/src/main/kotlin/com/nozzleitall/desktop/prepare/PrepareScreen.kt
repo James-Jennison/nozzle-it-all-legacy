@@ -3274,9 +3274,18 @@ private fun PaintPanel(p: PrepareState) {
         var radius by remember(p.paintRadius) { mutableStateOf("%.1f".format(p.paintRadius).removeSuffix(".0")) }
         com.nozzleitall.desktop.settings.DenseInput(radius, { radius = it; it.replace(',', '.').toFloatOrNull()?.takeIf { r -> r in 0.2f..40f }?.let { r -> p.paintRadius = r } }, "Brush radius", Modifier.fillMaxWidth(), units = "mm")
     }
+    if (kind == PaintOps.Kind.COLOUR) {
+        val painted = p.selectedItems().singleOrNull()?.mesh?.isPainted == true
+        var area by remember { mutableStateOf("5.00") }
+        val limit = area.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 && it <= 5.0 }
+        com.nozzleitall.desktop.settings.DenseInput(area, { area = it }, "Gap area", Modifier.fillMaxWidth(), units = "mm²")
+        Txt("Fill smaller enclosed regions with the surrounding filament.", Nz.type.bodySmall, c.textMuted)
+        NzButton("Apply Gap Fill", { limit?.let(p::fillPaintGaps) }, kind = ButtonKind.SECONDARY,
+            enabled = painted && limit != null && !p.paintBusy && p.toolBusy == null, testTag = "paint-gap-fill")
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        NzButton("Undo", { p.undoPaint() }, kind = ButtonKind.SECONDARY, enabled = p.canUndoPaint && !p.paintBusy)
-        NzButton("Clear ${kind.label.lowercase()}", { p.clearPaint(kind) }, kind = ButtonKind.SECONDARY, enabled = !p.paintBusy, testTag = "paint-clear")
+        NzButton("Undo", { p.undoPaint() }, kind = ButtonKind.SECONDARY, enabled = p.canUndoPaint && !p.paintBusy && p.toolBusy == null)
+        NzButton("Clear ${kind.label.lowercase()}", { p.clearPaint(kind) }, kind = ButtonKind.SECONDARY, enabled = !p.paintBusy && p.toolBusy == null, testTag = "paint-clear")
         NzButton("Done", { p.stopPainting() }, kind = ButtonKind.PRIMARY, testTag = "paint-done")
         p.takeIf { it.paintBusy }?.let { Txt("Painting…", Nz.type.bodySmall, c.accent) }
     }

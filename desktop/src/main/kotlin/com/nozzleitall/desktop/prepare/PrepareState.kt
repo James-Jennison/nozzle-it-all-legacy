@@ -1908,7 +1908,7 @@ class PrepareState(private val app: AppState) {
 
     /** Applies the strokes the viewer collected to the object [id], one batch at a time so each builds on the last. */
     fun paintStroke(id: Int, rays: List<PaintRay>) {
-        if (paintKind == null || rays.isEmpty()) return
+        if (paintKind == null || toolBusy != null || rays.isEmpty()) return
         paintQueue.addLast(id to rays)
         if (paintBusy) return
         paintBusy = true
@@ -1929,6 +1929,30 @@ class PrepareState(private val app: AppState) {
                 }
             } catch (e: Exception) { notice = "Painting didn't work: ${e.message ?: e.javaClass.simpleName}" }
             finally { paintBusy = false }
+        }
+    }
+
+    internal fun fillPaintGaps(maxAreaMm2: Double) {
+        if (paintBusy || toolBusy != null || paintKind != PaintOps.Kind.COLOUR) return
+        val item = selectedItems().singleOrNull()?.takeIf { it.mesh.isPainted } ?: return
+        val generation = sliceGeneration
+        val scale = listOf(item.ex.toDouble(), item.ey.toDouble(), item.ez.toDouble())
+        runTool("Gap Fill") {
+            val result = modelingIo { PaintOps.gapFill(item.mesh, maxAreaMm2, scale) }
+            if (generation != sliceGeneration || paintKind != PaintOps.Kind.COLOUR ||
+                selectedItems().singleOrNull() !== item) return@runTool
+            if (result.changedPatches == 0) {
+                notice = "No enclosed filament gaps were smaller than the selected area."
+                return@runTool
+            }
+            editSelection {
+                paintHistory.addLast(PaintStep(item.id, PaintOps.Kind.COLOUR, item.mesh, item.paintSlots.toList()))
+                while (paintHistory.size > 30) paintHistory.removeFirst()
+                replace(item, withMesh(item, result.mesh))
+                changed()
+            }
+            notice = if (result.changedPatches == 1) "Filled 1 filament gap."
+                else "Filled ${result.changedPatches} filament gaps."
         }
     }
 
