@@ -53,14 +53,10 @@ internal data class LayerAction(val id: String, val layer: Int, val z: Double, v
                 }
 
         fun command(kind: Kind, machine: JSONObject, text: String): String? {
-            val flavor = machine.optString("gcode_flavor").lowercase()
-            val model = machine.optString("printer_model")
             val pause = machine.optString("machine_pause_gcode").trim()
-            val supportsM600 = !model.startsWith("Bambu Lab ") &&
-                (flavor in setOf("marlin", "marlin2", "marlinlegacy", "prusa") || model == "Snapmaker U1" && pause == "M600")
             val code = when (kind) {
                 Kind.PAUSE -> pause
-                Kind.FILAMENT -> "M600".takeIf { supportsM600 }.orEmpty()
+                Kind.FILAMENT -> pause.takeIf { it == "M600" }.orEmpty()
                 Kind.CUSTOM -> text.trim()
             }
             return code.takeIf(::validCommands)

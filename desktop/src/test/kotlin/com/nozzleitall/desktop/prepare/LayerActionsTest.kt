@@ -49,6 +49,8 @@ class LayerActionsTest {
             .put("machine_pause_gcode", "PAUSE")
         assertEquals("PAUSE", LayerAction.command(LayerAction.Kind.PAUSE, klipper, ""))
         assertNull(LayerAction.command(LayerAction.Kind.FILAMENT, klipper, ""))
+        val m600Profile = JSONObject().put("gcode_flavor", "klipper").put("machine_pause_gcode", "M600")
+        assertEquals("M600", LayerAction.command(LayerAction.Kind.FILAMENT, m600Profile, ""))
         assertNull(LayerAction.command(LayerAction.Kind.CUSTOM, klipper, ";Z:2.3\nM117 Fixture"))
         assertEquals("M117 Fixture", LayerAction.command(LayerAction.Kind.CUSTOM, klipper, "M117 Fixture"))
     }
