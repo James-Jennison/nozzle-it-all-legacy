@@ -129,7 +129,7 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
                     Card(Modifier.fillMaxWidth()) {
                         Txt("Provider " + provider.name + " · Model " + provider.model, Nz.type.label)
                         Txt("Estimated cost " + provider.estimatedCredits + " Meshy API credits", Nz.type.body)
-                        Txt("Meshy receives the shown prompt and generation options. Authentication uses your saved Meshy key.", Nz.type.bodySmall)
+                        Txt("Meshy (api.meshy.ai) receives the shown prompt and generation options. Authentication uses your saved Meshy key. Model files, images, print settings and the local import size stay on this computer.", Nz.type.bodySmall)
                         Txt(approvedPrompt, Nz.type.body)
                         Txt("Mesh preview · remeshed triangles · STL · target 30,000 faces", Nz.type.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -154,6 +154,7 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
                     }
                 }
                 pending?.let { receipt ->
+                    if (model == null) Txt("Resuming sends the task ID to Meshy (api.meshy.ai) and downloads the generated STL from assets.meshy.ai.", Nz.type.bodySmall)
                     if (model == null && receipt.taskId != null) {
                         Txt("Saved Meshy task " + receipt.taskId, Nz.type.bodySmall)
                         NzButton("Resume saved task", {

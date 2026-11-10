@@ -1639,12 +1639,16 @@ class PrepareState(private val app: AppState) {
         }
     }
 
-    fun aiSend() {
+    fun aiSend(reviewedProvider: com.nozzleitall.printer.ext.AutoPaintFormat.Provider) {
         if (toolBusy != null) return
         if (selectedIds != setOfNotNull(aiItemId)) { aiDiscard(); return }
         val prepared = aiPrepared ?: return
         currentAiTarget(prepared) ?: return
         val provider = autoPaintSettings.provider ?: run { notice = "Choose how to ask first: a command, or an OpenAI-compatible server."; return }
+        if (provider != reviewedProvider) {
+            notice = "The AI recipient changed. Go back and review the request again."
+            return
+        }
         val generation = aiGeneration
         aiPreviewMesh = null
         runTool("Waiting for the answer") {
@@ -1685,6 +1689,10 @@ class PrepareState(private val app: AppState) {
     fun autoPaintSelected(hint: String) {
         val item = items.firstOrNull { it.id == selected } ?: return
         val provider = autoPaintSettings.provider ?: run { notice = "Choose how to ask first: a command, or an OpenAI-compatible server."; return }
+        if (provider != reviewedProvider) {
+            notice = "The AI recipient changed. Go back and review the request again."
+            return
+        }
         val slots = allSlots()
         if (slots.size < 2) { notice = "AI auto-paint needs at least two filaments to choose between."; return }
         val filaments = slots.map { (id, label) -> com.nozzleitall.printer.ext.AutoPaintFormat.Filament(id, label, slotHex(id) ?: "#808080") }

@@ -753,7 +753,7 @@ fun PrepareScreen(state: AppState) {
             if (onPlate.isEmpty() && !p.showPreview) ContextMenuArea(items = bedActions, state = plateContextMenu) {
                 Box(Modifier.fillMaxSize()) {
                     EmptyState(NzIcon.IMPORT, if (p.items.isEmpty()) "Start with a model" else "${p.plateNames.getOrNull(p.currentPlate) ?: "This plate"} is empty",
-                        "Add an STL, 3MF or OBJ file, or open a saved project. Nothing leaves this computer.", Modifier.align(Alignment.Center)) {
+                        "Opening or importing a model keeps it on this computer. Add an STL, 3MF or OBJ file, or open a saved project.", Modifier.align(Alignment.Center)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 NzButton("Add model", { chooseFiles("Add a model", listOf("stl", "3mf", "obj")).forEach { f -> runCatching { p.importModel(f) }.onFailure { p.notice = it.message } } }, kind = ButtonKind.PRIMARY, icon = NzIcon.IMPORT)
@@ -3201,7 +3201,16 @@ private fun AutoPaintPanel(p: PrepareState, onDone: () -> Unit) {
             com.nozzleitall.desktop.settings.DenseInput(hint, { hint = it }, "Hint", Modifier.fillMaxWidth(), placeholder = "Hint (optional), e.g. a goldfish, orange body, black eyes")
             NzButton("Show what will be sent", { p.aiPrepare(hint) }, Modifier.fillMaxWidth(), kind = ButtonKind.PRIMARY, enabled = p.toolBusy == null && s.provider != null, testTag = "autopaint-run")
         } else {
-            Txt(if (answer == null) "These images, region descriptions, your hint and filament list will be sent." else "Draft preview only — your saved model is unchanged. Orbit the plate to inspect every side, including underneath.", Nz.type.bodySmall, c.textMuted)
+            val reviewedProvider = s.provider
+            if (answer == null) {
+                reviewedProvider?.let { provider ->
+                    val disclosure = AutoPaint.requestDisclosure(provider)
+                    Txt(disclosure.recipient, Nz.type.label)
+                    Txt(disclosure.payload, Nz.type.bodySmall, c.textMuted)
+                }
+            } else {
+                Txt("Your saved model is unchanged. Orbit the plate to inspect the draft from every side.", Nz.type.bodySmall, c.textMuted)
+            }
             val images = remember(prepared) { prepared.seg.views.mapNotNull { v -> runCatching { v.name to org.jetbrains.skia.Image.makeFromEncoded(File(v.path).readBytes()).toComposeImageBitmap() }.getOrNull() } }
             if (answer != null) NzButton(if (showReferenceViews) "Hide numbered reference views" else "Show numbered reference views", { showReferenceViews = !showReferenceViews }, Modifier.fillMaxWidth(), kind = ButtonKind.QUIET)
             if (answer == null || showReferenceViews) images.chunked(3).forEach { row ->
@@ -3215,9 +3224,14 @@ private fun AutoPaintPanel(p: PrepareState, onDone: () -> Unit) {
                     repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
-            Txt("${prepared.seg.segmentCount} parts · ${s.command.takeIf { s.kind == "command" } ?: s.baseUrl}", Nz.type.bodySmall, c.textMuted, maxLines = 1)
+            Txt("${prepared.seg.segmentCount} parts", Nz.type.bodySmall, c.textMuted)
             if (answer == null) {
-                NzButton("Send these ${images.size} images", { p.aiSend() }, Modifier.fillMaxWidth(), kind = ButtonKind.PRIMARY, enabled = p.toolBusy == null, testTag = "autopaint-send")
+                val reviewReady = reviewedProvider != null && images.size == prepared.seg.views.size && images.isNotEmpty()
+                if (images.size != prepared.seg.views.size) {
+                    Banner("Some reference images could not be displayed. Go back and prepare the views again.", BannerKind.WARNING)
+                }
+                NzButton("Send reviewed request", { reviewedProvider?.let { p.aiSend(it) } }, Modifier.fillMaxWidth(),
+                    kind = ButtonKind.PRIMARY, enabled = p.toolBusy == null && reviewReady, testTag = "autopaint-send")
                 NzButton("Back", { p.aiDiscard() }, Modifier.fillMaxWidth(), kind = ButtonKind.QUIET, enabled = p.toolBusy == null)
             } else {
                 if (p.aiPreviewMesh != null) Banner("${answer.faces().count { it > 0 }} of ${answer.faceRegions.size} faces assigned. Inspect the draft on the plate.", BannerKind.SUCCESS)

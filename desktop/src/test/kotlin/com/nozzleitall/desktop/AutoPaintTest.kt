@@ -16,6 +16,18 @@ import kotlinx.coroutines.*
 
 /** AI auto-paint: the engine segments and reads the answer, the provider (a command, or a local OpenAI-style server) answers. */
 class AutoPaintTest {
+    @Test fun requestDisclosureDistinguishesServerAndCommandPayloads() {
+        val server = AutoPaint.requestDisclosure(AutoPaintFormat.Provider.OpenAiCompatible(
+            "https://paint.example.invalid:8443/v1", "paint-model"))
+        assertTrue(server.recipient.contains("paint.example.invalid:8443"))
+        assertTrue(server.recipient.contains("paint-model"))
+        assertTrue(server.payload.contains("reference images"))
+        assertTrue(server.payload.contains("model file and print settings stay"))
+        val command = AutoPaint.requestDisclosure(AutoPaintFormat.Provider.Command(AutoPaint.DEFAULT_COMMAND))
+        assertTrue(command.recipient.contains("Anthropic"))
+        assertTrue(command.payload.contains("model geometry"))
+    }
+
     @Test fun malformedServerAddressHasAGenericDiagnostic() {
         try { AutoPaint.askServer(Provider.OpenAiCompatible("http://invalid address/v1", "fixture"), "{}", 1); fail("expected failure") }
         catch (e: AutoPaint.AutoPaintError) { assertEquals("The server address is not valid.",e.message) }
@@ -170,7 +182,7 @@ class AutoPaintTest {
                 p.aiPrepare("")
             }
             idle(); assertNotNull(p.aiPrepared)
-            withContext(Dispatchers.Main) { p.aiSend() }; idle()
+            withContext(Dispatchers.Main) { p.aiSend(requireNotNull(p.autoPaintSettings.provider)) }; idle()
             assertNotNull(p.aiPreviewMesh); assertSame(mesh,p.items.single().mesh); assertFalse(p.aiCleanBoundaries)
             assertFalse(p.history.canUndo)
             // Deliberate fault injection in paint decoding; restore it immediately after the failed background rebuild.
@@ -206,7 +218,7 @@ class AutoPaintTest {
             val started = File(tmp, "provider-started")
             withContext(Dispatchers.Main) {
                 p.autoPaintSettings = AutoPaint.Settings(command = "touch '${started.absolutePath}'; sleep 1; cat >/dev/null; printf '%s' '$answer'")
-                p.aiSend()
+                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
             }
             withTimeout(10_000) { while (!started.isFile) delay(20) }
             withContext(Dispatchers.Main) { p.selected = 2 }
@@ -218,7 +230,7 @@ class AutoPaintTest {
                 withContext(Dispatchers.Main) { p.selected = 1; p.aiPrepare("") }; idle()
                 val changedDir = p.aiPrepared!!.dir
                 withContext(Dispatchers.Main) {
-                    p.aiSend()
+                    p.aiSend(requireNotNull(p.autoPaintSettings.provider))
                     if (changeSlot) p.items[0].slot = 2 else p.items[0].paintSlots.add(3)
                 }
                 idle()
@@ -250,7 +262,7 @@ class AutoPaintTest {
             val first = requireNotNull(p.aiPrepared).dir
             withContext(Dispatchers.Main) {
                 p.setSlotFilament(2, null, "#123ABC")
-                p.aiSend()
+                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
             }
             idle()
             assertFalse(seen.exists())
@@ -261,7 +273,7 @@ class AutoPaintTest {
             idle()
             val queued = requireNotNull(p.aiPrepared).dir
             withContext(Dispatchers.Main) {
-                p.aiSend()
+                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
                 p.setSlotFilament(2, null, "#987DEF")
             }
             idle()
@@ -271,7 +283,7 @@ class AutoPaintTest {
             withContext(Dispatchers.Main) { p.aiPrepare("") }
             idle()
             val second = requireNotNull(p.aiPrepared).dir
-            withContext(Dispatchers.Main) { p.aiSend() }
+            withContext(Dispatchers.Main) { p.aiSend(requireNotNull(p.autoPaintSettings.provider)) }
             idle()
             assertTrue(seen.isFile)
             assertNotNull(p.aiPreviewMesh)
@@ -317,7 +329,7 @@ class AutoPaintTest {
             })).toString()
             withContext(Dispatchers.Main) {
                 p.autoPaintSettings = AutoPaint.Settings(command = "cat >/dev/null; printf '%s' '$reply'")
-                p.aiSend()
+                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
             }
             idle(); assertNotNull(p.aiAnswer); assertNotNull(p.aiPreviewMesh)
             assertTrue(p.aiAnswer!!.slots.all { it == 0 }); assertSame(mesh,p.items.single().mesh)

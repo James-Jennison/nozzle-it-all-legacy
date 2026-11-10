@@ -121,6 +121,27 @@ object AutoPaint {
         return out
     }
 
+    internal data class RequestDisclosure(val recipient: String, val payload: String)
+
+    internal fun requestDisclosure(provider: Provider): RequestDisclosure = when (provider) {
+        is Provider.Command -> RequestDisclosure(
+            if (provider.commandLine.trim() == DEFAULT_COMMAND) "Recipient: Claude Code (Anthropic)"
+            else "Recipient: your configured command",
+            "The command receives the model name, painting instructions, your hint, region descriptions and filament choices. " +
+                "It can access the generated reference images and model geometry in the working folder. " +
+                "Its own settings determine where it sends that data.",
+        )
+        is Provider.OpenAiCompatible -> {
+            val address = runCatching { URI.create(AutoPaintFormat.chatUrl(provider.baseUrl)) }.getOrNull()
+            val host = address?.host?.let { if (address.port == -1) it else "$it:${address.port}" } ?: "unrecognized address"
+            RequestDisclosure(
+                "Recipient: $host · Model: ${provider.model}",
+                "This server receives the reference images, model name, painting instructions, your hint, region descriptions " +
+                    "and filament choices. The model file and print settings stay on this computer.",
+            )
+        }
+    }
+
     /** POSTs [body] to an OpenAI-compatible chat-completions endpoint and returns the response text. */
     internal fun askServer(p: Provider.OpenAiCompatible, body: String, timeoutSeconds: Long = 300): String {
         val uri = try { URI.create(AutoPaintFormat.chatUrl(p.baseUrl)) }
