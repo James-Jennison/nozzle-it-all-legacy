@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.nozzleitall.desktop.prepare.PrepItem
 import com.nozzleitall.desktop.prepare.PrepareScreen
 import com.nozzleitall.desktop.prepare.PrepareState
 import com.nozzleitall.desktop.prepare.ProfileCatalog
@@ -83,7 +84,14 @@ internal enum class PlateEditKind(val label: String) {
     CLEAR_PLATE("Clear this plate"), CLEAR_ALL("Clear all plates"), DELETE_PLATE("Delete plate"),
 }
 
-internal data class PendingPlateEdit(val kind: PlateEditKind, val plateId: String?, val editorGeneration: Long, val detail: String)
+internal data class ReviewedPlate(val id: String, val name: String, val items: List<PrepItem>)
+internal data class PendingPlateEdit(
+    val kind: PlateEditKind,
+    val plateId: String?,
+    val editorGeneration: Long,
+    val scope: List<ReviewedPlate>,
+    val detail: String,
+)
 
 enum class MonitorHandoffState(val label: String) {
     UPLOADED("Uploaded to printer"),
@@ -194,8 +202,14 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
             PlateEditKind.CLEAR_ALL -> "Remove all $objects objects across ${prepare.plateIds.size} plates. The plates remain."
             PlateEditKind.DELETE_PLATE -> "Remove “$name” and its $count objects. Other plates remain."
         }
-        pendingPlateEdit = PendingPlateEdit(kind, prepare.plateIds[plate].takeUnless { kind == PlateEditKind.CLEAR_ALL },
-            prepare.editorGeneration, "$description You can undo this edit.")
+        val target = plate.takeUnless { kind == PlateEditKind.CLEAR_ALL }
+        pendingPlateEdit = PendingPlateEdit(kind, target?.let(prepare.plateIds::get),
+            prepare.editorGeneration, plateEditScope(target), "$description You can undo this edit.")
+    }
+
+    private fun plateEditScope(plate: Int?): List<ReviewedPlate> {
+        val indices = if (plate == null) prepare.plateIds.indices else plate..plate
+        return indices.map { ReviewedPlate(prepare.plateIds[it], prepare.plateNames[it], prepare.plateItems(it)) }
     }
 
     internal fun cancelPlateEdit() { pendingPlateEdit = null }
@@ -204,7 +218,8 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         val review = pendingPlateEdit ?: return
         cancelPlateEdit()
         val plate = review.plateId?.let(prepare.plateIds::indexOf)
-        if (review.editorGeneration != prepare.editorGeneration || plate == -1 || prepare.toolBusy != null) {
+        if (review.editorGeneration != prepare.editorGeneration || plate == -1 || prepare.toolBusy != null ||
+            review.scope != plateEditScope(plate)) {
             prepare.notice = "The workspace changed. Review the plate edit again."
             return
         }

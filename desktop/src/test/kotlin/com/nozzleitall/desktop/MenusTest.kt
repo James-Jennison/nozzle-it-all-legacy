@@ -86,6 +86,12 @@ class MenusTest {
         a.confirmPlateEdit()
         assertEquals(plates, p.plateIds.toList())
         a.item("Plate", "Delete this plate").run()
+        p.items.first().plate = 1
+        a.confirmPlateEdit()
+        assertEquals(plates, p.plateIds.toList())
+        assertEquals(listOf(1, 2), p.items.map { it.id })
+        p.items.first().plate = 0
+        a.item("Plate", "Delete this plate").run()
         a.confirmPlateEdit()
         assertEquals(listOf(plates.first()), p.plateIds.toList())
         assertEquals(listOf(1), p.items.map { it.id })

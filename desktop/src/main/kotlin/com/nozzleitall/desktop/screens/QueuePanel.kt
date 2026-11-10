@@ -175,7 +175,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
             val targets = ids.mapNotNull { fleet.printers[it] }.filter { entry ->
                 val identity = entry.config.identity
                 identity.id == item.printerId || (!printerProfileMismatch(item.targetProfileId, identity.profileId) &&
-                    (entry.capabilities.value == null || entry.canTakeJobs(item)))
+                    entry.canTakeJobs(item))
             }
             val choices = buildList {
                 add(Choice(anyPrinter, "Any compatible printer"))

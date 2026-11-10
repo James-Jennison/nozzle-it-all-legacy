@@ -87,15 +87,21 @@ class SimulatedSendMonitorUiTest {
             val session = FakeSession()
             val matching = session.identity
             val wrong = matching.copy(id = "other", displayName = "Wrong profile fixture", profileId = "other")
-            for (identity in listOf(matching, wrong)) {
-                app.fleet.printers[identity.id] = PrinterEntry(PrinterConfig(identity, "moonraker"))
+            val unknown = matching.copy(id = "unknown", displayName = "Unknown capability fixture")
+            for (identity in listOf(matching, wrong, unknown)) {
+                app.fleet.printers[identity.id] = PrinterEntry(PrinterConfig(identity, "moonraker")).also {
+                    if (identity != unknown) it.capabilities.value = session.capabilities
+                }
             }
-            app.fleet.order.value = listOf(matching.id, wrong.id)
+            app.fleet.order.value = listOf(matching.id, wrong.id, unknown.id)
             val source = File(root, "fixture.gcode").apply { writeText("G28\n") }
             val item = app.fleet.enqueue("Fixture cube", source, null, emptyList(), targetProfileId = "fixture")
             compose.setContent { NozzleTheme("dark") { QueuePanel(app) } }
             compose.onNodeWithContentDescription("Job destination, Any compatible printer").performClick()
             compose.onNodeWithContentDescription("Job destination option Wrong profile fixture").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Job destination option Unknown capability fixture").assertDoesNotExist()
+            assertThrows(IllegalStateException::class.java) { app.fleet.retargetQueued(item.id, wrong.id) }
+            assertThrows(IllegalStateException::class.java) { app.fleet.retargetQueued(item.id, unknown.id) }
             compose.onNodeWithContentDescription("Job destination option Simulated printer").performClick()
             compose.runOnIdle {
                 val chosen = app.fleet.queue.value.single()

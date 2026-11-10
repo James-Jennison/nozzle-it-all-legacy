@@ -118,6 +118,10 @@ class PrintQueueTest {
             assertThrows(IllegalStateException::class.java) { fleet.moveInQueue(queued.id, 1) }
             assertThrows(IllegalStateException::class.java) { fleet.dequeue(queued.id) }
             queueRelease.complete(Unit); transfer.await()
+            val target = PrinterIdentity("p2", "Fixture", "Fixture", PrinterFamily.KLIPPER, "http://127.0.0.1:1")
+            fleet.printers["p2"] = PrinterEntry(PrinterConfig(target, "moonraker")).also {
+                it.capabilities.value = Capabilities(uploadJob = true, startPrint = true)
+            }
             fleet.retargetQueued(queued.id, "p2")
             assertEquals("p2", fleet.queue.value.single().printerId)
         } finally { fleet.shutdown() }

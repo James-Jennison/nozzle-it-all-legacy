@@ -480,18 +480,18 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
     }
     fun retargetQueued(id: String, printerId: String?, expectedItem: com.nozzleitall.desktop.queue.QueueItem? = null) = synchronized(this) {
         check(id !in queuedTransfers) { "Wait for the queued file transfer to finish before changing its printer." }
-        if (expectedItem != null && printerId != null) {
+        val reviewedItem = expectedItem ?: queueStore.items().firstOrNull { it.id == id } ?: return@synchronized
+        if (printerId != null) {
             val printer = printers[printerId]?.takeUnless { it.retired } ?: error("The selected printer is unavailable.")
-            check(!printerProfileMismatch(expectedItem.targetProfileId, printer.config.identity.profileId)) {
+            check(!printerProfileMismatch(reviewedItem.targetProfileId, printer.config.identity.profileId)) {
                 "This job was sliced for a different machine profile. Choose a matching printer or slice again."
             }
-            printer.capabilities.value?.let { caps ->
-                check(expectedItem.output in caps.acceptedOutputs && (caps.uploadAndStart || (caps.uploadJob && caps.startPrint))) {
-                    "The selected printer cannot start this file type."
-                }
+            val caps = printer.capabilities.value ?: error("The selected printer has not reported its capabilities.")
+            check(reviewedItem.output in caps.acceptedOutputs && (caps.uploadAndStart || (caps.uploadJob && caps.startPrint))) {
+                "The selected printer cannot start this file type."
             }
         }
-        queueStore.retarget(id, printerId, expectedItem)
+        queueStore.retarget(id, printerId, reviewedItem)
         refreshQueue()
     }
     fun queuedFile(item: com.nozzleitall.desktop.queue.QueueItem): File {
