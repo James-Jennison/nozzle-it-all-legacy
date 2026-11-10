@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 package com.nozzleitall.desktop.prepare
 
 import androidx.compose.foundation.*
@@ -647,23 +647,33 @@ fun PrepareScreen(state: AppState) {
         // than in the contextual inspector, matching the established slicer mental model without copying its UI.
         if (!previewFocused && !compactWorkspace && !sidebarCollapsed) BoxWithConstraints(Modifier.width(sidebarWidth).fillMaxHeight()) {
             val sidebarHeight = maxHeight
-            Column(Modifier.fillMaxSize().padding(end = 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val scrollSetup = p.showPreview && sidebarHeight < 550.dp
+            val setupScroll = rememberScrollState()
+            Column(Modifier.fillMaxSize().padding(end = 28.dp)
+                .then(if (scrollSetup) Modifier.padding(end = 8.dp).verticalScroll(setupScroll) else Modifier),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 p.notice?.let { Banner(it, BannerKind.WARNING, "Dismiss" to { p.notice = null }) }
                 (p.slice as? SliceState.Failed)?.let { SliceFailureNotice(p, it) }
                 WorkspaceSetupStack(
                     state,
                     drawer,
                     setDrawer = { drawer = it },
-                    modifier = Modifier.fillMaxWidth().heightIn(max = workspaceSetupMaximumHeight(sidebarHeight, Nz.textScale)),
+                    modifier = Modifier.fillMaxWidth().then(
+                        if (scrollSetup) Modifier else Modifier.heightIn(max = workspaceSetupMaximumHeight(sidebarHeight, Nz.textScale))),
                     foldFilamentByDefault = workspaceFoldsFilamentByDefault(workspaceWidth),
+                    scrollInternally = !scrollSetup,
                 )
                 WorkspaceLeftPanel(
                     state,
                     drawer,
                     { drawer = it },
-                    Modifier.weight(1f).heightIn(min = workspaceSettingsMinimumHeight(sidebarHeight, Nz.textScale)).fillMaxWidth(),
+                    Modifier.fillMaxWidth().then(if (scrollSetup) Modifier.height(390.dp)
+                        else Modifier.weight(1f).heightIn(min = workspaceSettingsMinimumHeight(sidebarHeight, Nz.textScale))),
                 )
             }
+            if (scrollSetup) PreviewScrollbar(setupScroll,
+                Modifier.align(Alignment.CenterEnd).padding(end = 28.dp).fillMaxHeight(),
+                "Preview setup scroll bar")
             SidebarEdge(
                 width = sidebarWidth,
                 onCollapse = { sidebarCollapsed = true },
@@ -728,7 +738,9 @@ fun PrepareScreen(state: AppState) {
         Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().clip(shape).background(c.surfaceSunken).border(1.dp, c.line, shape)) {
             val viewportWidth = maxWidth
-            val narrowPreview = viewportWidth < 600.dp
+            val previewControlsVisible = p.showPreview && done?.preview != null && !sendReviewOpen
+            val stackPreviewFooter = viewportWidth < 700.dp || Nz.textScale >= 1.5f
+            var warningsOpen by remember(done?.preview, previewControlsVisible) { mutableStateOf(false) }
             val density = LocalDensity.current
             var previewFooterHeight by remember { mutableStateOf(0.dp) }
             var previewZWidth by remember { mutableStateOf(0.dp) }
@@ -772,7 +784,8 @@ fun PrepareScreen(state: AppState) {
                     }
                 }
             }
-            else PlateViewer(bw, bd, objects, camera, c.surfaceRaised, c.lineStrong, Modifier.fillMaxSize(),
+            else PlateViewer(bw, bd, objects, camera, c.surfaceRaised, c.lineStrong,
+                Modifier.fillMaxSize().padding(bottom = if (previewControlsVisible) previewFooterHeight else 0.dp),
                 preview = if (p.showPreview) done?.preview else null, previewLayer = p.previewLayer, previewMove = p.previewMove, toolColors = slotColors,
                 previewFirstLayer = if (previewSection) p.previewLayer else p.previewFirstLayer,
                 previewRealistic = previewRealistic,
@@ -816,20 +829,23 @@ fun PrepareScreen(state: AppState) {
                     PlateToolbar(p, sel, drawer, modelingTool, transformTool, { transformTool = it }, ::toggleModeling) { toggle(it) }
                 }
             }
-            val previewLegendHeight = minOf(150.dp, maxHeight * 0.23f)
-            if (p.showPreview && done?.preview != null && !sendReviewOpen) Column(
-                Modifier.align(Alignment.TopEnd).padding(12.dp).padding(end = previewZWidth)
-                    .heightIn(max = minOf(compactPreviewOverlayMaxHeight(maxHeight),
-                        (maxHeight - previewFooterHeight - 12.dp).coerceAtLeast(0.dp)))
-                    .clipToBounds().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (previewRealistic) Floating(Modifier) {
-                    Txt("Realistic View · recorded extrusion widths", Nz.type.bodySmall, c.textMuted)
-                } else PreviewLegend(p, done.preview, p.previewView ?: if (done.preview.toolsUsed.size > 1) PreviewView.TOOL else PreviewView.LINE_TYPE,
-                    slots, done.result.stats,
-                    overlayWidth = minOf(340.dp, viewportWidth * 0.42f),
-                    overlayHeight = previewLegendHeight)
+            val previewLegendHeight = (maxHeight * 0.29f).coerceIn(96.dp, 150.dp)
+            if (previewControlsVisible && done?.preview != null) {
+                Box(Modifier.align(Alignment.TopEnd).padding(12.dp).padding(end = previewZWidth)) {
+                    if (previewRealistic) Floating(Modifier) {
+                        Txt("Realistic View · recorded extrusion widths", Nz.type.bodySmall, c.textMuted)
+                    } else PreviewLegend(p, done.preview, p.previewView ?: if (done.preview.toolsUsed.size > 1) PreviewView.TOOL else PreviewView.LINE_TYPE,
+                        slots, done.result.stats,
+                        overlayWidth = minOf(340.dp, viewportWidth * 0.47f),
+                        overlayHeight = previewLegendHeight,
+                        onShowWarnings = { warningsOpen = true })
+                }
+                PreviewResetButton(camera::reset, Modifier.align(Alignment.TopStart).padding(12.dp))
+                if (warningsOpen) PreviewWarningPopup(
+                    done.preview,
+                    (viewportWidth - 24.dp).coerceIn(0.dp, 460.dp),
+                    (maxHeight - 80.dp).coerceIn(0.dp, 300.dp),
+                ) { warningsOpen = false }
             }
             if (p.showPreview && done != null && done.preview == null) Box(Modifier.align(Alignment.TopStart).padding(12.dp)) {
                 Banner("The sliced file has no available toolpath preview. Return to Plate or slice again before reviewing it.", BannerKind.WARNING)
@@ -838,7 +854,7 @@ fun PrepareScreen(state: AppState) {
                 val cursor = previewLayerCursor(done.preview, p.previewLayer)
                 if (cursor != null) {
                     val slider = Modifier.align(Alignment.CenterEnd)
-                        .padding(end = 12.dp, bottom = if (narrowPreview) 64.dp else previewFooterHeight)
+                        .padding(top = 12.dp, end = 12.dp, bottom = previewFooterHeight + 8.dp)
                         .onSizeChanged { previewZWidth = with(density) { it.width.toDp() } }
                         .heightIn(min = 220.dp, max = 520.dp)
                     if (previewSection) {
@@ -976,7 +992,7 @@ fun PrepareScreen(state: AppState) {
                     val cursor = previewLayerCursor(done.preview, p.previewLayer)
                     if (cursor == null) Floating(Modifier.fillMaxWidth()) {
                         Txt("This slice has no extrusion layers to preview.", Nz.type.metricSmall, c.textMuted)
-                    } else Floating(Modifier.fillMaxWidth().padding(end = if (narrowPreview) previewZWidth + 4.dp else 0.dp)) {
+                    } else Floating(Modifier.fillMaxWidth()) {
                         val moveCount = done.preview.layers[cursor.index].count.coerceAtLeast(1)
                         val shownMove = p.previewMove.coerceAtMost(moveCount)
                         val moveControls: @Composable RowScope.() -> Unit = {
@@ -986,39 +1002,38 @@ fun PrepareScreen(state: AppState) {
                         }
                         val first = p.previewFirstLayer.coerceIn(0, cursor.index)
                         val firstZ = done.preview.layers[first].z
-                        val range = if (previewSection) "Section ${cursor.index + 1}/${cursor.count} · Z ${"%.2f".format(cursor.z)}\u00A0mm"
-                            else "Layers ${first + 1}–${cursor.index + 1}/${cursor.count} · Z ${"%.2f".format(firstZ)}–${"%.2f".format(cursor.z)}\u00A0mm"
-                        if (narrowPreview) {
+                        val layers = if (previewSection) "Section ${cursor.index + 1}/${cursor.count}"
+                            else "Layers ${first + 1}–${cursor.index + 1}/${cursor.count}"
+                        val zRange = if (previewSection) "Z ${"%.2f".format(cursor.z)} mm"
+                            else "Z ${"%.2f".format(firstZ)}–${"%.2f".format(cursor.z)} mm"
+                        val readouts: @Composable () -> Unit = {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Txt(layers, Nz.type.metricSmall, c.textMuted, maxLines = 1)
+                                Txt(zRange, Nz.type.metricSmall, c.textMuted, maxLines = 1)
+                            }
+                        }
+                        if (stackPreviewFooter) {
                             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp), content = moveControls)
-                                Txt(range, Nz.type.metricSmall, c.textMuted)
+                                readouts()
                             }
                         } else {
                             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp), content = moveControls)
                             Spacer(Modifier.width(8.dp))
-                            Txt(range, Nz.type.metricSmall, c.textMuted)
+                            readouts()
                         }
                     }
                 }
                 // The full-width advice overlay must never cover a compact tool or settings panel.
                 if (viewportAdviceVisible(compactWorkspace, Nz.textScale, p.showPreview, toolOpen || settingsOpen))
                     AdviceStrip(state, onChoosePrinter = { drawer = Drawer.PRINTER })
-                Row(
-                    Modifier.fillMaxWidth().padding(
-                        end = resetViewEndPadding(inspectorVisible, compactWorkspace),
-                    ),
-                    verticalAlignment = Alignment.Bottom,
+                if (!previewControlsVisible) Row(
+                    Modifier.fillMaxWidth().padding(end = resetViewEndPadding(inspectorVisible, compactWorkspace)),
+                    horizontalArrangement = Arrangement.End,
                 ) {
-                    Spacer(Modifier.weight(1f))
-                    NzIconButton(
-                        NzIcon.RESET_VIEW,
-                        "Reset 3D view",
-                        camera::reset,
-                        testTag = "plate-reset-view",
-                        tooltip = "Reset 3D view · Left-drag to orbit · Middle- or right-drag to pan · Scroll to zoom",
-                    )
+                    PreviewResetButton(camera::reset)
                 }
             }
             if (!previewFocused && compactWorkspace && compactObjectsOpen) Column(Modifier.align(Alignment.CenterStart).padding(12.dp)
@@ -1156,11 +1171,11 @@ private fun WorkspaceInspector(
 @Composable
 private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewView,
                           slots: List<com.nozzleitall.project.ProjectManifest.MaterialSlot>, stats: SliceStats,
-                          overlayWidth: Dp? = null, overlayHeight: Dp? = null) {
+                          overlayWidth: Dp? = null, overlayHeight: Dp? = null,
+                          onShowWarnings: (() -> Unit)? = null) {
     val c = Nz.colors
     val shape = RoundedCornerShape(14.dp)
     var showDetails by remember { mutableStateOf(true) }
-    var warningsOpen by remember(preview) { mutableStateOf(false) }
     val warnings = previewWarningMessages(preview)
     val expanded = overlayHeight == null || showDetails
     val showsTimeBreakdown = view == PreviewView.LINE_TYPE || view == PreviewView.TOOL
@@ -1174,12 +1189,12 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Box(Modifier.weight(1f)) {
                 NzButton(
-                    "Colour by ${view.label}  ▾",
+                    "Color by ${view.label}  ▾",
                     { viewMenuOpen = !viewMenuOpen },
                     Modifier.fillMaxWidth(),
                     kind = ButtonKind.SECONDARY,
                     testTag = "preview-view-selector",
-                    accessibilityDescription = "Preview colour: ${view.label}",
+                    accessibilityDescription = "Preview color: ${view.label}",
                 )
                 if (viewMenuOpen) Popup(onDismissRequest = { viewMenuOpen = false }, properties = PopupProperties(focusable = true)) {
                     Column(
@@ -1210,34 +1225,14 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                 }
             }
             if (overlayHeight != null) {
-                val label = if (showDetails) "Hide colour legend" else "Show colour legend"
+                val label = if (showDetails) "Hide color legend" else "Show color legend"
                 NzIconButton(NzIcon.LAYERS, label, { showDetails = !showDetails },
                     selected = showDetails, testTag = "preview-legend-toggle")
             }
         }
-        if (overlayHeight != null && warnings.isNotEmpty()) {
-            Box(Modifier.fillMaxWidth()) {
-                NzButton("Preview warnings (${warnings.size})", { warningsOpen = true },
-                    kind = ButtonKind.QUIET, icon = NzIcon.ALERT, testTag = "preview-warnings-open")
-                if (warningsOpen) Popup(
-                    alignment = Alignment.TopEnd,
-                    onDismissRequest = { warningsOpen = false },
-                    properties = PopupProperties(focusable = true),
-                ) {
-                    Column(Modifier.width(340.dp).clip(shape).background(c.surface)
-                        .border(1.dp, c.line, shape).padding(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Txt("Preview warnings", Nz.type.label, modifier = Modifier.weight(1f))
-                            NzButton("Close", { warningsOpen = false }, kind = ButtonKind.QUIET)
-                        }
-                        Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            PreviewWarnings(preview)
-                        }
-                    }
-                }
-            }
+        if (onShowWarnings != null && warnings.isNotEmpty()) {
+            NzButton("Warnings (${warnings.size})", onShowWarnings,
+                kind = ButtonKind.QUIET, icon = NzIcon.ALERT, testTag = "preview-warnings-open")
         }
         if (!expanded) return@Column
         val scroll = rememberScrollState()
@@ -1314,11 +1309,49 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                     }
                 }
             }
-            if (overlayHeight != null && scroll.maxValue > 0) VerticalScrollbar(
-                rememberScrollbarAdapter(scroll),
-                Modifier.align(Alignment.CenterEnd).height(overlayHeight).width(6.dp)
-                    .semantics { contentDescription = "Colour legend scroll bar" },
-            )
+            if (overlayHeight != null) PreviewScrollbar(scroll,
+                Modifier.matchParentSize().wrapContentWidth(Alignment.End).fillMaxHeight(),
+                "Color legend scroll bar")
+        }
+    }
+}
+
+@Composable
+private fun PreviewScrollbar(scroll: ScrollState, modifier: Modifier, label: String) {
+    if (scroll.maxValue <= 0 || scroll.maxValue == Int.MAX_VALUE) return
+    val c = Nz.colors
+    val shape = RoundedCornerShape(3.dp)
+    VerticalScrollbar(rememberScrollbarAdapter(scroll),
+        modifier.width(6.dp).clip(shape).background(c.lineStrong.copy(alpha = 0.35f))
+            .semantics { contentDescription = label },
+        style = ScrollbarStyle(18.dp, 6.dp, shape, 200, c.textMuted, c.accent))
+}
+
+@Composable
+private fun PreviewResetButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    NzIconButton(NzIcon.RESET_VIEW, "Reset 3D view", onClick, modifier = modifier,
+        testTag = "plate-reset-view",
+        tooltip = "Reset 3D view · Left-drag to orbit · Middle- or right-drag to pan · Scroll to zoom")
+}
+
+@Composable
+private fun PreviewWarningPopup(preview: GcodePreview, width: Dp, maxBodyHeight: Dp, close: () -> Unit) {
+    Popup(alignment = Alignment.Center, onDismissRequest = close, properties = PopupProperties(focusable = true)) {
+        Card(Modifier.width(width), raised = true) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Txt("Preview warnings", Nz.type.label, modifier = Modifier.weight(1f))
+                NzButton("Close", close, kind = ButtonKind.QUIET)
+            }
+            val scroll = rememberScrollState()
+            Box(Modifier.heightIn(max = maxBodyHeight).fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().padding(end = 10.dp).verticalScroll(scroll).padding(bottom = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PreviewWarnings(preview)
+                }
+                PreviewScrollbar(scroll,
+                    Modifier.matchParentSize().wrapContentWidth(Alignment.End).fillMaxHeight(),
+                    "Preview warning scroll bar")
+            }
         }
     }
 }
@@ -1383,6 +1416,7 @@ private fun WorkspaceSetupStack(
     setDrawer: (Drawer?) -> Unit,
     modifier: Modifier = Modifier,
     foldFilamentByDefault: Boolean = false,
+    scrollInternally: Boolean = true,
 ) {
     val p = state.prepare
     val c = Nz.colors
@@ -1438,7 +1472,8 @@ private fun WorkspaceSetupStack(
     if (editConnection && connected != null) {
         com.nozzleitall.desktop.screens.EditPrinterDialog(state, connected) { editConnection = false }
     }
-    Column(modifier.verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier.then(if (scrollInternally) Modifier.verticalScroll(scroll) else Modifier),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
         SetupSection(
             "Printer",
             p.printer()?.config?.identity?.displayName ?: disconnectedConnectionLabel(),
