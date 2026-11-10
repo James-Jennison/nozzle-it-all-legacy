@@ -168,6 +168,9 @@ fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flo
     val blocked = entry.guard?.needsReconcile == true || flow.busy
     val reconnecting = status.state in com.nozzleitall.desktop.history.MonitorPrintProgress.reconnectingStates
     val reportedCompletion = reportedJobPath(status.completedFileName)
+    val trackedJob = entry.printProgress.active.value
+    val unrelatedCompletion = status.state == PrinterState.FINISHED && reportedCompletion != null &&
+        trackedJob != null && reportedCompletion != reportedJobPath(trackedJob.fileName)
     val confirmed = entry.printProgress.finished.value?.takeIf {
         status.state == PrinterState.FINISHED && reportedJobPath(it) == reportedCompletion
     }
@@ -176,7 +179,7 @@ fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flo
             Txt(entry.config.identity.displayName, Nz.type.title, modifier = Modifier.weight(1f))
             RouteBadge(status.route)
             if (reconnecting && entry.printProgress.active.value != null) Txt("Reconnecting", Nz.type.label, c.textMuted)
-            else if (status.state == PrinterState.FINISHED && reportedCompletion == null)
+            else if (status.state == PrinterState.FINISHED && (reportedCompletion == null || unrelatedCompletion))
                 Txt("Completion unverified", Nz.type.label, c.textMuted)
             else StatusPill(status.state)
         }
@@ -187,6 +190,8 @@ fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flo
         }
         if (job == null) Txt(when {
             confirmed != null -> "${displayJobPath(confirmed)} finished."
+            unrelatedCompletion && reportedCompletion != null && trackedJob != null ->
+                "The printer reported ${displayJobPath(reportedCompletion)} finished. Completion of ${displayJobPath(trackedJob.fileName)} is still unverified."
             status.state == PrinterState.FINISHED && reportedCompletion != null ->
                 "Printer reports ${displayJobPath(reportedCompletion)} finished."
             status.state == PrinterState.FINISHED -> "The printer reported completion without a job name."

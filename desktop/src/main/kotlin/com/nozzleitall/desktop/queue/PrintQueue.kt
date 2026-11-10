@@ -116,7 +116,7 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
     fun problems(): List<String> = try { withQueueLock { buildList {
         for (item in list) {
             if (item.pendingLink) add("Queued job awaits local record recovery: ${item.id}")
-            if (item.startUncertain) add("Start outcome needs printer inspection for queued job ${item.id}")
+            if (item.startUncertain) add("Start outcome needs printer inspection for ${item.name}")
             val receipt = uploadReceipt(item)
             if (receipt.exists() && !item.startUncertain) {
                 val record = runCatching { JSONObject(receipt.readText()) }.getOrNull()
