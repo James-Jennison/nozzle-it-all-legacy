@@ -1,5 +1,9 @@
 package com.nozzleitall.desktop.prepare
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -20,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -99,4 +104,34 @@ class PreviewWorkspaceUiTest {
             scope.cancel()
         }
     }
+
+    @Test
+    fun narrowPreviewKeepsLayerActionSeparateFromLegend() {
+        val root = Files.createTempDirectory("nia-narrow-preview").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val app = AppState(AppPaths(root.resolve("config"), root.resolve("data"), root.resolve("cache")).ensure(), scope)
+        val gcode = root.resolve("preview.gcode").apply {
+            writeText("M83\n;LAYER_CHANGE\n;Z:0.2\nG1 Z0.2\nG1 X10 E1 F600\n")
+        }
+        try {
+            val result = SliceOutcome.Done(gcode, SliceStats(1, 45.0, 0.5, 0.2, 0), emptyList())
+            app.prepare.slice = SliceState.Done(result, GcodePreview.parse(gcode))
+            app.prepare.showPreview = true
+            compose.setContent {
+                NozzleTheme("dark", textScale = 1.5f) {
+                    Box(Modifier.requiredSize(960.dp, 640.dp)) { PrepareScreen(app) }
+                }
+            }
+            val action = compose.onNodeWithTag("preview-layer-action").assertIsDisplayed()
+            val selector = compose.onNodeWithTag("preview-view-selector").assertIsDisplayed()
+            assertTrue(action.fetchSemanticsNode().boundsInRoot.right <= selector.fetchSemanticsNode().boundsInRoot.left)
+            action.performClick()
+            compose.onNodeWithText("Layer 1 action").assertIsDisplayed()
+        } finally {
+            app.fleet.shutdown()
+            scope.cancel()
+            root.deleteRecursively()
+        }
+    }
+
 }

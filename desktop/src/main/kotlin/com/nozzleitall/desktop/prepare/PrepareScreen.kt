@@ -849,22 +849,31 @@ fun PrepareScreen(state: AppState) {
             }
             val previewLegendHeight = (maxHeight * 0.29f).coerceIn(96.dp, 150.dp)
             if (previewControlsVisible && done?.preview != null) {
-                Box(Modifier.align(Alignment.TopEnd).padding(12.dp).padding(end = previewZWidth)) {
+                val legendWidth = minOf(340.dp, viewportWidth * 0.47f)
+                Row(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                        .padding(start = 12.dp, top = 12.dp, end = 12.dp + previewZWidth),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    PreviewResetButton(camera::reset)
+                    if (!previewSection && !previewRealistic) previewLayerCursor(done.preview, p.previewLayer)?.let { cursor ->
+                        val actions = p.plateIds.getOrNull(p.currentPlate)?.let { p.layerActions[it] }.orEmpty()
+                        val hasAction = actions.any { it.layer == cursor.index + 1 }
+                        val label = if (hasAction) "Edit layer action" else "Layer action"
+                        val open = { layerActionCursor = cursor }
+                        if (viewportWidth - previewZWidth - legendWidth < 218.dp) {
+                            NzIconButton(if (hasAction) NzIcon.TEXT else NzIcon.ADD, label, open,
+                                kind = ButtonKind.SECONDARY, testTag = "preview-layer-action")
+                        } else {
+                            NzButton(label, open, kind = ButtonKind.SECONDARY, testTag = "preview-layer-action")
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
                     if (previewRealistic) Floating(Modifier) {
                         Txt("Realistic View · recorded extrusion widths", Nz.type.bodySmall, c.textMuted)
                     } else PreviewLegend(p, done.preview, p.previewView ?: if (done.preview.toolsUsed.size > 1) PreviewView.TOOL else PreviewView.LINE_TYPE,
-                        slots, done.result.stats,
-                        overlayWidth = minOf(340.dp, viewportWidth * 0.47f),
-                        overlayHeight = previewLegendHeight,
+                        slots, done.result.stats, overlayWidth = legendWidth, overlayHeight = previewLegendHeight,
                         onShowWarnings = { warningsOpen = true })
-                }
-                Row(Modifier.align(Alignment.TopStart).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PreviewResetButton(camera::reset)
-                    if (!previewSection && !previewRealistic) previewLayerCursor(done.preview, p.previewLayer)?.let { cursor ->
-                        val hasAction = p.layerActions[p.plateIds[p.currentPlate]].orEmpty().any { it.layer == cursor.index + 1 }
-                        NzButton(if (hasAction) "Edit layer action" else "Layer action", { layerActionCursor = cursor },
-                            kind = ButtonKind.SECONDARY, testTag = "preview-layer-action")
-                    }
                 }
                 if (warningsOpen) PreviewWarningPopup(
                     done.preview,
