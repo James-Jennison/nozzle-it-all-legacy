@@ -83,7 +83,7 @@ data class DesktopSettings(val stockU1Enabled: Boolean = false, val theme: Strin
                            val firstRunComplete: Boolean = false, val slicingSetup: SlicingSetup? = null,
                            val rfidFilamentProfiles: Map<String, String> = emptyMap(),
                            val externalSpoolProfiles: Map<String, String> = emptyMap(),
-                           val printMilestones: Boolean = false) {
+                           val printMilestones: Boolean = false, val lastPrintExportDirectory: String? = null) {
     fun toJson() = JSONObject().put("stockU1Enabled", stockU1Enabled).put("theme", theme)
         .put("notifications", notifications).put("textScale", textScale).put("printMilestones", printMilestones)
         .put("collapsedSettingGroups", JSONArray(collapsedSettingGroups.sorted()))
@@ -91,7 +91,10 @@ data class DesktopSettings(val stockU1Enabled: Boolean = false, val theme: Strin
         .put("rfidFilamentProfiles", JSONObject().also { out ->
             rfidFilamentProfiles.toSortedMap().forEach { (spoolId, profileId) -> out.put(spoolId, profileId) }
         }).put("externalSpoolProfiles", JSONObject(externalSpoolProfiles.toSortedMap()))
-        .apply { slicingSetup?.let { put("slicingSetup", it.toJson()) } }
+        .apply {
+            slicingSetup?.let { put("slicingSetup", it.toJson()) }
+            lastPrintExportDirectory?.let { put("lastPrintExportDirectory", it) }
+        }
     companion object {
         private fun fromJson(it: JSONObject): DesktopSettings {
             val scale = it.optDouble("textScale", 1.0).toFloat().takeIf { value -> value.isFinite() && value in 1f..2f } ?: 1f
@@ -109,7 +112,10 @@ data class DesktopSettings(val stockU1Enabled: Boolean = false, val theme: Strin
             return DesktopSettings(it.optBoolean("stockU1Enabled"), theme,
                 it.optBoolean("notifications", true), scale, collapsed,
                 it.optBoolean("firstRunComplete", false), SlicingSetup.fromJson(it.optJSONObject("slicingSetup")),
-                profiles("rfidFilamentProfiles"), profiles("externalSpoolProfiles"), it.optBoolean("printMilestones"))
+                profiles("rfidFilamentProfiles"), profiles("externalSpoolProfiles"), it.optBoolean("printMilestones"),
+                it.optString("lastPrintExportDirectory").takeIf { path ->
+                    path.length in 1..4096 && path.none(Char::isISOControl) && File(path).isAbsolute
+                })
         }
         fun load(file: File): DesktopSettings = runCatching { loadExisting(file) }.getOrDefault(DesktopSettings())
         /** A save must fail closed on a damaged existing file instead of replacing it with defaults. */
@@ -244,6 +250,12 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         notificationsSaveProblem.value = !saved
         return saved
     }
+    fun rememberPrintExportDirectory(folder: File): Boolean {
+        val path = folder.absolutePath
+        if (path.length !in 1..4096 || path.any(Char::isISOControl)) return false
+        return saveSettings { it.copy(lastPrintExportDirectory = path) }
+    }
+
     fun completeFirstRun(): Boolean = saveSettings { it.copy(firstRunComplete = true) }
     fun saveSlicingSetup(setup: SlicingSetup): Boolean {
         if (!setup.isValid()) return false

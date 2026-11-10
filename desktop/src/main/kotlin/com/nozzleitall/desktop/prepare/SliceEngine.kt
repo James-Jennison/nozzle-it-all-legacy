@@ -41,7 +41,8 @@ data class SliceStats(val layers: Int?, val seconds: Double?, val grams: Double?
 sealed class SliceOutcome {
     data class Done(val gcode: File, val stats: SliceStats, val warnings: List<String>,
                     val engineSha256: String? = null, val inputSha256: String? = null,
-                    val nozzleDiameters: List<Double?> = emptyList(), val bundle: File? = null) : SliceOutcome() {
+                    val nozzleDiameters: List<Double?> = emptyList(), val bundle: File? = null,
+                    val gcodeSha256: String? = null, val printFileSha256: String? = null) : SliceOutcome() {
         val printFile: File get() = bundle ?: gcode
         val output: String get() = preparedOutput(printFile.name)
     }
@@ -409,7 +410,10 @@ class SliceEngine(private val binary: File, private val workDir: File) {
             return SliceOutcome.Failed(problem, text.takeLast(8000))
         }
         onProgress(1f, "Done")
-        return SliceOutcome.Done(gcode, parseStats(gcode), emptyList(), engineSha256, inputSha256, nozzleDiameters, bundle)
+        val gcodeDigest = PrintExport.sha256(gcode)
+        val outputDigest = bundle?.let(PrintExport::sha256) ?: gcodeDigest
+        return SliceOutcome.Done(gcode, parseStats(gcode), emptyList(), engineSha256, inputSha256, nozzleDiameters, bundle,
+            gcodeSha256 = gcodeDigest, printFileSha256 = outputDigest)
     }
 
     private fun hashInputs(files: List<File>, transientRoot: File? = null): String {
