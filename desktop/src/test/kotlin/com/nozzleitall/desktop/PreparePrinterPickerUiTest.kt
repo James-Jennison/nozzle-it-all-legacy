@@ -57,7 +57,7 @@ class PreparePrinterPickerUiTest {
             app.prepare.name = "Unsaved editor"
             app.prepare.changed()
             setContent { NozzleTheme("dark", textScale = 1.5f) { ProjectsScreen(app) } }
-            waitUntil(10_000) {
+            waitUntil(timeoutMillis = 10_000) {
                 onAllNodesWithText("First fixture").fetchSemanticsNodes().isNotEmpty()
             }
             onNodeWithContentDescription("Search projects").performTextInput("First fixture")

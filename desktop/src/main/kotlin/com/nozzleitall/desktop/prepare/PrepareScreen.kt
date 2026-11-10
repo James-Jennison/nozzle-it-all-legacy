@@ -2493,60 +2493,96 @@ internal fun StepObjects(state: AppState, showList: Boolean = true, showInspecto
             onPlate.forEach { item ->
                 val sel = item.id in p.selectedIds
                 Column(Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(6.dp))
-                        .background(if (sel) c.accent.copy(alpha = 0.14f) else Color.Transparent),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        ObjectVisibilityToggle(item.id, item.name, p.objectVisible(item.id)) { p.toggleObjectVisibility(item.id) }
-                        if (item.parts.isNotEmpty()) {
-                            val expanded = expandedParts[item.id] == true
-                            Box(Modifier.size(24.dp).clip(RoundedCornerShape(4.dp))
-                                .clickable(role = Role.Button, onClickLabel = if (expanded) "Collapse parts for ${item.name}" else "Expand parts for ${item.name}") {
-                                    expandedParts[item.id] = !expanded
-                                }.semantics {
-                                    testTag = "object-parts-toggle-${item.id}"
-                                    stateDescription = if (expanded) "Expanded" else "Collapsed"
-                                }, contentAlignment = Alignment.Center) {
-                                Txt(if (expanded) "▾" else "▸", Nz.type.bodySmall, c.textMuted)
-                            }
-                        } else Spacer(Modifier.width(24.dp))
-                        Row(Modifier.weight(1f).fillMaxHeight()
-                            .semantics(mergeDescendants = true) { selected = sel; role = Role.Button; testTag = "object-row-${item.id}"; onClick { focus.clearFocus(); p.selectObject(item.id); true } }
-                            .onKeyEvent { e ->
-                                if (e.type == KeyEventType.KeyDown && (e.key == Key.Enter || e.key == Key.Spacebar)) {
-                                    p.selectObject(item.id, e.isCtrlPressed, e.isShiftPressed, listRange = true); true
-                                } else false
-                            }.focusable()
-                            .pointerInput(item.id) { awaitEachGesture {
-                                awaitFirstDown(requireUnconsumed = false)
-                                if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
-                                val up = waitForUpOrCancellation()
-                                if (up != null) {
-                                    val modifiers = currentEvent.keyboardModifiers
-                                    focus.clearFocus(); p.selectObject(item.id, modifiers.isCtrlPressed, modifiers.isShiftPressed, listRange = true)
-                                    up.consume()
+                    ContextMenuArea(items = {
+                        fun selectTarget(): Boolean {
+                            if (p.plateItems().none { it === item }) return false
+                            p.selectObject(item.id)
+                            return true
+                        }
+                        listOf(
+                            ContextMenuItem("Select ${item.name}") { selectTarget() },
+                            ContextMenuItem(if (p.objectVisible(item.id)) "Hide object" else "Show object") {
+                                if (p.plateItems().any { it === item }) p.toggleObjectVisibility(item.id)
+                            },
+                            ContextMenuItem("Duplicate object") {
+                                if (p.toolBusy == null && selectTarget()) p.duplicateSelected()
+                            },
+                            ContextMenuItem("Delete object") {
+                                if (p.toolBusy == null && selectTarget()) p.removeSelected()
+                            },
+                        )
+                    }) {
+                        Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(6.dp))
+                            .background(if (sel) c.accent.copy(alpha = 0.14f) else Color.Transparent),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            ObjectVisibilityToggle(item.id, item.name, p.objectVisible(item.id)) { p.toggleObjectVisibility(item.id) }
+                            if (item.parts.isNotEmpty()) {
+                                val expanded = expandedParts[item.id] == true
+                                Box(Modifier.size(24.dp).clip(RoundedCornerShape(4.dp))
+                                    .clickable(role = Role.Button, onClickLabel = if (expanded) "Collapse parts for ${item.name}" else "Expand parts for ${item.name}") {
+                                        expandedParts[item.id] = !expanded
+                                    }.semantics {
+                                        testTag = "object-parts-toggle-${item.id}"
+                                        stateDescription = if (expanded) "Expanded" else "Collapsed"
+                                    }, contentAlignment = Alignment.Center) {
+                                    Txt(if (expanded) "▾" else "▸", Nz.type.bodySmall, c.textMuted)
                                 }
-                            } }.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(parseHex(p.slotHex(item.slot)) ?: c.accent))
-                            Txt(item.name, Nz.type.bodySmall, if (sel) c.accent else c.text, modifier = Modifier.weight(1f), maxLines = 1)
-                            Txt("${"%.0f".format(item.footprintW)}×${"%.0f".format(item.footprintD)}×${"%.0f".format(item.height)} mm", Nz.type.bodySmall, c.textMuted)
+                            } else Spacer(Modifier.width(24.dp))
+                            Row(Modifier.weight(1f).fillMaxHeight()
+                                .semantics(mergeDescendants = true) { selected = sel; role = Role.Button; testTag = "object-row-${item.id}"; onClick { focus.clearFocus(); p.selectObject(item.id); true } }
+                                .onKeyEvent { e ->
+                                    if (e.type == KeyEventType.KeyDown && (e.key == Key.Enter || e.key == Key.Spacebar)) {
+                                        p.selectObject(item.id, e.isCtrlPressed, e.isShiftPressed, listRange = true); true
+                                    } else false
+                                }.focusable()
+                                .pointerInput(item.id) { awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+                                    val up = waitForUpOrCancellation()
+                                    if (up != null) {
+                                        val modifiers = currentEvent.keyboardModifiers
+                                        focus.clearFocus(); p.selectObject(item.id, modifiers.isCtrlPressed, modifiers.isShiftPressed, listRange = true)
+                                        up.consume()
+                                    }
+                                } }.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(parseHex(p.slotHex(item.slot)) ?: c.accent))
+                                Txt(item.name, Nz.type.bodySmall, if (sel) c.accent else c.text, modifier = Modifier.weight(1f), maxLines = 1)
+                                Txt("${"%.0f".format(item.footprintW)}×${"%.0f".format(item.footprintD)}×${"%.0f".format(item.height)} mm", Nz.type.bodySmall, c.textMuted)
+                            }
                         }
                     }
                     if (expandedParts[item.id] == true) item.parts.forEachIndexed { index, part ->
                         val selectedPart = sel && p.selectedPart == index
                         val label = objectPartLabel(part)
-                        Row(Modifier.fillMaxWidth().height(28.dp).padding(start = 48.dp)
-                            .clip(RoundedCornerShape(5.dp)).background(if (selectedPart) c.accent.copy(alpha = 0.12f) else Color.Transparent)
-                            .clickable(role = Role.Button, onClickLabel = "Select $label") { p.selectPart(item.id, index) }
-                            .semantics(mergeDescendants = true) {
-                                testTag = "object-part-${item.id}-$index"
-                                contentDescription = "$label part of ${item.name}"
-                                selected = selectedPart
-                                stateDescription = if (selectedPart) "Selected" else "Not selected"
-                            }.padding(horizontal = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Txt("└", Nz.type.bodySmall, c.textMuted)
-                            Txt(label, Nz.type.bodySmall, if (selectedPart) c.accent else c.text, modifier = Modifier.weight(1f), maxLines = 1)
+                        ContextMenuArea(items = {
+                            fun partStillPresent() =
+                                p.plateItems().any { it === item } && item.parts.getOrNull(index) === part
+                            listOf(
+                                ContextMenuItem("Select $label") {
+                                    if (partStillPresent()) p.selectPart(item.id, index)
+                                },
+                                ContextMenuItem("Remove part") {
+                                    if (p.toolBusy == null && partStillPresent()) p.editSelection {
+                                        p.selectObject(item.id)
+                                        p.removePart(item, index)
+                                    }
+                                },
+                            )
+                        }) {
+                            Row(Modifier.fillMaxWidth().height(28.dp).padding(start = 48.dp)
+                                .clip(RoundedCornerShape(5.dp)).background(if (selectedPart) c.accent.copy(alpha = 0.12f) else Color.Transparent)
+                                .clickable(role = Role.Button, onClickLabel = "Select $label") { p.selectPart(item.id, index) }
+                                .semantics(mergeDescendants = true) {
+                                    testTag = "object-part-${item.id}-$index"
+                                    contentDescription = "$label part of ${item.name}"
+                                    selected = selectedPart
+                                    stateDescription = if (selectedPart) "Selected" else "Not selected"
+                                }.padding(horizontal = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Txt("└", Nz.type.bodySmall, c.textMuted)
+                                Txt(label, Nz.type.bodySmall, if (selectedPart) c.accent else c.text, modifier = Modifier.weight(1f), maxLines = 1)
+                            }
                         }
                     }
                 }
@@ -2658,15 +2694,35 @@ private fun PlateTabs(p: PrepareState, compact: Boolean) {
                     NzButton("OK", { p.renamePlate(i, text.trim().ifBlank { "Plate ${i + 1}" }); renaming = null }, kind = ButtonKind.PRIMARY)
                 } else {
                     val count = p.plateItems(i).size
-                    Row(Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.accent.copy(alpha = 0.14f) else c.surfaceSunken)
-                        .border(1.dp, if (on) c.accent else c.line, RoundedCornerShape(8.dp))
-                        .clickable(onClickLabel = if (on) "Rename $name" else "Show $name") { if (on) renaming = i else p.showPlate(i) }
-                        .semantics { role = Role.Tab; selected = on; contentDescription = "$name, $count object(s)" }
-                        .padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Txt(name, Nz.type.label, if (on) c.accent else c.text, maxLines = 1)
-                        Txt("$count", Nz.type.bodySmall, c.textMuted)
-                        if (on && count == 0 && p.plateNames.size > 1)
-                            Txt("×", Nz.type.label, c.textMuted, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClickLabel = "Remove $name") { p.removePlate(i) }.padding(horizontal = 2.dp))
+                    val plateId = p.plateIds[i]
+                    ContextMenuArea(items = {
+                        fun onPlate(action: (Int) -> Unit) {
+                            val currentIndex = p.plateIds.indexOf(plateId)
+                            if (currentIndex >= 0) action(currentIndex)
+                        }
+                        listOf(
+                            ContextMenuItem("Show $name") { onPlate(p::showPlate) },
+                            ContextMenuItem("Rename plate") { onPlate { renaming = it } },
+                            ContextMenuItem("Duplicate plate") {
+                                onPlate {
+                                    if (p.toolBusy == null) {
+                                        p.showPlate(it)
+                                        p.duplicateCurrentPlate()
+                                    }
+                                }
+                            },
+                        )
+                    }) {
+                        Row(Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.accent.copy(alpha = 0.14f) else c.surfaceSunken)
+                            .border(1.dp, if (on) c.accent else c.line, RoundedCornerShape(8.dp))
+                            .clickable(onClickLabel = if (on) "Rename $name" else "Show $name") { if (on) renaming = i else p.showPlate(i) }
+                            .semantics { role = Role.Tab; selected = on; contentDescription = "$name, $count object(s)" }
+                            .padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Txt(name, Nz.type.label, if (on) c.accent else c.text, maxLines = 1)
+                            Txt("$count", Nz.type.bodySmall, c.textMuted)
+                            if (on && count == 0 && p.plateNames.size > 1)
+                                Txt("×", Nz.type.label, c.textMuted, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClickLabel = "Remove $name") { p.removePlate(i) }.padding(horizontal = 2.dp))
+                        }
                     }
                 }
             }
