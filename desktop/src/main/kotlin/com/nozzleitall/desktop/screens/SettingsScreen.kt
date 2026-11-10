@@ -265,7 +265,7 @@ private fun ArchivedProcessPanel(state: AppState) {
     var notice by remember { mutableStateOf<String?>(null) }
     Card(Modifier.fillMaxWidth()) {
         Txt("Link a preserved Process preset", Nz.type.title)
-        Txt("Choose the target printer and nozzle in Prepare. Linking creates a Process preset for that setup and keeps the original archived settings.",
+        Txt("Choose the target printer and nozzle in Prepare. Link a preset from recent migrations to that setup while keeping the original archived settings.",
             Nz.type.body, Nz.colors.textMuted)
         notice?.let { Banner(it, if (it.startsWith("Couldn't")) BannerKind.WARNING else BannerKind.INFO) }
         if (candidates == null) NzButton(if (busy) "Looking…" else "Find preserved Process presets", {
@@ -283,7 +283,14 @@ private fun ArchivedProcessPanel(state: AppState) {
         val available = candidates.orEmpty()
         if (available.isNotEmpty()) {
             Txt("Preserved preset", Nz.type.label)
-            NzSelect("Preserved Process preset", available.map { Choice(it.sha256, "${it.name} · ${it.source}") }, selected) {
+            val labels = available.groupingBy { it.name to it.source }.eachCount()
+            val choices = available.map {
+                val label = "${it.name} · ${it.source}"
+                val distinct = if (labels[it.name to it.source] == 1) label
+                    else "$label · ${it.relativePath.substringAfterLast('/')} · ${it.migrationDigest.take(8)}"
+                Choice(it.selectionId, distinct)
+            }
+            NzSelect("Preserved Process preset", choices, selected) {
                 if (!busy) selected = it
             }
             if (machine == null || bases.isEmpty()) {
@@ -291,7 +298,7 @@ private fun ArchivedProcessPanel(state: AppState) {
             } else {
                 Txt("Base Process for ${machine.name}", Nz.type.label)
                 NzSelect("Base Process", bases.map { Choice(it.id, it.displayLabel) }, base) { if (!busy) base = it }
-                val archived = available.firstOrNull { it.sha256 == selected }
+                val archived = available.firstOrNull { it.selectionId == selected }
                 NzButton(if (busy) "Linking…" else "Link Process preset", {
                     if (archived != null) {
                         val targetBase = base
@@ -302,7 +309,7 @@ private fun ArchivedProcessPanel(state: AppState) {
                                     state.legacySettings.linkArchivedProcess(archived, profileId, machine.id, targetBase)
                                 }
                             }.onSuccess {
-                                notice = "Linked ${it.name}. Applied ${it.applied} settings and skipped ${it.skipped}. Select the preset under Process in Prepare."
+                                notice = "Linked ${it.name}. Applied ${it.applied} Process settings and left ${it.skipped} archive entries unapplied. Select the preset under Process in Prepare."
                             }.onFailure { notice = "Couldn't link this Process preset: ${it.message}" }
                             busy = false
                         }

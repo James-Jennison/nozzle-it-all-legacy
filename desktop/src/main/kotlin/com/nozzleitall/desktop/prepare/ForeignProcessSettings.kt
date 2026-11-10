@@ -9,10 +9,11 @@ import org.json.JSONObject
 /** Imports only supported scalar Process settings from the Orca/Bambu project configuration. */
 internal object ForeignProcessSettings {
     private const val entry = "Metadata/project_settings.config"
+    private const val maxConfigBytes = 8 * 1024 * 1024
 
     // Machine selection, filament/tool mappings, motion, G-code, and settings that change print order
     // require deliberate choices in NIA. Retain their original metadata without applying it.
-    private val supported = linkedMapOf(
+    internal val supported = linkedMapOf(
         "layer_height" to "Layer height",
         "initial_layer_print_height" to "First layer height",
         "wall_loops" to "Wall count",
@@ -32,6 +33,8 @@ internal object ForeignProcessSettings {
     fun read(project: Project3mf, nozzleDiameter: Double?): Import? {
         if (project.manifest != null || project.manifestProblem != null) return null
         val bytes = project.passthrough[entry] ?: return null
+        if (bytes.size > maxConfigBytes)
+            return Import(emptyMap(), "The embedded slicer settings exceed the import limit. The original settings were preserved.")
         val data = try {
             JSONObject(bytes.toString(Charsets.UTF_8))
         } catch (_: JSONException) {

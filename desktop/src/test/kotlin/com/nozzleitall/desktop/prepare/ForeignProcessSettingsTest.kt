@@ -64,6 +64,8 @@ class ForeignProcessSettingsTest {
     @Test fun malformedAndOutOfRangeSettingsAreReportedWithoutApplyingThem() {
         val malformed = Project3mf(emptyList(), passthrough = mapOf(settingsEntry to "{".toByteArray()))
         assertTrue(requireNotNull(ForeignProcessSettings.read(malformed, 0.4)).notice.contains("could not be read"))
+        val oversizedSettings = malformed.copy(passthrough = mapOf(settingsEntry to ByteArray(8 * 1024 * 1024 + 1)))
+        assertTrue(requireNotNull(ForeignProcessSettings.read(oversizedSettings, 0.4)).notice.contains("exceed the import limit"))
         val oversizedLayer = malformed.copy(passthrough = mapOf(settingsEntry to """{"layer_height":"0.8"}""".toByteArray()))
         val report = requireNotNull(ForeignProcessSettings.read(oversizedLayer, 0.4))
         assertTrue(report.values.isEmpty())

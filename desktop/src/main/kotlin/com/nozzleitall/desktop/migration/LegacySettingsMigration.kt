@@ -42,23 +42,29 @@ class LegacySettingsMigration(private val paths: AppPaths, private val filaments
 
     internal data class ArchivedProcess(
         val migrationDigest: String, val relativePath: String, val sha256: String, val name: String, val source: String,
-    )
+    ) {
+        val selectionId: String get() = "$migrationDigest:$relativePath"
+    }
 
     internal fun archivedProcesses(): List<ArchivedProcess> =
         File(paths.data, "migrations").listFiles().orEmpty().asSequence()
             .filter { it.isDirectory && it.name.matches(Regex("[0-9a-f]{64}")) }
-            .flatMap { archivedProfiles(it.name).asSequence() }
-            .map { it.first }.distinctBy { it.sha256 }.sortedBy { it.name.lowercase() }.toList()
+            .sortedByDescending(File::lastModified).take(32)
+            .flatMap { archivedProfiles(it.name, limit = 128).asSequence() }
+            .take(512).map { it.first }.sortedBy { it.name.lowercase() }.toList()
 
     internal fun linkArchivedProcess(
         archived: ArchivedProcess, profileId: String, machineId: String, baseProcessId: String,
     ): LegacyProcessPresetStore.LinkedProcess = withMigrationLock {
-        val current = archivedProfiles(archived.migrationDigest).singleOrNull { it.first == archived }
-            ?: error("The preserved Process preset changed. Review the archive again.")
-        checkNotNull(processes).link(archived.source, current.second, profileId, machineId, baseProcessId)
+        val current = archivedProfiles(archived.migrationDigest, limit = 1, selected = archived.relativePath)
+            .singleOrNull { it.first == archived } ?: error("The preserved Process preset changed. Review the archive again.")
+        checkNotNull(processes) { "The local Process preset store is unavailable." }
+            .link(archived.source, current.second, profileId, machineId, baseProcessId)
     }
 
-    private fun archivedProfiles(digest: String): List<Pair<ArchivedProcess, Profile>> {
+    private fun archivedProfiles(
+        digest: String, limit: Int, selected: String? = null,
+    ): List<Pair<ArchivedProcess, Profile>> {
         if (!digest.matches(Regex("[0-9a-f]{64}"))) return emptyList()
         val folder = File(paths.data.canonicalFile, "migrations/$digest")
         val report = File(folder, "report.json")
@@ -67,8 +73,10 @@ class LegacySettingsMigration(private val paths: AppPaths, private val filaments
         val data = JSONObject(report.readText())
         val source = data.optString("sourceLabel").filterNot(Char::isISOControl).take(100).ifBlank { "Legacy import" }
         val skipped = data.optJSONArray("skipped") ?: return emptyList()
-        return (0 until minOf(skipped.length(), MAX_FILES)).mapNotNull { index ->
-            val relative = skipped.optString(index).substringBeforeLast(" — ", "")
+        val paths = (0 until minOf(skipped.length(), MAX_FILES)).asSequence()
+            .map { skipped.optString(it).substringBeforeLast(" — ", "") }
+            .filter { selected == null || selected == it }.distinct()
+        return paths.take(limit).mapNotNull { relative ->
             val parts = relative.split('/')
             if (parts.size < 4 || parts[0] != "user" || parts[2] != "process" ||
                 parts.any { it.isBlank() || it == "." || it == ".." } || !relative.endsWith(".json", true)) return@mapNotNull null
@@ -81,7 +89,7 @@ class LegacySettingsMigration(private val paths: AppPaths, private val filaments
                 val name = json.optString("name").filterNot(Char::isISOControl).trim().take(100).ifBlank { file.nameWithoutExtension.take(100) }
                 ArchivedProcess(digest, relative, sha256(bytes), name, source) to Profile("process", relative, json, sanitized)
             }.getOrNull()
-        }.distinctBy { it.first.relativePath }
+        }.toList()
     }
 
     fun discover(env: Map<String, String> = System.getenv(), home: String = System.getProperty("user.home"),

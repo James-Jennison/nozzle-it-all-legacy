@@ -1,6 +1,7 @@
 package com.nozzleitall.desktop.migration
 
 import com.nozzleitall.desktop.PrinterStore
+import com.nozzleitall.desktop.prepare.ForeignProcessSettings
 import com.nozzleitall.desktop.prepare.PrinterLibrary
 import com.nozzleitall.desktop.prepare.ProfileCatalog
 import net.jamesjennison.klippercompanion.SettingsCatalog
@@ -101,8 +102,9 @@ class LegacyProcessPresetStore(private val file: File) : PrinterLibrary.CustomPr
         val base = library.processes.getValue(baseProcessId)
         val source = overrides(profile.json)
         val values = JSONObject()
+        val curated = SettingsCatalog.all.associateBy { it.key }
         for (key in source.keySet()) {
-            val def = SettingsCatalog.get(key) ?: continue
+            val def = curated[key] ?: key.takeIf { it in ForeignProcessSettings.supported }?.let(SettingsCatalog::get) ?: continue
             if (def.scope != "process" || def.vector || def.type == SettingType.Text || key == "print_sequence") continue
             val raw = source.opt(key)
             if (raw !is String && raw !is Number && raw !is Boolean) continue
@@ -110,7 +112,7 @@ class LegacyProcessPresetStore(private val file: File) : PrinterLibrary.CustomPr
             if (text.length > 128 || text.any(Char::isISOControl)) continue
             val value = SettingsCatalog.validate(def, text) ?: continue
             if (key == "layer_height" || key == "initial_layer_print_height") {
-                val nozzle = machine.nozzle.toDoubleOrNull() ?: continue
+                val nozzle = machine.nozzle.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.04 } ?: continue
                 val height = value.toDoubleOrNull() ?: continue
                 if (height !in 0.04..nozzle) continue
             }
@@ -130,7 +132,7 @@ class LegacyProcessPresetStore(private val file: File) : PrinterLibrary.CustomPr
 
     private fun save(rows: List<PrinterLibrary.CustomProcess>) {
         val json = JSONObject().put("version", 1).put("presets", JSONArray(rows.sortedBy { it.id }.map(::encode)))
-        PrinterStore.atomicWrite(file, json.toString(2), private = false)
+        PrinterStore.atomicWrite(file, json.toString(2), private = true)
     }
 
     private fun encode(row: PrinterLibrary.CustomProcess) = JSONObject()

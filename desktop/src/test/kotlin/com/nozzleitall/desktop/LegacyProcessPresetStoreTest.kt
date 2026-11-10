@@ -83,12 +83,17 @@ class LegacyProcessPresetStoreTest {
                 .put("sparse_infill_density", "25%").put("enable_support", "1")
                 .put("machine_start_gcode", "M117 Fixture").put("print_sequence", "by object").toString())
             val before = original.readBytes()
+            File(original.parentFile, "Identical bytes.json").writeBytes(before)
             val reviewed = app.legacySettings.prepare(LegacySettingsMigration.Source(
                 LegacySettingsMigration.Kind.ORCA_SLICER, "OrcaSlicer", source, emptyList(),
             ))
             val result = app.legacySettings.apply(reviewed)
             assertEquals(0, result.importedProcesses)
-            val pending = app.legacySettings.archivedProcesses().single()
+            val candidates = app.legacySettings.archivedProcesses()
+            assertEquals(2, candidates.size)
+            assertEquals(1, candidates.map { it.sha256 }.distinct().size)
+            assertEquals(2, candidates.map { it.selectionId }.distinct().size)
+            val pending = candidates.single { it.relativePath.endsWith("/Link me.json") }
             assertEquals("Link me", pending.name)
             val prepare = app.prepare
             val variant = requireNotNull(prepare.machineVariant())

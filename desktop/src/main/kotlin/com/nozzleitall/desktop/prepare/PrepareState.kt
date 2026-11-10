@@ -1143,7 +1143,7 @@ class PrepareState(private val app: AppState) {
         bedType = null; nozzleFlows.clear(); nozzle = null; processId = null
         presetSnapshot = null; presetSnapshotProblem = null
         machineCache = null
-        overrides.clear(); supports = false; infill = 15
+        overrides.clear(); selectedUserPresetIds.clear(); supports = false; infill = 15
         mixed.clear(); mixedSettings = emptyMap(); mixSublayers = true; mixProblem = null; destinationHeadProfiles.clear()
         printerId = null
         items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap()
