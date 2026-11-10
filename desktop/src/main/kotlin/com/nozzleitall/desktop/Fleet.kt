@@ -545,9 +545,11 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         retryCurrentObservationOutbox()
         reconcileCurrentObservations()
         retryPendingQueueLinks()
-        runCatching { queueStore.discardAbandonedDirectDrafts() }
-            .onSuccess { refreshQueue() }
-            .onFailure { queueRecoveryProblems.value += "Abandoned print reviews could not be cleared: ${it.message}" }
+        if (queue.value.any { it.directDraft && !it.startUncertain && !it.pendingLink }) {
+            runCatching { queueStore.discardAbandonedDirectDrafts() }
+                .onSuccess { refreshQueue() }
+                .onFailure { queueRecoveryProblems.value += "Abandoned print reviews could not be cleared: ${it.message}" }
+        }
         reconcileStartedQueueEntries()
         applyStockSetting()
         store.load().forEach { add(it, persist = false) }
