@@ -245,8 +245,10 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
     }
 
     /** Points an item at another printer, or at any. */
-    fun retarget(id: String, printerId: String?) = withQueueLock {
-        val i = list.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: return@withQueueLock
+    fun retarget(id: String, printerId: String?, expectedItem: QueueItem? = null) = withQueueLock {
+        val i = list.indexOfFirst { it.id == id }.takeIf { it >= 0 }
+        check(expectedItem == null || (i != null && list[i] == expectedItem)) { "The queued job changed. Review it again." }
+        if (i == null) return@withQueueLock
         check(!list[i].startUncertain) { "Inspect the printer before changing an uncertain queued Start." }
         save(list.toMutableList().also { it[i] = it[i].copy(printerId = printerId) })
     }

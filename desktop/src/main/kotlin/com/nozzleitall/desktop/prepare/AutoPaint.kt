@@ -137,7 +137,9 @@ object AutoPaint {
             RequestDisclosure(
                 "Recipient: $host · Model: ${provider.model}",
                 "The configured chat-completions endpoint receives reference images and text with the model name, painting instructions, " +
-                    "your hint, region descriptions and filament choices. The model file and print settings stay on this computer.",
+                    "your hint, region descriptions and filament choices. The server may forward that data. " +
+                    "NIA keeps the model file and print settings on this computer." +
+                    if (address?.scheme.equals("http", true)) " This connection does not use HTTPS." else "",
                 valid = address != null,
             )
         }
@@ -146,7 +148,7 @@ object AutoPaint {
     private fun serverAddress(provider: Provider.OpenAiCompatible): URI? =
         runCatching { URI.create(AutoPaintFormat.chatUrl(provider.baseUrl)) }.getOrNull()?.takeIf { uri ->
             (uri.scheme.equals("https", true) || uri.scheme.equals("http", true) && provider.apiKey.isBlank()) &&
-                uri.host != null && uri.port in -1..65535 &&
+                uri.host != null && (uri.port == -1 || uri.port in 1..65535) &&
                 uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null
         }
 

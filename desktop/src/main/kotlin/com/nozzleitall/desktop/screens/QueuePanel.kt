@@ -9,6 +9,9 @@ import androidx.compose.ui.unit.dp
 import com.nozzleitall.desktop.AppState
 import com.nozzleitall.desktop.PrinterEntry
 import com.nozzleitall.desktop.PrinterTransferBusyException
+import com.nozzleitall.desktop.printerProfileMismatch
+import com.nozzleitall.desktop.settings.Choice
+import com.nozzleitall.desktop.settings.DenseSelect
 import com.nozzleitall.desktop.queue.QueueItem
 import com.nozzleitall.desktop.prepare.preflightObservation
 import com.nozzleitall.desktop.prepare.preparedMaterialChecks
@@ -106,7 +109,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
     val available = ids.mapNotNull { fleet.printers[it] }.filter { it.isFree() && it.canTakeJobs(item) }
     val anyCandidate = if (item.targetProfileId == null) available.firstOrNull() else
         available.firstOrNull { it.config.identity.profileId == item.targetProfileId }
-            ?: available.firstOrNull { it.config.identity.profileId == null } ?: available.firstOrNull()
+            ?: available.firstOrNull { it.config.identity.profileId == null }
     val candidate = when {
         pinnedPrinterId != null -> fleet.printers[pinnedPrinterId]
         item.printerId != null -> target
@@ -156,7 +159,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
     val summary: @Composable () -> Unit = {
             Column(Modifier.fillMaxWidth()) {
                 Txt(item.name, Nz.type.body, maxLines = Int.MAX_VALUE)
-                Txt("For " + (target?.config?.identity?.displayName ?: "any printer") + when {
+                Txt("For " + (target?.config?.identity?.displayName ?: "any compatible printer") + when {
                     candidate == null -> if (item.printerId != null) " (printer not found)" else " · no free printer yet"
                     !candidate.isFree() -> " · busy"
                     else -> " · printer available"
@@ -167,13 +170,28 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
             }
     }
     val actions: @Composable () -> Unit = {
-            // Cycle the target through: any, then each printer.
-            NzButton("Change printer", {
-                val options = listOf<String?>(null) + ids
-                val next = options[(options.indexOf(item.printerId) + 1) % options.size]
-                fleet.retargetQueued(item.id, next)
-                pinnedPrinterId = null
-            }, kind = ButtonKind.QUIET, enabled = !item.startUncertain && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
+            val anyPrinter = ""
+            val selectedId = item.printerId ?: anyPrinter
+            val targets = ids.mapNotNull { fleet.printers[it] }.filter { entry ->
+                val identity = entry.config.identity
+                identity.id == item.printerId || (!printerProfileMismatch(item.targetProfileId, identity.profileId) &&
+                    (entry.capabilities.value == null || entry.canTakeJobs(item)))
+            }
+            val choices = buildList {
+                add(Choice(anyPrinter, "Any compatible printer"))
+                targets.forEach { add(Choice(it.config.identity.id, it.config.identity.displayName)) }
+                if (item.printerId != null && target == null) add(Choice(item.printerId, "Saved printer unavailable"))
+            }
+            DenseSelect("Job destination", choices, selectedId, Modifier.width(240.dp),
+                enabled = !item.pendingLink && !item.startUncertain && uploading == null &&
+                    expectedStart == null && reviewStart == null && flow?.pending == null && flow?.busy != true) { choice ->
+                if (choice != selectedId) runCatching {
+                    fleet.retargetQueued(item.id, choice.takeUnless(String::isEmpty), expectedItem = item)
+                }.onSuccess {
+                    clearReview()
+                    problem = null
+                }.onFailure { problem = it.message ?: "The queued job could not be retargeted." }
+            }
             NzButton("↑", { fleet.moveInQueue(item.id, -1) }, kind = ButtonKind.QUIET, enabled = !first && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
             NzButton("↓", { fleet.moveInQueue(item.id, 1) }, kind = ButtonKind.QUIET, enabled = !last && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
             NzButton("Remove", { fleet.dequeue(item.id) }, kind = ButtonKind.QUIET, enabled = !item.pendingLink && !item.startUncertain && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)

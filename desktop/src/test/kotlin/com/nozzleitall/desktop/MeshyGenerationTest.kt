@@ -129,9 +129,11 @@ case "$1" in
         ;;
     clear)
         test "$#" = 5
+        touch "$0.removed"
         ;;
     lookup)
         test "$#" = 5
+        test ! -f "$0.removed"
         printf '%s\n' fixture-key-value
         ;;
     *) exit 1 ;;
@@ -142,10 +144,11 @@ esac
             val keychain = MeshySecretService(tool)
             keychain.save(sample)
             assertTrue(keychain.hasAvailableKey())
-            keychain.remove()
             val restored = keychain.load()
             try { assertArrayEquals(sample, restored) }
             finally { restored.fill('\u0000') }
+            keychain.remove()
+            assertFalse(keychain.hasAvailableKey())
             tool.writeText("""#!/bin/sh
 head -c 70000 /dev/zero
 """)

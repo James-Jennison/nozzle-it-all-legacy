@@ -79,6 +79,40 @@ class SimulatedSendMonitorUiTest {
         compose.waitUntil(15_000) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
     }
 
+    @Test fun queuedDestinationPickerAppliesOnlyTheChosenCompatiblePrinter() {
+        val root = Files.createTempDirectory("nia-queue-destination").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val app = AppState(AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure(), scope)
+            val session = FakeSession()
+            val matching = session.identity
+            val wrong = matching.copy(id = "other", displayName = "Wrong profile fixture", profileId = "other")
+            for (identity in listOf(matching, wrong)) {
+                app.fleet.printers[identity.id] = PrinterEntry(PrinterConfig(identity, "moonraker"))
+            }
+            app.fleet.order.value = listOf(matching.id, wrong.id)
+            val source = File(root, "fixture.gcode").apply { writeText("G28\n") }
+            val item = app.fleet.enqueue("Fixture cube", source, null, emptyList(), targetProfileId = "fixture")
+            compose.setContent { NozzleTheme("dark") { QueuePanel(app) } }
+            compose.onNodeWithContentDescription("Job destination, Any compatible printer").performClick()
+            compose.onNodeWithContentDescription("Job destination option Wrong profile fixture").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Job destination option Simulated printer").performClick()
+            compose.runOnIdle {
+                val chosen = app.fleet.queue.value.single()
+                assertEquals(matching.id, chosen.printerId)
+                assertEquals(item.sha256, chosen.sha256)
+                assertEquals(item.toolheadMap, chosen.toolheadMap)
+                assertThrows(IllegalStateException::class.java) {
+                    app.fleet.retargetQueued(item.id, null, expectedItem = item)
+                }
+                assertEquals(matching.id, app.fleet.queue.value.single().printerId)
+            }
+        } finally {
+            scope.cancel()
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun cameraSnapshotFailureAndRecoveryKeepTheSameJobVisible() {
         val root = Files.createTempDirectory("nia-camera-recovery").toFile()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

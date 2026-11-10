@@ -1,5 +1,7 @@
 package com.nozzleitall.desktop.ui
 
+import androidx.compose.foundation.DefaultContextMenuRepresentation
+import androidx.compose.foundation.LocalContextMenuRepresentation
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
@@ -52,6 +54,10 @@ fun NozzleTheme(themeSetting: String = "system", textScale: Float = 1f, content:
     val values = remember(dark, textScale) {
         NozzleThemeValues(dark, if (dark) NozzleTokens.darkPalette else NozzleTokens.lightPalette, if (dark) NozzleTokens.darkStatus else NozzleTokens.lightStatus, NozzleType(textScale), textScale)
     }
+    val menu = remember(values.palette) {
+        DefaultContextMenuRepresentation(values.palette.surfaceRaised, values.palette.text, values.palette.line)
+    }
     CompositionLocalProvider(LocalNozzle provides values,
+        LocalContextMenuRepresentation provides menu,
         LocalTextSelectionColors provides TextSelectionColors(values.palette.accent, values.palette.accent.copy(alpha = 0.35f))) { content() }
 }
