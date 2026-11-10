@@ -750,20 +750,22 @@ fun PrepareScreen(state: AppState) {
             if (onPlate.isNotEmpty()) LocalContextMenuRepresentation.current.Representation(plateContextMenu) {
                 contextObject?.let { objectContextActions(p, it) } ?: bedActions()
             }
-            if (onPlate.isEmpty() && !p.showPreview) ContextMenuArea(items = bedActions, state = plateContextMenu, modifier = Modifier.matchParentSize()) {
-                EmptyState(NzIcon.IMPORT, if (p.items.isEmpty()) "Start with a model" else "${p.plateNames.getOrNull(p.currentPlate) ?: "This plate"} is empty",
-                    "Add an STL, 3MF or OBJ file, or open a saved project. Nothing leaves this computer.", Modifier.align(Alignment.Center)) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            NzButton("Add model", { chooseFiles("Add a model", listOf("stl", "3mf", "obj")).forEach { f -> runCatching { p.importModel(f) }.onFailure { p.notice = it.message } } }, kind = ButtonKind.PRIMARY, icon = NzIcon.IMPORT)
-                            NzButton("Open a project", { state.destination = Destination.PROJECTS }, kind = ButtonKind.SECONDARY, icon = NzIcon.PROJECTS)
-                            NzButton("Set up machine", state::reopenFirstRun, kind = ButtonKind.SECONDARY, icon = NzIcon.TUNE, testTag = "empty-workspace-setup-machine")
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            NzButton("CAD and STEP", { toggleModeling(ModelingTool.CAD) }, kind = ButtonKind.SECONDARY,
-                                enabled = p.toolBusy == null, testTag = "empty-workspace-cad")
-                            NzButton("Meshy 3D", { toggleModeling(ModelingTool.MESHY) }, kind = ButtonKind.SECONDARY,
-                                enabled = p.toolBusy == null, testTag = "empty-workspace-meshy")
+            if (onPlate.isEmpty() && !p.showPreview) ContextMenuArea(items = bedActions, state = plateContextMenu) {
+                Box(Modifier.fillMaxSize()) {
+                    EmptyState(NzIcon.IMPORT, if (p.items.isEmpty()) "Start with a model" else "${p.plateNames.getOrNull(p.currentPlate) ?: "This plate"} is empty",
+                        "Add an STL, 3MF or OBJ file, or open a saved project. Nothing leaves this computer.", Modifier.align(Alignment.Center)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                NzButton("Add model", { chooseFiles("Add a model", listOf("stl", "3mf", "obj")).forEach { f -> runCatching { p.importModel(f) }.onFailure { p.notice = it.message } } }, kind = ButtonKind.PRIMARY, icon = NzIcon.IMPORT)
+                                NzButton("Open a project", { state.destination = Destination.PROJECTS }, kind = ButtonKind.SECONDARY, icon = NzIcon.PROJECTS)
+                                NzButton("Set up machine", state::reopenFirstRun, kind = ButtonKind.SECONDARY, icon = NzIcon.TUNE, testTag = "empty-workspace-setup-machine")
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                NzButton("CAD and STEP", { toggleModeling(ModelingTool.CAD) }, kind = ButtonKind.SECONDARY,
+                                    enabled = p.toolBusy == null, testTag = "empty-workspace-cad")
+                                NzButton("Meshy 3D", { toggleModeling(ModelingTool.MESHY) }, kind = ButtonKind.SECONDARY,
+                                    enabled = p.toolBusy == null, testTag = "empty-workspace-meshy")
+                            }
                         }
                     }
                 }
