@@ -127,6 +127,9 @@ case "$1" in
         test "$#" = 6
         test "$(cat)" = fixture-key-value
         ;;
+    clear)
+        test "$#" = 5
+        ;;
     lookup)
         test "$#" = 5
         printf '%s\n' fixture-key-value
@@ -138,6 +141,8 @@ esac
             }
             val keychain = MeshySecretService(tool)
             keychain.save(sample)
+            assertTrue(keychain.hasAvailableKey())
+            keychain.remove()
             val restored = keychain.load()
             try { assertArrayEquals(sample, restored) }
             finally { restored.fill('\u0000') }

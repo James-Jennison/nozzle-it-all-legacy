@@ -92,6 +92,8 @@ internal class GeneratedGeometryStore(private val root: File) {
         }
     }
 
+    fun hasLocalAsset(taskId: String): Boolean = assetFile(taskId).isFile
+
     @Synchronized
     fun read(taskId: String): Asset? {
         val file = assetFile(taskId)

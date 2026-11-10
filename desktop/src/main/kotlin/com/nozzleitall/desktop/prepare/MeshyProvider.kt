@@ -189,6 +189,19 @@ internal class MeshySecretService(private val client: File = File("/usr/bin/secr
         }
     }
 
+    fun hasAvailableKey(): Boolean = try {
+        load().fill('\u0000')
+        true
+    } catch (_: GeometryGenerationError) {
+        false
+    }
+
+    fun remove() {
+        val process = start(listOf("clear") + attributes, keepOutput = false)
+        try { finish(process) }
+        finally { if (process.isAlive) process.destroyForcibly() }
+    }
+
     override fun load(): CharArray {
         val process = start(listOf("lookup") + attributes, keepOutput = true)
         val closed = ByteArray(0)

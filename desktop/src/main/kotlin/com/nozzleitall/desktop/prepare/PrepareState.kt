@@ -607,11 +607,28 @@ class PrepareState(private val app: AppState) {
         } finally { history.endEdit() }
     }
 
-    /** Removes an empty plate; the plates after it move up one. */
-    fun removePlate(i: Int) {
-        if (plateNames.size <= 1 || plateItems(i).isNotEmpty()) return
-        plateNames.removeAt(i); plateIds.removeAt(i); items.forEach { if (it.plate > i) it.plate -= 1 }
-        currentPlate = currentPlate.coerceAtMost(plateNames.lastIndex).let { if (it > i) it - 1 else it }.coerceAtLeast(0); changed()
+    internal fun clearPlateObjects(plate: Int?) {
+        if (plate != null && plate !in plateIds.indices) return
+        if (items.none { plate == null || it.plate == plate }) return
+        editSelection {
+            items.removeAll { plate == null || it.plate == plate }
+            if (plate == null || plate == currentPlate) deselect()
+            changed()
+        }
+    }
+
+    /** Inline removal is for empty plates. The scope-confirmed action also allows a populated plate. */
+    fun removePlate(i: Int, allowPopulated: Boolean = false) {
+        if (i !in plateIds.indices || plateNames.size <= 1 || (!allowPopulated && plateItems(i).isNotEmpty())) return
+        editSelection {
+            if (i == currentPlate) deselect()
+            items.removeAll { it.plate == i }
+            plateNames.removeAt(i)
+            plateIds.removeAt(i)
+            items.forEach { if (it.plate > i) it.plate -= 1 }
+            currentPlate = (if (currentPlate > i) currentPlate - 1 else currentPlate).coerceAtMost(plateNames.lastIndex)
+            changed()
+        }
     }
     fun moveToPlate(item: PrepItem, plate: Int) {
         if (plate !in plateNames.indices || plate == item.plate) return

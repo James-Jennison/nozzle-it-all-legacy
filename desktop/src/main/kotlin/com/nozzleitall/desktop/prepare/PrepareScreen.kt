@@ -48,6 +48,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.nozzleitall.desktop.AppState
 import com.nozzleitall.desktop.Destination
 import com.nozzleitall.desktop.SlicingSetup
+import com.nozzleitall.desktop.PlateEditKind
 import com.nozzleitall.desktop.WorkspaceToolRequest
 import com.nozzleitall.desktop.screens.*
 import com.nozzleitall.desktop.ui.*
@@ -499,11 +500,9 @@ fun PrepareScreen(state: AppState) {
     fun toggle(d: Drawer) {
         drawer = if (drawer == d) null else d
     }
-    var meshyOpen by remember { mutableStateOf(false) }
-    if (meshyOpen) MeshyGenerationDialog(p) { meshyOpen = false }
     fun toggleModeling(tool: ModelingTool) {
         if (tool == ModelingTool.MESHY) {
-            meshyOpen = true
+            state.meshyOpen = true
             return
         }
         if (drawer == Drawer.MODEL && modelingTool == tool) {
@@ -586,7 +585,7 @@ fun PrepareScreen(state: AppState) {
             if (!previewFocused && compactWorkspace) NzButton("Setup & objects (${p.plateItems().size})", { compactObjectsOpen = !compactObjectsOpen },
                 kind = if (compactObjectsOpen) ButtonKind.PRIMARY else ButtonKind.SECONDARY, testTag = "compact-objects")
             val compactNavigation = usesCompactNavigation(workspaceWidth, Nz.textScale)
-            Box(Modifier.weight(1f)) { PlateTabs(p, compactNavigation) }
+            Box(Modifier.weight(1f)) { PlateTabs(state, compactNavigation) }
             if (!previewFocused && p.plateNames.size > 1) {
                 if (compactNavigation)
                     NzIconButton(NzIcon.PROJECTS, "Plate overview", { p.showPlateOverview = true }, testTag = "plate-overview")
@@ -743,6 +742,12 @@ fun PrepareScreen(state: AppState) {
                     })
                     if (p.plateItems().isNotEmpty()) add(ContextMenuItem("Arrange plate") {
                         state.requestWorkspaceTool(WorkspaceToolRequest.ARRANGE)
+                    })
+                    if (p.plateItems().isNotEmpty()) add(ContextMenuItem("Clear this plate") {
+                        state.requestPlateEdit(PlateEditKind.CLEAR_PLATE)
+                    })
+                    if (p.items.isNotEmpty()) add(ContextMenuItem("Clear all plates") {
+                        state.requestPlateEdit(PlateEditKind.CLEAR_ALL)
                     })
                     add(ContextMenuItem("Fit build plate", camera::fitView))
                 }
@@ -2708,7 +2713,8 @@ internal fun objectPartLabel(part: com.nozzleitall.project.ProjectManifest.Objec
 
 /** The project's plates (Orca's plate list): pick one to show it, rename it in place, add one, remove an empty one. */
 @Composable
-private fun PlateTabs(p: PrepareState, compact: Boolean) {
+private fun PlateTabs(state: AppState, compact: Boolean) {
+    val p = state.prepare
     val c = Nz.colors
     var renaming by remember { mutableStateOf<Int?>(null) }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2728,18 +2734,24 @@ private fun PlateTabs(p: PrepareState, compact: Boolean) {
                             val currentIndex = p.plateIds.indexOf(plateId)
                             if (currentIndex >= 0) action(currentIndex)
                         }
-                        listOf(
-                            ContextMenuItem("Show $name") { onPlate(p::showPlate) },
-                            ContextMenuItem("Rename plate") { onPlate { renaming = it } },
-                            ContextMenuItem("Duplicate plate") {
+                        buildList {
+                            add(ContextMenuItem("Show $name") { onPlate(p::showPlate) })
+                            add(ContextMenuItem("Rename plate") { onPlate { renaming = it } })
+                            add(ContextMenuItem("Duplicate plate") {
                                 onPlate {
                                     if (p.toolBusy == null) {
                                         p.showPlate(it)
                                         p.duplicateCurrentPlate()
                                     }
                                 }
-                            },
-                        )
+                            })
+                            if (count > 0) add(ContextMenuItem("Clear this plate") {
+                                onPlate { state.requestPlateEdit(PlateEditKind.CLEAR_PLATE, it) }
+                            })
+                            if (p.plateIds.size > 1) add(ContextMenuItem("Delete plate") {
+                                onPlate { state.requestPlateEdit(PlateEditKind.DELETE_PLATE, it) }
+                            })
+                        }
                     }) {
                         Row(Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.accent.copy(alpha = 0.14f) else c.surfaceSunken)
                             .border(1.dp, if (on) c.accent else c.line, RoundedCornerShape(8.dp))
@@ -2749,7 +2761,7 @@ private fun PlateTabs(p: PrepareState, compact: Boolean) {
                             Txt(name, Nz.type.label, if (on) c.accent else c.text, maxLines = 1)
                             Txt("$count", Nz.type.bodySmall, c.textMuted)
                             if (on && count == 0 && p.plateNames.size > 1)
-                                Txt("×", Nz.type.label, c.textMuted, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClickLabel = "Remove $name") { p.removePlate(i) }.padding(horizontal = 2.dp))
+                                Txt("×", Nz.type.label, c.textMuted, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClickLabel = "Remove $name") { state.requestPlateEdit(PlateEditKind.DELETE_PLATE, i) }.padding(horizontal = 2.dp))
                         }
                     }
                 }

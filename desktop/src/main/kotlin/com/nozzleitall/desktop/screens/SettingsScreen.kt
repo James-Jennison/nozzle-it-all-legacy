@@ -14,7 +14,9 @@ import com.nozzleitall.desktop.ui.*
 import com.nozzleitall.printer.Glossary
 import com.nozzleitall.printer.external.AdapterAccount
 import com.nozzleitall.printer.external.AdapterAccountState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -28,7 +30,7 @@ fun SettingsScreen(state: AppState) {
         if (fleet.settingsLoadProblem.value) Banner(
             "Saved settings could not be read. Defaults are shown and the original file is preserved. Repair or restore the settings file before changing choices.",
             BannerKind.WARNING)
-        var tab by remember { mutableStateOf(SettingsTab.GENERAL) }
+        var tab by remember { mutableStateOf(if (state.meshySettingsReturn) SettingsTab.INTEGRATIONS else SettingsTab.GENERAL) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SettingsTab.entries.forEach { t -> NzButton(t.label, { tab = t }, kind = if (t == tab) ButtonKind.PRIMARY else ButtonKind.SECONDARY, testTag = "settings-tab-${t.name.lowercase()}") }
         }
@@ -84,6 +86,7 @@ fun SettingsScreen(state: AppState) {
         FilamentProfilesPanel(state)
         ConnectorPanel(state)
         }
+        if (tab == SettingsTab.INTEGRATIONS) MeshyIntegrationSettings(state)
         if (tab == SettingsTab.DATA) {
         Card(Modifier.fillMaxWidth()) {
             Txt("Your data", Nz.type.title)
@@ -108,6 +111,76 @@ fun SettingsScreen(state: AppState) {
         }
         }
     }
+}
+
+@Composable
+private fun MeshyIntegrationSettings(state: AppState) {
+    val keychain = remember { com.nozzleitall.desktop.prepare.MeshySecretService() }
+    val scope = rememberCoroutineScope()
+    var keyAvailable by remember { mutableStateOf<Boolean?>(null) }
+    var keyInput by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    var remove by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    fun changeKey(action: () -> Unit) {
+        if (busy) return
+        busy = true
+        problem = null
+        scope.launch {
+            try {
+                keyAvailable = runInterruptible(Dispatchers.IO) {
+                    action()
+                    keychain.hasAvailableKey()
+                }
+                editing = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                problem = "The system keychain could not confirm the change."
+            } finally {
+                busy = false
+            }
+        }
+    }
+    LaunchedEffect(keychain) {
+        keyAvailable = runInterruptible(Dispatchers.IO) { keychain.hasAvailableKey() }
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Txt("Meshy", Nz.type.title)
+        Txt("Meshy text-to-3D uses your API key and credits. The key is stored in the Linux system keychain.", Nz.type.bodySmall)
+        Txt(when (keyAvailable) {
+            true -> "Meshy key is saved."
+            false -> "No Meshy key is available."
+            null -> "Checking the system keychain…"
+        }, Nz.type.bodySmall)
+        problem?.let { Banner(it, BannerKind.WARNING) }
+        if (editing) {
+            Field("New Meshy API key", keyInput, { keyInput = it.take(512) }, Modifier.fillMaxWidth(), secret = true)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                NzButton("Save key", {
+                    val input = keyInput.toCharArray()
+                    keyInput = ""
+                    changeKey {
+                        try { keychain.save(input) } finally { input.fill('\u0000') }
+                    }
+                }, enabled = !busy && keyInput.isNotBlank(), kind = ButtonKind.PRIMARY)
+                NzButton("Cancel", { keyInput = ""; editing = false }, enabled = !busy, kind = ButtonKind.QUIET)
+            }
+        } else if (keyAvailable != null) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                NzButton(if (keyAvailable == true) "Replace key" else "Add key", { editing = true }, enabled = !busy)
+                if (keyAvailable == true) NzButton("Remove key", { remove = true }, enabled = !busy, kind = ButtonKind.QUIET)
+            }
+        }
+        if (state.meshySettingsReturn) NzButton("Return to Meshy review", state::returnToMeshyReview,
+            enabled = !busy, kind = ButtonKind.SECONDARY, testTag = "meshy-return-review")
+    }
+    if (remove) ConfirmDialog("Remove Meshy key?", "Remove the saved key from this computer’s system keychain.",
+        "Remove key", destructive = true, onDismiss = { remove = false }, onConfirm = {
+            remove = false
+            changeKey(keychain::remove)
+        })
 }
 
 @Composable
@@ -210,7 +283,7 @@ private fun FilamentProfilesPanel(state: AppState) {
 }
 
 /** The groups on the Settings page. */
-private enum class SettingsTab(val label: String) { GENERAL("General"), CONNECTIONS("Connections"), DATA("Your data & about") }
+private enum class SettingsTab(val label: String) { GENERAL("General"), CONNECTIONS("Connections"), INTEGRATIONS("Integrations"), DATA("Your data & about") }
 
 @Composable
 private fun ConnectorPanel(state: AppState) {

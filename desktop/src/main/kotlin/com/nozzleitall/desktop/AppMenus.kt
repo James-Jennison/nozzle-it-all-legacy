@@ -69,9 +69,6 @@ fun appMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> =
 private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> {
     val p = state.prepare
     fun guarded(action: () -> Unit) = state.guardProjectReplacement(action)
-    fun confirmEdit(action: () -> Unit) {
-        if (p.items.isNotEmpty()) guarded(action) else action()
-    }
     fun report(e: Throwable) { p.notice = e.message ?: "That didn't work." }
     val sliced = p.slice as? SliceState.Done
     return listOf(
@@ -124,7 +121,12 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Deselect", ctrl(Key.A, "A", shift = true, afterFocus = true), enabled = state.destination == Destination.PREPARE && p.selected != null) { p.deselect() },
             MenuAction("Duplicate", ctrl(Key.D, "D", afterFocus = true), enabled = p.selected != null) { p.duplicateSelected() },
             MenuAction("Delete", Shortcut(Key.Delete, text = "Delete"), enabled = p.selected != null) { p.removeSelected() },
-            MenuAction("Delete all", enabled = p.items.isNotEmpty()) { confirmEdit { p.items.clear(); p.selected = null; p.changed() } },
+            MenuAction("Clear this plate", enabled = p.plateItems().isNotEmpty(), commandId = "clear-plate") {
+                state.requestPlateEdit(PlateEditKind.CLEAR_PLATE)
+            },
+            MenuAction("Clear all plates", enabled = p.items.isNotEmpty(), commandId = "clear-all-plates") {
+                state.requestPlateEdit(PlateEditKind.CLEAR_ALL)
+            },
             MenuAction("Arrange plate", Shortcut(Key.A, text = "A"), enabled = p.items.isNotEmpty(), commandId = "arrange") {
                 state.requestWorkspaceTool(WorkspaceToolRequest.ARRANGE)
             },
@@ -148,7 +150,9 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Duplicate plate", enabled = p.toolBusy == null, commandId = "duplicate-plate") { p.duplicateCurrentPlate() },
             MenuAction("Move plate left", enabled = p.toolBusy == null && p.currentPlate > 0, commandId = "plate-left") { p.moveCurrentPlate(-1) },
             MenuAction("Move plate right", enabled = p.toolBusy == null && p.currentPlate < p.plateNames.lastIndex, commandId = "plate-right") { p.moveCurrentPlate(1) },
-            MenuAction("Delete this plate", enabled = p.plateNames.size > 1) { confirmEdit { p.removePlate(p.currentPlate) } },
+            MenuAction("Delete this plate", enabled = p.plateNames.size > 1, commandId = "delete-plate") {
+                state.requestPlateEdit(PlateEditKind.DELETE_PLATE)
+            },
             null,
             MenuAction("Previous plate", enabled = p.currentPlate > 0) { p.showPlate(p.currentPlate - 1) },
             MenuAction("Next plate", enabled = p.currentPlate < p.plateNames.lastIndex) { p.showPlate(p.currentPlate + 1) },

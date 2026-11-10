@@ -78,6 +78,12 @@ data class HistorySaveNotice(val message: String, val isError: Boolean)
 
 enum class WorkspaceToolRequest { ARRANGE, ORIENT, SIMPLIFY }
 
+internal enum class PlateEditKind(val label: String) {
+    CLEAR_PLATE("Clear this plate"), CLEAR_ALL("Clear all plates"), DELETE_PLATE("Delete plate"),
+}
+
+internal data class PendingPlateEdit(val kind: PlateEditKind, val plateId: String?, val editorGeneration: Long, val detail: String)
+
 enum class MonitorHandoffState(val label: String) {
     UPLOADED("Uploaded to printer"),
     QUEUED("Queued for review and start"),
@@ -172,7 +178,43 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     internal var projectSaveProblem by mutableStateOf<String?>(null)
         private set
 
+    internal var pendingPlateEdit by mutableStateOf<PendingPlateEdit?>(null)
+        private set
+
+    internal fun requestPlateEdit(kind: PlateEditKind, plate: Int = prepare.currentPlate) {
+        if (pendingPlateEdit != null || pendingProjectAction != null || prepare.toolBusy != null) return
+        val name = prepare.plateNames.getOrNull(plate) ?: return
+        val count = prepare.plateItems(plate).size
+        val objects = if (kind == PlateEditKind.CLEAR_ALL) prepare.items.size else count
+        if (kind == PlateEditKind.DELETE_PLATE && prepare.plateIds.size <= 1) return
+        if (kind != PlateEditKind.DELETE_PLATE && objects == 0) return
+        val description = when (kind) {
+            PlateEditKind.CLEAR_PLATE -> "Remove all $count objects from “$name”. The plate remains."
+            PlateEditKind.CLEAR_ALL -> "Remove all $objects objects across ${prepare.plateIds.size} plates. The plates remain."
+            PlateEditKind.DELETE_PLATE -> "Remove “$name” and its $count objects. Other plates remain."
+        }
+        pendingPlateEdit = PendingPlateEdit(kind, prepare.plateIds[plate].takeUnless { kind == PlateEditKind.CLEAR_ALL },
+            prepare.editorGeneration, "$description You can undo this edit.")
+    }
+
+    internal fun cancelPlateEdit() { pendingPlateEdit = null }
+
+    internal fun confirmPlateEdit() {
+        val review = pendingPlateEdit ?: return
+        cancelPlateEdit()
+        val plate = review.plateId?.let(prepare.plateIds::indexOf)
+        if (review.editorGeneration != prepare.editorGeneration || plate == -1 || prepare.toolBusy != null) {
+            prepare.notice = "The workspace changed. Review the plate edit again."
+            return
+        }
+        when (review.kind) {
+            PlateEditKind.CLEAR_PLATE, PlateEditKind.CLEAR_ALL -> prepare.clearPlateObjects(plate)
+            PlateEditKind.DELETE_PLATE -> prepare.removePlate(requireNotNull(plate), allowPopulated = true)
+        }
+    }
+
     internal fun guardProjectReplacement(action: () -> Unit) {
+        if (pendingPlateEdit != null) return
         if (pendingProjectAction != null) {
             if (projectSaveProblem == null) projectSaveProblem = "Finish this project decision before starting another."
             return
@@ -200,6 +242,34 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     }
     internal var droppedProject by mutableStateOf<File?>(null)
     internal var gcodeInspection by mutableStateOf<File?>(null)
+    internal var meshyOpen by mutableStateOf(false)
+    internal var meshySettingsReturn by mutableStateOf(false)
+        private set
+    internal var meshyPrompt by mutableStateOf("")
+    internal var meshySize by mutableStateOf("80")
+    internal var meshyReviewOnOpen by mutableStateOf(false)
+
+    internal fun openMeshySettings() {
+        meshyOpen = false
+        meshySettingsReturn = true
+        destination = Destination.SETTINGS
+    }
+
+    internal fun returnToMeshyReview() {
+        if (!meshySettingsReturn) return
+        meshySettingsReturn = false
+        destination = Destination.PREPARE
+        meshyReviewOnOpen = true
+        meshyOpen = true
+    }
+
+    internal fun closeMeshy() {
+        meshyOpen = false
+        meshyPrompt = ""
+        meshySize = "80"
+        meshyReviewOnOpen = false
+    }
+
 
     internal fun openWorkspaceProject(file: File) {
         runCatching { prepare.open(file) }
@@ -452,6 +522,10 @@ private fun runApp(open: List<File>) = application {
                 AddPrinterDialog(state, autoScan = request.autoScan, compatibilityProfileId = request.compatibilityProfileId,
                     onDone = state::finishPrinterSetup)
             }
+            state.pendingPlateEdit?.let { edit ->
+                ConfirmDialog(edit.kind.label + "?", edit.detail, edit.kind.label,
+                    destructive = true, onConfirm = state::confirmPlateEdit, onDismiss = state::cancelPlateEdit)
+            }
             if (state.pendingProjectAction != null) {
                 ConfirmDialog("Save changes?", "${state.prepare.name} has unsaved changes.", "Discard changes",
                     destructive = true, detail = state.projectSaveProblem,
@@ -467,6 +541,8 @@ private fun runApp(open: List<File>) = application {
 fun App(state: AppState) {
     WorkspaceMachineReview(state)
     WorkspaceFiles(state)
+    if (state.meshyOpen && state.destination == Destination.PREPARE)
+        com.nozzleitall.desktop.prepare.MeshyGenerationDialog(state)
     val c = Nz.colors
     Column(Modifier.fillMaxSize().background(c.background).semantics { paneTitle = state.destination.label }) {
         AppHeader(state)

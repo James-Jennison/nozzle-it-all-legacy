@@ -32,7 +32,66 @@ class MenusTest {
         assertEquals(2, p.plateNames.size); assertEquals(1, p.currentPlate)
         assertTrue(a.item("Plate", "Previous plate").enabled); assertFalse(a.item("Plate", "Next plate").enabled)
         a.item("Plate", "Previous plate").run(); assertEquals(0, p.currentPlate)
-        a.item("Plate", "Delete this plate").run(); assertEquals(1, p.plateNames.size)
+        a.item("Plate", "Delete this plate").run(); a.confirmPlateEdit(); assertEquals(1, p.plateNames.size)
+    }
+
+    @Test fun meshySettingsRoundTripRetainsDraftUntilTheDialogCloses() {
+        val a = app()
+        a.meshyOpen = true
+        a.meshyPrompt = "Fixture cube"
+        a.meshySize = "55"
+        a.openMeshySettings()
+        assertEquals(Destination.SETTINGS, a.destination)
+        assertFalse(a.meshyOpen)
+        a.returnToMeshyReview()
+        assertEquals(Destination.PREPARE, a.destination)
+        assertTrue(a.meshyOpen)
+        assertTrue(a.meshyReviewOnOpen)
+        assertEquals("Fixture cube", a.meshyPrompt)
+        assertEquals("55", a.meshySize)
+        a.closeMeshy()
+        assertFalse(a.meshyOpen)
+        assertEquals("", a.meshyPrompt)
+    }
+
+    @Test fun plateDestructiveActionsConfirmExactScopeAndUndo() {
+        val a = app()
+        val p = a.prepare
+        p.items += PrepItem(1, "first", cube, 50f, 60f)
+        p.addPlate()
+        p.items += PrepItem(2, "second", cube, 90f, 60f, plate = 1)
+        p.history.reset()
+        val plates = p.plateIds.toList()
+
+        a.item("Edit", "Clear this plate").run()
+        assertEquals(listOf(1, 2), p.items.map { it.id })
+        assertTrue(a.pendingPlateEdit!!.detail.contains("Plate 2"))
+        a.confirmPlateEdit()
+        assertEquals(listOf(1), p.items.map { it.id })
+        assertEquals(plates, p.plateIds.toList())
+        p.history.undo()
+        assertEquals(listOf(1, 2), p.items.map { it.id })
+
+        a.item("Edit", "Clear all plates").run()
+        a.cancelPlateEdit()
+        assertEquals(listOf(1, 2), p.items.map { it.id })
+        a.item("Edit", "Clear all plates").run()
+        a.confirmPlateEdit()
+        assertTrue(p.items.isEmpty())
+        assertEquals(plates, p.plateIds.toList())
+        p.history.undo()
+
+        a.item("Plate", "Delete this plate").run()
+        p.renamePlate(1, "Changed after review")
+        a.confirmPlateEdit()
+        assertEquals(plates, p.plateIds.toList())
+        a.item("Plate", "Delete this plate").run()
+        a.confirmPlateEdit()
+        assertEquals(listOf(plates.first()), p.plateIds.toList())
+        assertEquals(listOf(1), p.items.map { it.id })
+        p.history.undo()
+        assertEquals(plates, p.plateIds.toList())
+        assertEquals(listOf(1, 2), p.items.map { it.id })
     }
 
     @Test fun duplicateAndReorderKeepPlateIdentityAndUndo() {
@@ -86,12 +145,13 @@ class MenusTest {
         a.item("View", "Isometric view").run(); assertEquals(-35f, c.yaw, 0f); assertEquals(55f, c.pitch, 0f)
     }
 
-    @Test fun deleteAllClearsThePlateAndReloadNeedsASavedFile() {
+    @Test fun clearPlateRequiresConfirmationAndReloadNeedsASavedFile() {
         val a = app(); val p = a.prepare
-        assertFalse(a.item("Edit", "Delete all").enabled); assertFalse(a.item("File", "Reload from disk").enabled)
+        assertFalse(a.item("Edit", "Clear this plate").enabled); assertFalse(a.item("File", "Reload from disk").enabled)
         p.items += PrepItem(1, "cube", cube, 50f, 50f); p.items += PrepItem(2, "cube 2", cube, 90f, 50f)
-        a.item("Edit", "Delete all").run()
-        // The project has not been saved, so there is nothing to ask about; it just empties.
+        a.item("Edit", "Clear this plate").run()
+        assertEquals(2, p.items.size)
+        a.confirmPlateEdit()
         assertTrue(p.items.isEmpty()); assertNull(p.selected)
     }
 

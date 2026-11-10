@@ -29,7 +29,9 @@ internal data class ReviewedGeometry(
 )
 
 @Composable
-internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit) {
+internal fun MeshyGenerationDialog(state: com.nozzleitall.desktop.AppState) {
+    val prepare = state.prepare
+    val onDismiss = state::closeMeshy
     val colors = Nz.colors
     val scope = rememberCoroutineScope()
     val provider = remember { MeshyProvider() }
@@ -38,10 +40,15 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
     var pending by remember { mutableStateOf<GeneratedGeometryStore.Pending?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var keyInput by remember { mutableStateOf("") }
-    var prompt by remember { mutableStateOf("") }
-    var target by remember { mutableStateOf("80") }
-    var quote by remember { mutableStateOf<Pair<String, Double>?>(null) }
+    var keyAvailable by remember { mutableStateOf<Boolean?>(null) }
+    val prompt = state.meshyPrompt
+    val target = state.meshySize
+    var quote by remember {
+        val size = target.toDoubleOrNull()?.takeIf { it in 1.0..500.0 }
+        val validPrompt = prompt.isNotBlank() && prompt.codePointCount(0, prompt.length) <= 800
+        mutableStateOf(if (state.meshyReviewOnOpen && validPrompt && size != null) prompt.trim() to size else null)
+    }
+    var savedTaskAvailableLocally by remember { mutableStateOf(false) }
     var resumeId by remember { mutableStateOf("") }
     var model by remember { mutableStateOf<ReviewedGeometry?>(null) }
     var useRepair by remember { mutableStateOf(true) }
@@ -50,7 +57,13 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
     val size = target.toDoubleOrNull()?.takeIf { it in 1.0..500.0 }
 
     suspend fun refresh() {
-        pending = runInterruptible(Dispatchers.IO) { store.pending() }
+        val (receipt, local) = runInterruptible(Dispatchers.IO) {
+            val receipt = store.pending()
+            receipt to (receipt?.taskId?.let(store::hasLocalAsset) == true)
+        }
+        pending = receipt
+        savedTaskAvailableLocally = local
+        if (receipt != null) quote = null
         loaded = true
     }
 
@@ -92,6 +105,10 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
         message = "Model downloaded and checked locally."
     }
 
+    LaunchedEffect(keychain) {
+        state.meshyReviewOnOpen = false
+        keyAvailable = runInterruptible(Dispatchers.IO) { keychain.hasAvailableKey() }
+    }
     LaunchedEffect(store) {
         try { refresh() }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -103,22 +120,20 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
         Column(Modifier.fillMaxSize().background(colors.surface).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Txt("Meshy text-to-3D", Nz.type.title)
-                Txt("Save your own Meshy key in the Linux system keychain. The dialog shows the generation cost before submitting.",
-                    Nz.type.bodySmall, colors.textMuted)
-                Field("Meshy API key", keyInput, { keyInput = it.take(512) }, Modifier.fillMaxWidth(), secret = true)
-                NzButton("Save key in system keychain", {
-                    val key = keyInput.toCharArray()
-                    keyInput = ""
-                    perform {
-                        try { runInterruptible(Dispatchers.IO) { keychain.save(key) } }
-                        finally { key.fill('\u0000') }
-                        message = "Meshy key saved in the system keychain."
+                Txt("Review the prompt, recipient and estimated API credits before submitting.", Nz.type.bodySmall, colors.textMuted)
+                when (keyAvailable) {
+                    null -> Txt("Checking the system keychain…", Nz.type.bodySmall)
+                    false -> {
+                        Banner("A saved Meshy key is required to generate or check an online task.", BannerKind.INFO)
+                        NzButton("Set up Meshy in Settings", state::openMeshySettings, enabled = !busy,
+                            kind = ButtonKind.SECONDARY, testTag = "meshy-open-settings")
                     }
-                }, enabled = !busy && keyInput.isNotBlank(), kind = ButtonKind.SECONDARY)
-                if (loaded && pending == null && model == null && quote == null) {
-                    Field("Describe a model", prompt, { prompt = it.take(1600) }, Modifier.fillMaxWidth())
+                    true -> Unit
                 }
-                if (model == null && quote == null) Field("Longest dimension after local import (mm)", target, { target = it.take(12) }, Modifier.fillMaxWidth())
+                if (loaded && pending == null && model == null && quote == null) {
+                    Field("Describe a model", prompt, { state.meshyPrompt = it.take(1600) }, Modifier.fillMaxWidth())
+                }
+                if (model == null && quote == null) Field("Longest dimension after local import (mm)", target, { state.meshySize = it.take(12) }, Modifier.fillMaxWidth())
                 if (loaded && pending == null && model == null && quote == null) {
                     NzButton("Review generation", {
                         if (size != null) quote = prompt.trim() to size
@@ -149,7 +164,7 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
                                         finishTask(id, approvedSize, key)
                                     } finally { key.fill('\u0000') }
                                 }
-                            }, enabled = !busy && pending == null, kind = ButtonKind.PRIMARY, testTag = "meshy-confirm-generate")
+                            }, enabled = !busy && loaded && pending == null && keyAvailable == true, kind = ButtonKind.PRIMARY, testTag = "meshy-confirm-generate")
                         }
                     }
                 }
@@ -159,7 +174,7 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
                         Txt("Saved Meshy task " + receipt.taskId, Nz.type.bodySmall)
                         NzButton("Resume saved task", {
                             if (size != null) perform { finishTask(receipt.taskId, size) }
-                        }, enabled = !busy && size != null, kind = ButtonKind.SECONDARY)
+                        }, enabled = !busy && size != null && (keyAvailable == true || savedTaskAvailableLocally), kind = ButtonKind.SECONDARY)
                     } else if (model == null) {
                         Txt("A request was recorded locally before Meshy returned its task ID. Check the Meshy account before starting a new generation.",
                             Nz.type.bodySmall, colors.textMuted)
@@ -171,7 +186,7 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
                                 refresh()
                                 finishTask(id, size)
                             }
-                        }, enabled = !busy && size != null && resumeId.isNotBlank(), kind = ButtonKind.SECONDARY)
+                        }, enabled = !busy && size != null && resumeId.isNotBlank() && keyAvailable == true, kind = ButtonKind.SECONDARY)
                     }
                     if (model == null) NzButton("Clear local receipt after checking Meshy", {
                         perform {
@@ -213,7 +228,7 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
                 failure?.let { Txt(it, Nz.type.bodySmall, colors.danger) }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                NzButton(if (busy) "Close local view" else "Close", { keyInput = ""; onDismiss() }, kind = ButtonKind.QUIET)
+                NzButton(if (busy) "Close local view" else "Close", onDismiss, kind = ButtonKind.QUIET)
             }
         }
     }
