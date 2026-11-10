@@ -75,15 +75,9 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
         AppMenu("File", Key.F, listOf(
             MenuAction("New project", ctrl(Key.N, "N")) { guarded { p.newProject(); state.destination = Destination.PREPARE } },
             MenuAction("Projects…") { state.destination = Destination.PROJECTS },
-            MenuAction("Open project…", ctrl(Key.O, "O")) {
-                chooseFiles("Open a project", listOf("3mf"), multiple = false).firstOrNull()?.let { f ->
-                    guarded { state.openWorkspaceProject(f) }
-                }
-            },
+            MenuAction("Open project…", ctrl(Key.O, "O"), run = state::chooseWorkspaceProject),
             *recentProjects(state).map { f -> MenuAction("Recent: " + f.nameWithoutExtension.take(40)) { guarded { state.openWorkspaceProject(f) } } }.toTypedArray(),
-            MenuAction("Add model…", ctrl(Key.I, "I")) {
-                chooseFiles("Add a model", listOf("stl", "3mf", "obj")).takeIf { it.isNotEmpty() }?.let(state::importWorkspaceModels)
-            },
+            MenuAction("Add model…", ctrl(Key.I, "I"), run = state::chooseWorkspaceModels),
             MenuAction("Inspect G-code…") {
                 chooseFiles("Inspect G-code", listOf("gcode"), multiple = false).firstOrNull()?.let { state.gcodeInspection = it }
             },

@@ -736,10 +736,7 @@ fun PrepareScreen(state: AppState) {
             var contextObject by remember(p.currentPlate, p.showPreview) { mutableStateOf<PrepItem?>(null) }
             val bedActions = {
                 buildList {
-                    add(ContextMenuItem("Add model…") {
-                        chooseFiles("Add a model", listOf("stl", "3mf", "obj"))
-                            .takeIf { it.isNotEmpty() }?.let(state::importWorkspaceModels)
-                    })
+                    add(ContextMenuItem("Add model…", state::chooseWorkspaceModels))
                     if (p.plateItems().isNotEmpty()) add(ContextMenuItem("Arrange plate") {
                         state.requestWorkspaceTool(WorkspaceToolRequest.ARRANGE)
                     })
@@ -761,8 +758,8 @@ fun PrepareScreen(state: AppState) {
                         "Opening or importing a model keeps it on this computer. Add an STL, 3MF or OBJ file, or open a saved project.", Modifier.align(Alignment.Center)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                NzButton("Add model", { chooseFiles("Add a model", listOf("stl", "3mf", "obj")).forEach { f -> runCatching { p.importModel(f) }.onFailure { p.notice = it.message } } }, kind = ButtonKind.PRIMARY, icon = NzIcon.IMPORT)
-                                NzButton("Open a project", { state.destination = Destination.PROJECTS }, kind = ButtonKind.SECONDARY, icon = NzIcon.PROJECTS)
+                                NzButton("Add model", state::chooseWorkspaceModels, kind = ButtonKind.PRIMARY, icon = NzIcon.IMPORT)
+                                NzButton("Open a project", state::chooseWorkspaceProject, kind = ButtonKind.SECONDARY, icon = NzIcon.PROJECTS)
                                 NzButton("Set up machine", state::reopenFirstRun, kind = ButtonKind.SECONDARY, icon = NzIcon.TUNE, testTag = "empty-workspace-setup-machine")
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

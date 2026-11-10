@@ -27,6 +27,7 @@ import com.nozzleitall.desktop.prepare.PrepareState
 import com.nozzleitall.desktop.prepare.ProfileCatalog
 import com.nozzleitall.desktop.prepare.WorkspaceMachineReview
 import com.nozzleitall.desktop.prepare.WorkspaceSliceAction
+import com.nozzleitall.desktop.prepare.chooseFiles
 import com.nozzleitall.desktop.projects.ProjectLibrary
 import com.nozzleitall.desktop.projects.ProjectsScreen
 import com.nozzleitall.desktop.screens.*
@@ -271,6 +272,16 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     }
 
 
+    internal fun chooseWorkspaceProject() {
+        val file = chooseFiles("Open a project", listOf("3mf"), multiple = false).firstOrNull() ?: return
+        guardProjectReplacement { openWorkspaceProject(file) }
+    }
+
+    internal fun chooseWorkspaceModels() {
+        val files = chooseFiles("Add a model", listOf("stl", "3mf", "obj"))
+        if (files.isNotEmpty()) importWorkspaceModels(files)
+    }
+
     internal fun openWorkspaceProject(file: File) {
         runCatching { prepare.open(file) }
             .onSuccess { returnToWorkspace(preview = false) }
@@ -290,7 +301,7 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
             if (projectSaveProblem == null) projectSaveProblem = "Finish this project decision before opening dropped files."
             return
         }
-        if (pendingMachineSelection != null || droppedProject != null || gcodeInspection != null) {
+        if (pendingPlateEdit != null || pendingMachineSelection != null || droppedProject != null || gcodeInspection != null) {
             prepare.notice = "Close the current dialog before opening dropped files."
             return
         }
