@@ -3,6 +3,7 @@ package com.nozzleitall.desktop.prepare
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -36,6 +37,7 @@ class PreviewWorkspaceUiTest {
         val gcode = File(root, "preview.gcode").apply {
             writeText("""
                 M83
+                G1 X2 E1 F600
                 ;LAYER_CHANGE
                 ;WIDTH:0.42
                 G1 Z0.2
@@ -84,6 +86,12 @@ class PreviewWorkspaceUiTest {
             compose.onNodeWithText("Realistic View · recorded extrusion widths").assertExists()
             compose.onNodeWithTag("preview-realistic-view").performClick()
             compose.onNodeWithText("1.25 m · 3.50 g").assertExists()
+            compose.onNodeWithTag("preview-legend-toggle").performClick()
+            compose.onNodeWithTag("preview-warnings-open").performClick()
+            val warning = compose.onNodeWithText("Extrusion before the first layer marker", substring = true)
+            warning.assertIsDisplayed()
+            compose.onNodeWithText("Close").performClick()
+            warning.assertDoesNotExist()
             compose.onNodeWithTag("preview-focus-mode").performClick()
             compose.onNodeWithTag("save-project").assertExists()
         } finally {

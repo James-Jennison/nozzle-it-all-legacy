@@ -986,8 +986,8 @@ fun PrepareScreen(state: AppState) {
                         }
                         val first = p.previewFirstLayer.coerceIn(0, cursor.index)
                         val firstZ = done.preview.layers[first].z
-                        val range = if (previewSection) "Section ${cursor.index + 1}/${cursor.count} · Z ${"%.2f".format(cursor.z)} mm"
-                            else "Layers ${first + 1}–${cursor.index + 1}/${cursor.count} · Z ${"%.2f".format(firstZ)}–${"%.2f".format(cursor.z)} mm"
+                        val range = if (previewSection) "Section ${cursor.index + 1}/${cursor.count} · Z ${"%.2f".format(cursor.z)}\u00A0mm"
+                            else "Layers ${first + 1}–${cursor.index + 1}/${cursor.count} · Z ${"%.2f".format(firstZ)}–${"%.2f".format(cursor.z)}\u00A0mm"
                         if (narrowPreview) {
                             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -995,7 +995,9 @@ fun PrepareScreen(state: AppState) {
                                 Txt(range, Nz.type.metricSmall, c.textMuted)
                             }
                         } else {
-                            moveControls()
+                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp), content = moveControls)
+                            Spacer(Modifier.width(8.dp))
                             Txt(range, Nz.type.metricSmall, c.textMuted)
                         }
                     }
@@ -1158,6 +1160,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
     val c = Nz.colors
     val shape = RoundedCornerShape(14.dp)
     var showDetails by remember { mutableStateOf(true) }
+    var warningsOpen by remember(preview) { mutableStateOf(false) }
     val warnings = previewWarningMessages(preview)
     val expanded = overlayHeight == null || showDetails
     val showsTimeBreakdown = view == PreviewView.LINE_TYPE || view == PreviewView.TOOL
@@ -1207,13 +1210,33 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                 }
             }
             if (overlayHeight != null) {
-                val label = when {
-                    showDetails -> "Hide colour legend"
-                    warnings.isNotEmpty() -> "Show colour legend and preview warnings"
-                    else -> "Show colour legend"
+                val label = if (showDetails) "Hide colour legend" else "Show colour legend"
+                NzIconButton(NzIcon.LAYERS, label, { showDetails = !showDetails },
+                    selected = showDetails, testTag = "preview-legend-toggle")
+            }
+        }
+        if (overlayHeight != null && warnings.isNotEmpty()) {
+            Box(Modifier.fillMaxWidth()) {
+                NzButton("Preview warnings (${warnings.size})", { warningsOpen = true },
+                    kind = ButtonKind.QUIET, icon = NzIcon.ALERT, testTag = "preview-warnings-open")
+                if (warningsOpen) Popup(
+                    alignment = Alignment.TopEnd,
+                    onDismissRequest = { warningsOpen = false },
+                    properties = PopupProperties(focusable = true),
+                ) {
+                    Column(Modifier.width(340.dp).clip(shape).background(c.surface)
+                        .border(1.dp, c.line, shape).padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Txt("Preview warnings", Nz.type.label, modifier = Modifier.weight(1f))
+                            NzButton("Close", { warningsOpen = false }, kind = ButtonKind.QUIET)
+                        }
+                        Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PreviewWarnings(preview)
+                        }
+                    }
                 }
-                NzIconButton(if (!showDetails && warnings.isNotEmpty()) NzIcon.ALERT else NzIcon.LAYERS,
-                    label, { showDetails = !showDetails }, selected = showDetails, testTag = "preview-legend-toggle")
             }
         }
         if (!expanded) return@Column
@@ -1290,7 +1313,6 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                         }
                     }
                 }
-                if (overlayHeight != null) PreviewWarnings(preview)
             }
             if (overlayHeight != null && scroll.maxValue > 0) VerticalScrollbar(
                 rememberScrollbarAdapter(scroll),
@@ -1318,7 +1340,7 @@ private fun WorkspaceBar(state: AppState) {
 private fun RowScope.WorkspaceProjectControls(state: AppState) {
     val p = state.prepare
     com.nozzleitall.desktop.settings.DenseInput(p.name, { p.name = it; p.dirty = true }, "Project name",
-        Modifier.width(if (Nz.textScale >= 1.5f) 250.dp else 170.dp))
+        Modifier.width(if (Nz.textScale >= 1.5f) 290.dp else 230.dp))
     NzIconButton(
         NzIcon.SAVE,
         "Save project",
