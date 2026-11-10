@@ -38,6 +38,7 @@ class OctoPrintAdapterTest {
         @Volatile var printing = true
         @Volatile var jobState: String? = null
         @Volatile var jobStatus = 200
+        @Volatile var elapsed = 100
         @Volatile var jobPath = "parts/cube.gcode"
         @Volatile var filePath = jobPath
         @Volatile var history = ""","prints":{"success":4,"failure":1,"last":{"date":1000,"success":true}}"""
@@ -49,7 +50,7 @@ class OctoPrintAdapterTest {
                     request.path!!.startsWith("/api/printer") -> MockResponse().setBody(
                         """{"state":{"flags":{"operational":true,"printing":$printing}}}""")
                     request.path == "/api/job" -> MockResponse().setResponseCode(jobStatus).setBody(
-                        """{"state":"${jobState ?: if (printing) "Printing" else "Operational"}","job":{"file":{"origin":"local","path":"$jobPath","name":"cube.gcode"}},"progress":{"completion":100.0}}""")
+                        """{"state":"${jobState ?: if (printing) "Printing" else "Operational"}","job":{"file":{"origin":"local","path":"$jobPath","name":"cube.gcode"}},"progress":{"completion":100.0,"printTime":$elapsed}}""")
                     request.path!!.startsWith("/api/files/local/") -> MockResponse().setResponseCode(historyStatus).setBody(
                         """{"origin":"local","path":"$filePath","hash":"$fileHash"$history}""")
                     else -> MockResponse().setResponseCode(404)
@@ -114,6 +115,18 @@ class OctoPrintAdapterTest {
             val done = session.status()
             assertEquals(PrinterState.FINISHED, done.state)
             assertEquals("parts/cube.gcode", done.completedFileName)
+        }
+    }
+
+    @Test fun anImmediateSameFileRestartCannotClaimThePreviousRunsCompletion() = PrintEvidenceFixture().use { fixture ->
+        open(fixture.server).use { session ->
+            assertEquals(PrinterState.PRINTING, session.status().state)
+            fixture.history = ""","prints":{"success":5,"failure":1,"last":{"date":2000,"success":true}}"""
+            fixture.elapsed = 1
+            assertEquals(PrinterState.PRINTING, session.status().state)
+            fixture.printing = false
+            assertEquals(PrinterState.READY, session.status().state)
+            assertNull(session.status().completedFileName)
         }
     }
 

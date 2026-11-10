@@ -61,7 +61,12 @@ class OctoPrintPrinterService(
         val lastDate: Double?,
         val lastSucceeded: Boolean?,
     )
-    private data class ObservedPrint(val path: String, val baseline: PrintHistory?, val activeAtNanos: Long)
+    private data class ObservedPrint(
+        val path: String,
+        val baseline: PrintHistory?,
+        val activeAtNanos: Long,
+        val elapsed: Double?,
+    )
     private var observedPrint: ObservedPrint? = null
     private var completedPrint: String? = null
 
@@ -88,7 +93,7 @@ class OctoPrintPrinterService(
         return PrintHistory(hash, succeeded, failed, date, success)
     }
 
-    private fun completionFor(state: String, jobState: String, path: String?): String? {
+    private fun completionFor(state: String, jobState: String, path: String?, elapsed: Double?): String? {
         val now = System.nanoTime()
         val recent = observedPrint?.takeIf { now - it.activeAtNanos <= TimeUnit.SECONDS.toNanos(12) }
         val jobReportsActive = jobState.trim().equals("Printing", true) || jobState.trim().equals("Paused", true)
@@ -97,11 +102,12 @@ class OctoPrintPrinterService(
             if (path == null || recent?.path != path) observedPrint = null
             if (path != null && jobReportsActive) {
                 val old = recent?.takeIf { it.path == path }
-                // If a first active poll lacked permission or arrived during a transition, another active
-                // reading may still establish a baseline. Limit failed metadata lookups while polling.
-                if (old?.baseline != null) observedPrint = old.copy(activeAtNanos = now)
-                else if (old == null || now - old.activeAtNanos >= TimeUnit.SECONDS.toNanos(6))
-                    observedPrint = ObservedPrint(path, printHistory(path), now)
+                val restarted = elapsed != null && old?.elapsed != null && elapsed < old.elapsed
+                // The same file can start another run. A timer reset needs a new history baseline.
+                if (old?.baseline != null && !restarted)
+                    observedPrint = old.copy(activeAtNanos = now, elapsed = elapsed ?: old.elapsed)
+                else if (old == null || restarted || now - old.activeAtNanos >= TimeUnit.SECONDS.toNanos(6))
+                    observedPrint = ObservedPrint(path, printHistory(path), now, elapsed)
             }
             return null
         }
@@ -163,12 +169,14 @@ class OctoPrintPrinterService(
         fun temp(part: String, field: String) = temps?.optJSONObject(part)?.optDouble(field)?.takeIf { it.isFinite() }
         val file = job?.optJSONObject("job")?.optJSONObject("file")
         val path = if (confirmLocalPrintCompletion) localFilePath(file) else null
-        val completed = if (confirmLocalPrintCompletion) completionFor(state, job?.optString("state").orEmpty(), path) else null
+        val elapsed = job?.optJSONObject("progress")?.optDouble("printTime")?.takeIf { it.isFinite() && it >= 0 }
+        val completed = if (confirmLocalPrintCompletion)
+            completionFor(state, job?.optString("state").orEmpty(), path, elapsed) else null
         val name = path ?: file?.optString("display")?.takeIf { it.isNotBlank() && it != "null" }
             ?: file?.optString("name")?.takeIf { it.isNotBlank() && it != "null" }.orEmpty()
         return PrinterSnapshot(state != "error", if (completed != null) "complete" else state, completed ?: name, (completion / 100.0).coerceIn(0.0, 1.0).toFloat(),
             temp("tool0", "actual"), temp("tool0", "target"), temp("bed", "actual"), temp("bed", "target"),
-            job?.optJSONObject("progress")?.optDouble("printTime")?.takeIf { it.isFinite() }, null, null, "extruder",
+            elapsed, null, null, "extruder",
             job?.optJSONObject("progress")?.optDouble("printTimeLeft")?.takeIf { it.isFinite() && it >= 0 })
     }
 
