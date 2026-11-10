@@ -3045,8 +3045,11 @@ private fun MeshEditResult(p: PrepareState, preview: PrepareState.MeshEditPrevie
     if (preview.other == null)
         Txt("Size: ${dimensions(preview.primary)} mm → ${dimensions(result)} mm", Nz.type.bodySmall, c.textMuted)
     else Txt("Result size: ${dimensions(result)} mm", Nz.type.bodySmall, c.textMuted)
-    if (preview.primary.mesh.isPainted || preview.other?.mesh?.isPainted == true)
-        Txt("Applying clears facet paint from the result.", Nz.type.bodySmall, c.textMuted)
+    if (preview.primary.mesh.hasAnyPaint || preview.other?.mesh?.hasAnyPaint == true) {
+        val paintMessage = if (result.mesh.hasAnyPaint) "Painted facets are preserved."
+            else "Applying clears facet paint from the result."
+        Txt(paintMessage, Nz.type.bodySmall, c.textMuted)
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         NzButton("Cancel", p::discardMeshEditPreview, kind = ButtonKind.SECONDARY)
         NzButton(if (preview.repairStats == null) "Apply" else "Apply repair", p::applyMeshEditPreview,

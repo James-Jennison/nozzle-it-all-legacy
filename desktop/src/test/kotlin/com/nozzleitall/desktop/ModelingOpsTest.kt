@@ -3,9 +3,18 @@ package com.nozzleitall.desktop
 import com.nozzleitall.desktop.prepare.CadRecipe
 import com.nozzleitall.desktop.prepare.ModelingOps
 import com.nozzleitall.desktop.prepare.PrepItem
+import com.nozzleitall.desktop.prepare.ProfileCatalog
+import com.nozzleitall.desktop.prepare.QualityPreset
 import com.nozzleitall.desktop.prepare.SliceEngine
+import com.nozzleitall.desktop.prepare.SliceOutcome
+import com.nozzleitall.desktop.prepare.SliceRequest
 import com.nozzleitall.project.Mesh
 import com.nozzleitall.project.MeshIO
+import com.nozzleitall.project.ModelObject
+import com.nozzleitall.project.Paint
+import com.nozzleitall.project.Project3mf
+import com.nozzleitall.project.ProjectManifest
+import com.nozzleitall.project.ThreeMf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -110,6 +119,114 @@ class ModelingOpsTest {
         assertTrue(union.triangleCount > 0 && subtract.triangleCount > 0 && intersect.triangleCount > 0)
         val simplified = ModelingOps.simplify(union, union.triangleCount / 2, work)
         assertTrue(simplified.triangleCount < union.triangleCount)
+    }
+
+    @Test fun repairClosesMissingCubeFaceAndSharesExportedVertices() {
+        engineReady()
+        val work = Files.createTempDirectory("modeling-open-cube").toFile()
+        try {
+            val top = cube.bounds()[5]
+            val openTriangles = cube.triangles.toList().chunked(3)
+                .filterNot { face -> face.all { cube.vertices[it * 3 + 2] == top } }.flatten().toIntArray()
+            assertEquals(10, openTriangles.size / 3)
+            val fixture = System.getenv("NIA_AUDIT_HOLE_FIXTURE")?.let { path ->
+                ThreeMf.read(File(path)).objects.single { it.mesh.triangleCount == 10 }.mesh
+            } ?: Mesh(cube.vertices, openTriangles)
+            val (repaired, stats) = ModelingOps.repair(fixture, work)
+            assertEquals(0, stats.after.openEdges)
+            assertEquals(12, repaired.triangleCount)
+            val target = File(work, "repaired.3mf")
+            target.writeBytes(ThreeMf.write(Project3mf(
+                listOf(ModelObject(1, "Repaired cube", repaired)))))
+            val reopened = ThreeMf.read(target).objects.single().mesh
+            assertEquals(8, reopened.vertexCount)
+            val edgeUses = reopened.triangles.toList().chunked(3).flatMap { (a, b, c) ->
+                listOf(a to b, b to c, c to a).map { (u, v) -> minOf(u, v) to maxOf(u, v) }
+            }.groupingBy { it }.eachCount()
+            assertEquals(18, edgeUses.size)
+            assertTrue(edgeUses.values.all { it == 2 })
+            val profile = ProfileCatalog.byId("snapmaker_u1")!!
+            val item = PrepItem(1, "Repaired cube", reopened, profile.bedW / 2f, profile.bedD / 2f)
+            val result = SliceEngine(SliceEngine.locateEngine()!!, File(work, "slices")).slice(
+                SliceRequest(Project3mf(listOf(ModelObject(1, item.name, reopened, item.placement()))),
+                    ProfileCatalog.materialize(File(work, "cache"), profile.id), QualityPreset.STANDARD,
+                    false, 15, emptyList())) { _, _ -> }
+            assertTrue("$result", result is SliceOutcome.Done)
+            assertTrue((result as SliceOutcome.Done).gcode.length() > 0)
+            System.getenv("NIA_AUDIT_MESH_OUTPUT")?.let { directory ->
+                target.copyTo(File(directory, "repaired.3mf"), overwrite = true)
+                result.gcode.copyTo(File(directory, "repaired.gcode"), overwrite = true)
+            }
+        } finally { work.deleteRecursively() }
+    }
+
+    @Test fun simplifyKeepsPaintedCylinderFacetsAndUsesBothTools() {
+        engineReady()
+        val output = System.getenv("NIA_AUDIT_MESH_OUTPUT")?.let(::File)
+        val work = if (output == null) Files.createTempDirectory("modeling-painted-cylinder").toFile()
+            else Files.createTempDirectory(output.toPath(), "modeling-painted-cylinder").toFile()
+        try {
+            val count = 40
+            val coords = FloatArray((count * 2 + 2) * 3)
+            for (layer in 0..1) {
+                for (i in 0 until count) {
+                    val a = 2.0 * Math.PI * i / count
+                    val at = (layer * count + i) * 3
+                    coords[at] = (10 * kotlin.math.cos(a)).toFloat()
+                    coords[at + 1] = (10 * kotlin.math.sin(a)).toFloat()
+                    coords[at + 2] = layer * 15f
+                }
+                coords[(count * 2 + layer) * 3 + 2] = layer * 15f
+            }
+            val triangles = (0 until count).flatMap { i ->
+                val j = (i + 1) % count
+                listOf(i, j, count + j, i, count + j, count + i, count * 2, j, i, count * 2 + 1, count + i, count + j)
+            }.toIntArray()
+            val fixture = System.getenv("NIA_AUDIT_CYLINDER_FIXTURE")?.let { path ->
+                ThreeMf.read(File(path)).objects.single { it.mesh.triangleCount == 732 }.mesh
+            } ?: Mesh(coords, triangles)
+            val b = fixture.bounds()
+            val split = Paint.Node.Split(3, 0, listOf(2, 2, 0, 2).map {
+                Paint.Node.Leaf(it)
+            })
+            val paint = Array<String?>(fixture.triangleCount) { f ->
+                if ((0..2).all { corner -> fixture.vertices[fixture.triangles[f * 3 + corner] * 3 + 2] == b[5] }) {
+                    if (f % 2 == 0) Paint.whole(2) else Paint.encode(split)
+                } else null
+            }
+            val painted = fixture.withPaint(paint = paint)
+            val fullyPainted = fixture.withPaint(paint = Array(fixture.triangleCount) { Paint.whole(2) })
+            assertTrue(runCatching { ModelingOps.simplify(fullyPainted, fixture.triangleCount / 2, work) }
+                .exceptionOrNull()?.message.orEmpty().contains("while keeping the painted facets"))
+            val target = fixture.triangleCount / 2
+            val clean = ModelingOps.simplify(fixture, target, work)
+            assertTrue(clean.triangleCount < fixture.triangleCount)
+            val simplified = ModelingOps.simplify(painted, target, work)
+            assertTrue(simplified.triangleCount < fixture.triangleCount)
+            assertEquals(paint.filterNotNull().groupingBy { it }.eachCount(),
+                simplified.paint!!.filterNotNull().groupingBy { it }.eachCount())
+            val profile = ProfileCatalog.byId("snapmaker_u1")!!
+            val item = PrepItem(1, "Cylinder", simplified, profile.bedW / 2f, profile.bedD / 2f, paintSlots = listOf(1, 2))
+            val obj = ModelObject(1, "Cylinder", simplified, item.placement())
+            val producer = ProjectManifest.Producer("test", "desktop", "test")
+            val manifest = ProjectManifest("p", 1, "Cylinder", producer, producer, 1,
+                ProjectManifest.PrinterTarget(profile.model, profileId = profile.id),
+                listOf(ProjectManifest.PlateEntry(1, "Plate 1",
+                    listOf(ProjectManifest.ObjectEntry(1, "Cylinder", 1, paintSlots = listOf(1, 2))))))
+            val slots = listOf("#FFFFFF", "#FF0000").mapIndexed { i, color ->
+                ProjectManifest.MaterialSlot(i + 1, "PLA", colorHex = color)
+            }
+            val result = SliceEngine(SliceEngine.locateEngine()!!, File(work, "slices")).slice(
+                SliceRequest(Project3mf(listOf(obj), manifest = manifest),
+                    ProfileCatalog.materialize(File(work, "cache"), profile.id), QualityPreset.STANDARD,
+                    false, 15, slots)) { _, _ -> }
+            assertTrue("$result", result is SliceOutcome.Done)
+            result as SliceOutcome.Done
+            val tools = result.gcode.useLines { lines -> lines.map { it.substringBefore(';').trim() }.filter { it in setOf("T0", "T1") }.toSet() }
+            assertEquals(setOf("T0", "T1"), tools)
+            assertTrue(result.stats.toolChanges > 0)
+            println("Cylinder triangles: ${fixture.triangleCount} original, ${clean.triangleCount} clean, ${simplified.triangleCount} painted. Tools: $tools")
+        } finally { if (output == null) work.deleteRecursively() }
     }
 
     @Test fun textAndSvgUseOrcaGeometry() {

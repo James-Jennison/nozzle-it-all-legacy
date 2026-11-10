@@ -251,20 +251,19 @@ object ModelingOps {
         val dir = workspace(work, "simplify")
         return try {
             val out = File(dir, "result.stl")
-            run(JSONObject().put("op", "simplify").put("model", stl(mesh, dir, "model.stl").absolutePath)
-                .put("targetTriangles", targetTriangles).put("out", out.absolutePath))
-            read(out)
+            val paint = if (mesh.hasAnyPaint) SimplifyPaint(mesh) else null
+            val request = JSONObject().put("op", "simplify").put("model", stl(mesh, dir, "model.stl").absolutePath)
+                .put("targetTriangles", targetTriangles).put("out", out.absolutePath)
+            if (paint != null) request.put("protectedVertices", paint.protectedVertices())
+            run(request)
+            val simplified = read(out)
+            if (paint != null && simplified.triangleCount >= mesh.triangleCount)
+                throw EngineError("Simplify could not reduce this mesh while keeping the painted facets.")
+            if (paint == null) simplified else paint.restore(MeshRepair.indexed(simplified))
         } finally { deleteWorkspace(dir, work) }
     }
 
-    fun repairPreview(mesh: Mesh, work: File): RepairPreview {
-        val dir = workspace(work, "repair-preview")
-        return try {
-            val response = run(JSONObject().put("op", "repair").put("model", stl(mesh, dir, "model.stl").absolutePath).put("apply", false))
-            val preview = response.getJSONObject("preview")
-            RepairPreview(stats(preview.getJSONObject("before")), stats(preview.getJSONObject("after")))
-        } finally { deleteWorkspace(dir, work) }
-    }
+    fun repairPreview(mesh: Mesh, work: File): RepairPreview = repair(mesh, work).second
 
     fun repair(mesh: Mesh, work: File): Pair<Mesh, RepairPreview> {
         val dir = workspace(work, "repair")
@@ -273,7 +272,10 @@ object ModelingOps {
             val response = run(JSONObject().put("op", "repair").put("model", stl(mesh, dir, "model.stl").absolutePath)
                 .put("apply", true).put("out", out.absolutePath))
             val preview = response.getJSONObject("preview")
-            read(out) to RepairPreview(stats(preview.getJSONObject("before")), stats(preview.getJSONObject("after")))
+            val (repaired, openEdges) = MeshRepair.closePlanarHole(read(out))
+            val after = stats(preview.getJSONObject("after"))
+            repaired to RepairPreview(stats(preview.getJSONObject("before")),
+                after.copy(triangles = repaired.triangleCount, openEdges = openEdges))
         } finally { deleteWorkspace(dir, work) }
     }
 

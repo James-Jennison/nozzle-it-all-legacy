@@ -1866,7 +1866,6 @@ class PrepareState(private val app: AppState) {
             val mesh = modelingIo { ModelingOps.simplify(item.mesh, targetTriangles, plateWork()) }
             if (!matchesMeshEdit(item, null, generation)) return@runTool
             val result = withMesh(item, mesh)
-            result.paintSlots.clear()
             meshEditPreview = MeshEditPreview("Simplify mesh", item, null, result, generation, targetTriangles)
         }
     }
@@ -1887,7 +1886,7 @@ class PrepareState(private val app: AppState) {
                 items.removeAll { it.id == other.id }
                 setSelection(setOf(result.id))
             }
-            if (primary.mesh.isPainted || other?.mesh?.isPainted == true)
+            if (!result.mesh.hasAnyPaint && (primary.mesh.hasAnyPaint || other?.mesh?.hasAnyPaint == true))
                 notice = "$title changed the mesh topology, so painted facets were cleared."
             changed()
         } finally { history.endEdit() }
