@@ -385,14 +385,21 @@ class SimulatedSendMonitorUiTest {
             compose.waitUntil(15_000) {
                 compose.onAllNodes(hasTestTag("print-plate-review") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithTag("print-plate-review").performSemanticsAction(SemanticsActions.OnClick)
-            awaitText("Continue to Start")
-            compose.onNodeWithText("I checked that this file, printer profile, and loaded materials are compatible.")
-                .performSemanticsAction(SemanticsActions.OnClick)
-            compose.onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
-            awaitText("Start printing on Simulated printer?")
-            assertEquals(Destination.PREPARE, app.destination)
+            fun review() {
+                compose.onNodeWithTag("print-plate-review").performSemanticsAction(SemanticsActions.OnClick)
+                awaitText("Continue to Start")
+                compose.onNodeWithText("I checked that this file, printer profile, and loaded materials are compatible.")
+                    .performSemanticsAction(SemanticsActions.OnClick)
+                compose.onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
+                awaitText("Start printing on Simulated printer?")
+                assertEquals(Destination.PREPARE, app.destination)
+                assertEquals(0, session.starts)
+            }
+            review()
+            compose.onNodeWithText("Don't send").performSemanticsAction(SemanticsActions.OnClick)
+            compose.waitUntil(15_000) { app.fleet.queue.value.isEmpty() }
             assertEquals(0, session.starts)
+            review()
             compose.onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
             compose.waitUntil(15_000) { app.destination == Destination.MONITOR }
             assertEquals(session.identity.id, app.selectedPrinter)

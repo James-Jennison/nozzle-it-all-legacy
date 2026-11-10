@@ -109,7 +109,7 @@ class PreparePrinterPickerUiTest {
             }
             onNodeWithTag("add-plate").assertIsDisplayed().assertHasClickAction()
             if (width == 960 && scale == 1.5f) {
-                listOf("Prepare", "Preview", "Send", "Monitor", "Add plate").forEach { label ->
+                listOf("Prepare", "Preview", "Print plate", "Monitor", "Add plate").forEach { label ->
                     onNodeWithContentDescription(label).assertIsDisplayed()
                 }
             }

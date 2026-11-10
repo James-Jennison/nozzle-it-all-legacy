@@ -90,7 +90,9 @@ fun MonitorScreen(state: AppState) {
                     kind = ButtonKind.QUIET, icon = NzIcon.LAYERS, testTag = "monitor-back-preview")
         }
         val handoff = state.monitorHandoff?.takeIf { it.printerId == entry.config.identity.id }
-        val handoffSuperseded = monitorHandoffSuperseded(status)
+        val handoffSuperseded = if (handoff?.state == com.nozzleitall.desktop.MonitorHandoffState.START_UNCERTAIN)
+            state.fleet.queue.value.none { it.startUncertain && it.startPrinterId == handoff.printerId }
+        else monitorHandoffSuperseded(status)
         val showHandoff = handoff != null && !handoffSuperseded
         LaunchedEffect(handoff, handoffSuperseded) {
             if (handoff != null) state.reconcileMonitorHandoff(handoff, handoffSuperseded)

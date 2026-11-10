@@ -627,7 +627,8 @@ private fun AppHeader(state: AppState) {
                         active = activeWorkflow,
                         hasPreview = done?.preview != null,
                         hasPrinter = state.prepare.printer() != null || state.selectedPrinter != null ||
-                            state.fleet.queue.value.isNotEmpty() || state.fleet.queueRecoveryProblems.value.isNotEmpty(),
+                            state.fleet.queue.value.isNotEmpty() || state.fleet.queueRecoveryProblems.value.isNotEmpty() ||
+                            state.fleet.history.value.isNotEmpty(),
                         onSelect = state::openWorkflowStage,
                         modifier = Modifier.semantics { testTag = "header-workflow" },
                         compact = compactWorkflow,

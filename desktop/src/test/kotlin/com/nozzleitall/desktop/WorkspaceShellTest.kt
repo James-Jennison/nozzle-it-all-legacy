@@ -69,7 +69,7 @@ class WorkspaceShellTest {
     @Test
     fun `print workflow keeps familiar stages visible in their conventional order`() {
         assertEquals(
-            listOf("Prepare", "Preview", "Send", "Monitor"),
+            listOf("Prepare", "Preview", "Print plate", "Monitor"),
             PrintWorkflowStage.entries.map { it.label },
         )
         assertTrue(printWorkflowStageEnabled(PrintWorkflowStage.PREPARE, hasPreview = false, hasPrinter = false))

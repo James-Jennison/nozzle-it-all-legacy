@@ -183,6 +183,14 @@ private fun QueueRow(
                     kind = ButtonKind.QUIET, testTag = "queue-details-${item.id}")
             }
     }
+    fun dismissReview() {
+        reviewStart = null
+        expectedStart = null
+        clearReview()
+        if (onHandoff != null && stillCurrent())
+            runCatching { fleet.dequeue(item.id) }
+                .onFailure { problem = "The local print record could not be removed: ${it.message}" }
+    }
     fun requestReview(entry: PrinterEntry) {
         val session = entry.session
         val guard = entry.guard
@@ -370,11 +378,11 @@ private fun QueueRow(
                             is UploadResult.Failed -> { problem = r.reason; expectedStart = null; clearReview() }
                         }
                     }
-                }, onDismiss = { reviewStart = null; clearReview() }, cancelLabel = "Cancel")
+                }, onDismiss = ::dismissReview, cancelLabel = "Cancel")
         }
         uploading?.let { ProgressBar(it, label = "Sending to printer") }
         problem?.let { Banner(it, BannerKind.WARNING) }
-        if (candidate != null && flow != null) ActionFlowUi(flow, candidate, onDismiss = { expectedStart = null; clearReview() },
+        if (candidate != null && flow != null) ActionFlowUi(flow, candidate, onDismiss = ::dismissReview,
             beforeExecute = { prepared ->
                 check(prepared.action == expectedStart) { "The queued Start changed; review it again." }
                 check(ui.reviewContext?.invoke() == true && fleet.printers[candidate.config.identity.id] === candidate && ui.reviewedConnection?.isCurrent(candidate) == true &&
