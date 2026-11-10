@@ -844,7 +844,8 @@ fun PrepareScreen(state: AppState) {
                 if (warningsOpen) PreviewWarningPopup(
                     done.preview,
                     (viewportWidth - 24.dp).coerceIn(0.dp, 460.dp),
-                    (maxHeight - 80.dp).coerceIn(0.dp, 300.dp),
+                    (maxHeight - previewFooterHeight - 80.dp).coerceIn(0.dp, 300.dp),
+                    with(density) { (previewFooterHeight / 2).roundToPx() },
                 ) { warningsOpen = false }
             }
             if (p.showPreview && done != null && done.preview == null) Box(Modifier.align(Alignment.TopStart).padding(12.dp)) {
@@ -1179,6 +1180,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
     val warnings = previewWarningMessages(preview)
     val expanded = overlayHeight == null || showDetails
     val showsTimeBreakdown = view == PreviewView.LINE_TYPE || view == PreviewView.TOOL
+    val narrowLegend = overlayWidth != null && overlayWidth < 270.dp
     val stackedRows = overlayWidth != null && (Nz.textScale >= 1.5f || overlayWidth < 300.dp)
     val baseLegendWidth = if (Nz.textScale >= 1.5f) 390.dp else 300.dp
     val legendWidth = baseLegendWidth + if (showsTimeBreakdown) 40.dp else 0.dp
@@ -1189,7 +1191,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Box(Modifier.weight(1f)) {
                 NzButton(
-                    "Color by ${view.label}  ▾",
+                    if (narrowLegend) "${view.label} ▾" else "Color by ${view.label} ▾",
                     { viewMenuOpen = !viewMenuOpen },
                     Modifier.fillMaxWidth(),
                     kind = ButtonKind.SECONDARY,
@@ -1262,8 +1264,16 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                         val amount = if (mm >= 1000f) "%.1f m".format(mm / 1000f) else "%.0f mm".format(mm)
                         if (stackedRows) {
                             Column(Modifier.weight(1f)) {
-                                Txt(label, Nz.type.bodySmall, maxLines = 2)
-                                Txt("$time · ${percent.toInt()}% · $amount", Nz.type.bodySmall, c.textMuted)
+                                if (narrowLegend) {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Txt(label, Nz.type.bodySmall, maxLines = 2)
+                                        Txt(time, Nz.type.bodySmall, c.textMuted, maxLines = 1)
+                                    }
+                                    Txt("${percent.toInt()}% · $amount", Nz.type.bodySmall, c.textMuted)
+                                } else {
+                                    Txt(label, Nz.type.bodySmall, maxLines = 2)
+                                    Txt("$time · ${percent.toInt()}% · $amount", Nz.type.bodySmall, c.textMuted)
+                                }
                             }
                         } else {
                             Txt(label, Nz.type.bodySmall, modifier = Modifier.weight(1f), maxLines = 1)
@@ -1335,8 +1345,9 @@ private fun PreviewResetButton(onClick: () -> Unit, modifier: Modifier = Modifie
 }
 
 @Composable
-private fun PreviewWarningPopup(preview: GcodePreview, width: Dp, maxBodyHeight: Dp, close: () -> Unit) {
-    Popup(alignment = Alignment.Center, onDismissRequest = close, properties = PopupProperties(focusable = true)) {
+private fun PreviewWarningPopup(preview: GcodePreview, width: Dp, maxBodyHeight: Dp, footerOffsetPx: Int, close: () -> Unit) {
+    Popup(alignment = Alignment.Center, offset = IntOffset(0, -footerOffsetPx),
+        onDismissRequest = close, properties = PopupProperties(focusable = true)) {
         Card(Modifier.width(width), raised = true) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Txt("Preview warnings", Nz.type.label, modifier = Modifier.weight(1f))
