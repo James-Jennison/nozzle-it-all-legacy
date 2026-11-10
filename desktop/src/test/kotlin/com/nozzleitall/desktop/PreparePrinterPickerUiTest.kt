@@ -3,6 +3,8 @@ package com.nozzleitall.desktop
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
@@ -10,6 +12,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.nozzleitall.desktop.prepare.ProfileCatalog
+import com.nozzleitall.desktop.prepare.PrepItem
+import com.nozzleitall.project.MeshIO
+import com.nozzleitall.desktop.projects.ProjectsScreen
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -32,6 +37,40 @@ import java.io.File
 
 class PreparePrinterPickerUiTest {
     @get:Rule val temporary = TemporaryFolder()
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun projectSearchChangesTheSelectedDetailsAndPreservesTheOpenGuard() = runDesktopComposeUiTest(1360, 860) {
+        val root = temporary.newFolder()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val app = AppState(AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure(), scope)
+        val repo = generateSequence(File("").absoluteFile) { it.parentFile }
+            .first { File(it, "settings.gradle.kts").isFile }
+        val mesh = MeshIO.readStl(File(repo, "site-src/assets/test-cube-20mm.stl").readBytes())
+        try {
+            for (name in listOf("First fixture", "Second fixture")) {
+                app.prepare.newProject()
+                app.prepare.name = name
+                app.prepare.items += PrepItem(1, "Cube", mesh, 90f, 90f)
+                app.prepare.changed()
+                app.prepare.save()
+            }
+            app.prepare.name = "Unsaved editor"
+            app.prepare.changed()
+            setContent { NozzleTheme("dark", textScale = 1.5f) { ProjectsScreen(app) } }
+            waitUntil(10_000) {
+                onAllNodesWithText("First fixture").fetchSemanticsNodes().isNotEmpty()
+            }
+            onNodeWithContentDescription("Search projects").performTextInput("First fixture")
+            onAllNodesWithText("Second fixture").assertCountEquals(0)
+            onNodeWithText("Open").performClick()
+            runOnIdle {
+                check(app.pendingProjectAction != null)
+                assertEquals("Unsaved editor", app.prepare.name)
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
 
     @Test fun savedPrintersAndManagementAt100Percent() = verifySidebar(1f)
     @Test fun savedPrintersAndManagementAt150Percent() = verifySidebar(1.5f)

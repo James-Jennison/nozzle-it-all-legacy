@@ -142,19 +142,19 @@ private fun FilamentCatalogBrowser() {
         Field("Search brands, products or materials", query, { query = it }, placeholder = "Polymaker PLA")
         if (active == null) Txt("No matching filament products.", Nz.type.bodySmall, c.textMuted)
         else Row(Modifier.fillMaxWidth().height(360.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.width(220.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 groups.forEach { (vendor, products) ->
                     NzButton("$vendor (${products.size})", { selectedVendor = vendor; selectedMaterialType = null }, Modifier.fillMaxWidth(),
                         kind = if (vendor == active.first) ButtonKind.PRIMARY else ButtonKind.SECONDARY)
                 }
             }
-            Column(Modifier.width(150.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(0.75f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 materialTypeGroups.forEach { group ->
                     NzButton("${group.materialType} (${group.products.size})", { selectedMaterialType = group.key }, Modifier.fillMaxWidth(),
                         kind = if (group.key == activeMaterialType?.key) ButtonKind.PRIMARY else ButtonKind.SECONDARY)
                 }
             }
-            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1.6f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 activeMaterialType?.products.orEmpty().forEach { product ->
                     Row(Modifier.fillMaxWidth().border(1.dp, c.line, RoundedCornerShape(7.dp)).padding(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {

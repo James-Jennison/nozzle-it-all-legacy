@@ -9,7 +9,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -196,6 +198,7 @@ fun ProjectsScreen(state: AppState) {
     var openingRecoveryCopy by remember { mutableStateOf(false) }
     var showAllSessionDrafts by remember { mutableStateOf(false) }
     var projectQuery by remember { mutableStateOf("") }
+    var selectedProjectFile by remember { mutableStateOf<File?>(null) }
     LaunchedEffect(refresh) {
         libraryLoaded = false
         draftsLoaded = false
@@ -505,30 +508,80 @@ fun ProjectsScreen(state: AppState) {
             }
             if (visibleProjects.isEmpty()) Card(Modifier.fillMaxWidth()) {
                 Txt("No projects match “$query”.", Nz.type.bodySmall, c.textMuted)
-            } else LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(visibleProjects, key = { it.file.absolutePath }) { p ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            ProjectPreview(p)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Txt(p.name, Nz.type.title, maxLines = 1)
-                                Txt(if (p.problem == null) "Saved project" else "Needs review", Nz.type.bodySmall,
-                                    if (p.problem == null) c.textMuted else Nz.status.paused)
+            } else BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                val selected = visibleProjects.firstOrNull { it.file == selectedProjectFile } ?: visibleProjects.first()
+                val openProject: (ProjectSummary) -> Unit = { project ->
+                    state.guardProjectReplacement {
+                        runCatching { state.prepare.open(project.file) }
+                            .onSuccess { state.destination = Destination.PREPARE }
+                            .onFailure { notice = "Couldn't open ${project.name}: ${it.message}" to null }
+                    }
+                }
+                val trashProject: (ProjectSummary) -> Unit = { project ->
+                    runCatching { state.library.moveToTrash(project.file) }
+                        .onSuccess {
+                            notice = "${project.name} moved to the trash." to it
+                            refresh++
+                        }
+                        .onFailure { notice = "Couldn't move ${project.name} to the trash: ${it.message}" to null }
+                }
+                if (maxWidth >= 760.dp) {
+                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LazyColumn(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(visibleProjects, key = { it.file.absolutePath }) { project ->
+                                val active = project.file == selected.file
+                                Row(Modifier.fillMaxWidth()
+                                    .background(if (active) c.accent.copy(alpha = 0.12f) else c.surface)
+                                    .clickable(role = Role.Button) { selectedProjectFile = project.file }
+                                    .semantics { this.selected = active }
+                                    .padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    ProjectPreview(project)
+                                    Column(Modifier.weight(1f)) {
+                                        Txt(project.name, Nz.type.label, maxLines = 2)
+                                        Txt(project.printerModel ?: "Saved project", Nz.type.bodySmall, c.textMuted, maxLines = 2)
+                                    }
+                                }
                             }
                         }
-                        Txt("${p.objectCount} object${if (p.objectCount == 1) "" else "s"}${p.printerModel?.let { " · for $it" } ?: ""}", Nz.type.bodySmall, c.textMuted)
-                        Txt("Changed ${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(p.modifiedMillis))}", Nz.type.bodySmall, c.textMuted)
-                        p.problem?.let { Txt(it, Nz.type.bodySmall, Nz.status.paused) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            NzButton("Open", { state.guardProjectReplacement {
-                                runCatching { state.prepare.open(p.file) }.onSuccess { state.destination = Destination.PREPARE }.onFailure { notice = "Couldn't open ${p.name}: ${it.message}" to null }
-                            } }, kind = ButtonKind.PRIMARY, enabled = p.objectCount > 0 && !openingRecoveryCopy)
-                            NzButton("Move to trash", { runCatching { state.library.moveToTrash(p.file) }.onSuccess { notice = "${p.name} moved to the trash." to it }; refresh++ }, kind = ButtonKind.QUIET, enabled = !openingRecoveryCopy)
+                        Column(Modifier.weight(1.2f).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                            ProjectDetails(selected, !openingRecoveryCopy, openProject, trashProject)
                         }
+                    }
+                } else LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(visibleProjects, key = { it.file.absolutePath }) { project ->
+                        ProjectDetails(project, !openingRecoveryCopy, openProject, trashProject)
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProjectDetails(project: ProjectSummary, actionsEnabled: Boolean,
+                           openProject: (ProjectSummary) -> Unit, trashProject: (ProjectSummary) -> Unit) {
+    val c = Nz.colors
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ProjectPreview(project)
+            Column(Modifier.weight(1f)) {
+                Txt(project.name, Nz.type.title, maxLines = 2)
+                Txt(if (project.problem == null) "Saved project" else "Needs review", Nz.type.bodySmall,
+                    if (project.problem == null) c.textMuted else Nz.status.paused)
+            }
+        }
+        Txt(project.file.name, Nz.type.bodySmall, c.textMuted)
+        Txt("${project.objectCount} object${if (project.objectCount == 1) "" else "s"}${project.printerModel?.let { " · for $it" } ?: ""}",
+            Nz.type.bodySmall, c.textMuted)
+        val modified = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(project.modifiedMillis))
+        Txt("Changed $modified", Nz.type.bodySmall, c.textMuted)
+        project.problem?.let { Txt(it, Nz.type.bodySmall, Nz.status.paused) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            NzButton("Open", { openProject(project) }, kind = ButtonKind.PRIMARY,
+                enabled = project.objectCount > 0 && actionsEnabled)
+            NzButton("Move to trash", { trashProject(project) }, kind = ButtonKind.QUIET, enabled = actionsEnabled)
         }
     }
 }
