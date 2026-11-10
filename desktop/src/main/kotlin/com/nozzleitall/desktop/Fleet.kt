@@ -490,8 +490,8 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         refreshQueue()
         queueRecoveryProblems.value = queueStore.problems()
     }
-    fun recordDirectUpload(item: com.nozzleitall.desktop.queue.QueueItem, printerId: String, remotePath: String) {
-        if (item.directDraft) queueStore.recordDirectUpload(item, printerId, remotePath)
+    fun recordDirectUpload(item: com.nozzleitall.desktop.queue.QueueItem, printerId: String, remotePath: String, uploaded: Boolean = false) {
+        if (item.directDraft) queueStore.recordDirectUpload(item, printerId, remotePath, uploaded)
     }
     fun moveInQueue(id: String, by: Int) = synchronized(this) {
         check(id !in queuedTransfers) { "Wait for the queued file transfer to finish before reordering it." }

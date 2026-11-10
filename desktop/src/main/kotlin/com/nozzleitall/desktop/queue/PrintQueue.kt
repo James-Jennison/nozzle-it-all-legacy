@@ -119,10 +119,15 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
             if (item.startUncertain) add("Start outcome needs printer inspection for queued job ${item.id}")
             val receipt = uploadReceipt(item)
             if (receipt.exists() && !item.startUncertain) {
-                val path = runCatching { JSONObject(receipt.readText()).getString("remotePath") }.getOrNull()
-                    ?.filterNot(Char::isISOControl)?.take(160)?.takeIf(String::isNotBlank)
-                add(if (path == null) "The upload receipt for ${item.name} needs local review."
-                    else "An upload may remain on the printer as $path. Review ${item.name} before starting.")
+                val record = runCatching { JSONObject(receipt.readText()) }.getOrNull()
+                val path = record?.optString("remotePath")?.filterNot(Char::isISOControl)?.take(160)?.takeIf(String::isNotBlank)
+                add(when {
+                    path == null || record == null || record.optString("itemId") != item.id || record.optString("sha256") != item.sha256 ->
+                        "The upload receipt for ${item.name} needs local review."
+                    record.optBoolean("uploaded") ->
+                        "The printer acknowledged upload of $path. Review ${item.name} before starting."
+                    else -> "An upload may remain on the printer as $path. Review ${item.name} before starting."
+                })
             }
             if (item.sha256 == null) add("Unverified legacy queued file for ${item.id}; requeue it before starting.")
             val stored = file(item)
@@ -257,12 +262,20 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         item.directDraft && !item.startUncertain && !item.pendingLink && !uploadReceipt(item).exists()
 
     /** A receipt begins before upload dispatch. It says the remote file might exist, never that Start was sent. */
-    fun recordDirectUpload(item: QueueItem, printerId: String, remotePath: String) = withQueueLock {
+    fun recordDirectUpload(item: QueueItem, printerId: String, remotePath: String, uploaded: Boolean = false) = withQueueLock {
         check(list.any { it == item } && item.directDraft && !item.startUncertain && !item.pendingLink &&
             item.printerId == printerId) { "The direct print review changed before upload." }
         require(remotePath.length in 1..1024 && remotePath.none(Char::isISOControl)) { "The remote upload path is invalid." }
-        PrinterStore.atomicWrite(uploadReceipt(item), JSONObject().put("printerId", printerId)
-            .put("remotePath", remotePath).toString(), private = true)
+        val receipt = uploadReceipt(item)
+        if (receipt.exists()) {
+            val previous = JSONObject(receipt.readText())
+            check(previous.optString("itemId") == item.id && previous.optString("sha256") == item.sha256 &&
+                previous.optString("printerId") == printerId) { "The upload receipt belongs to a different prepared print." }
+            if (!uploaded && previous.optBoolean("uploaded")) return@withQueueLock
+        }
+        PrinterStore.atomicWrite(receipt, JSONObject().put("itemId", item.id)
+            .put("sha256", requireNotNull(item.sha256)).put("printerId", printerId)
+            .put("remotePath", remotePath).put("uploaded", uploaded).toString(), private = true)
     }
 
     /** Closing a review may discard only an unchanged draft that never dispatched an upload or Start. */

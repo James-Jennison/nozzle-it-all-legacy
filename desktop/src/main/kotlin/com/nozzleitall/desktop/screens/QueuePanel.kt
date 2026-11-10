@@ -382,8 +382,8 @@ private fun QueueRow(
                                 val result = reviewedConnection.session.upload(verified, remote) { s, t ->
                                     uploading = if (t > 0) s.toFloat() / t else null
                                 }
-                                if (result is UploadResult.Uploaded && result.remotePath != remote)
-                                    fleet.recordDirectUpload(item, printerId, result.remotePath)
+                                if (result is UploadResult.Uploaded)
+                                    fleet.recordDirectUpload(item, printerId, result.remotePath, uploaded = true)
                                 result
                             }
                         } }

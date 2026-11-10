@@ -61,7 +61,7 @@ class OctoPrintPrinterService(
         val lastDate: Double?,
         val lastSucceeded: Boolean?,
     )
-    private data class ObservedPrint(val path: String, val baseline: PrintHistory?)
+    private data class ObservedPrint(val path: String, val baseline: PrintHistory?, val activeAtNanos: Long)
     private var observedPrint: ObservedPrint? = null
     private var completedPrint: String? = null
 
@@ -89,22 +89,30 @@ class OctoPrintPrinterService(
     }
 
     private fun completionFor(state: String, jobState: String, path: String?): String? {
+        val now = System.nanoTime()
+        val recent = observedPrint?.takeIf { now - it.activeAtNanos <= TimeUnit.SECONDS.toNanos(12) }
+        val jobReportsActive = jobState.trim().equals("Printing", true) || jobState.trim().equals("Paused", true)
         if (state == "printing" || state == "paused") {
             completedPrint = null
-            if (path == null) observedPrint = null
-            else if (observedPrint?.path != path && (jobState == "Printing" || jobState == "Paused"))
-                observedPrint = ObservedPrint(path, printHistory(path))
+            if (path == null || recent?.path != path) observedPrint = null
+            if (path != null && jobReportsActive) {
+                val old = recent?.takeIf { it.path == path }
+                // If a first active poll lacked permission or arrived during a transition, another active
+                // reading may still establish a baseline. Limit failed metadata lookups while polling.
+                if (old?.baseline != null) observedPrint = old.copy(activeAtNanos = now)
+                else if (old == null || now - old.activeAtNanos >= TimeUnit.SECONDS.toNanos(6))
+                    observedPrint = ObservedPrint(path, printHistory(path), now)
+            }
             return null
         }
-        val previous = observedPrint
         observedPrint = null
-        if (state != "standby" || jobState != "Operational" || path == null) {
+        if (state != "standby" || !jobState.trim().equals("Operational", true) || path == null) {
             completedPrint = null
             return null
         }
         if (completedPrint == path) return path
         completedPrint = null
-        val baseline = previous?.takeIf { it.path == path }?.baseline ?: return null
+        val baseline = recent?.takeIf { it.path == path }?.baseline ?: return null
         val latest = printHistory(path) ?: return null
         if (latest.contentHash == baseline.contentHash && latest.lastSucceeded == true &&
             latest.succeeded > baseline.succeeded && latest.succeeded - baseline.succeeded == 1L &&
@@ -118,10 +126,11 @@ class OctoPrintPrinterService(
     override fun snapshot(): PrinterSnapshot {
         try {
             return readSnapshot()
-        } catch (e: Exception) {
-            observedPrint = null
+        } catch (e: ApiFailure) {
             completedPrint = null
-            throw e
+            if (!confirmLocalPrintCompletion) throw e
+            // An unavailable poll is not a machine error. Keep a bounded baseline for a reconnect.
+            throw java.io.IOException(e.message, e)
         }
     }
 
@@ -136,7 +145,10 @@ class OctoPrintPrinterService(
         if (printer.code !in 200..299) throw ApiFailure("OctoPrint returned HTTP ${printer.code}.")
         val status = printer.json as? JSONObject ?: throw ApiFailure("OctoPrint sent an unreadable status.")
         val flags = status.optJSONObject("state")?.optJSONObject("flags")
-        val job = (get("api", "job").json as? JSONObject)
+        val jobReply = get("api", "job")
+        val job = jobReply.json as? JSONObject
+        if (confirmLocalPrintCompletion && (jobReply.code !in 200..299 || job == null))
+            throw ApiFailure("OctoPrint job status is unavailable.")
         val completion = job?.optJSONObject("progress")?.optDouble("completion")?.takeIf { it.isFinite() } ?: 0.0
         val state = when {
             flags == null -> "error"

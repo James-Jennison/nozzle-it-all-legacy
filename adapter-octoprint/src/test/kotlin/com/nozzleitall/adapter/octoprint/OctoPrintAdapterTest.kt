@@ -35,19 +35,21 @@ class OctoPrintAdapterTest {
     }
 
     private class PrintEvidenceFixture : AutoCloseable {
-        var printing = true
-        var jobPath = "parts/cube.gcode"
-        var filePath = jobPath
-        var history = ""","prints":{"success":4,"failure":1,"last":{"date":1000,"success":true}}"""
-        var fileHash = "original-file-content-hash"
-        var historyStatus = 200
+        @Volatile var printing = true
+        @Volatile var jobState: String? = null
+        @Volatile var jobStatus = 200
+        @Volatile var jobPath = "parts/cube.gcode"
+        @Volatile var filePath = jobPath
+        @Volatile var history = ""","prints":{"success":4,"failure":1,"last":{"date":1000,"success":true}}"""
+        @Volatile var fileHash = "original-file-content-hash"
+        @Volatile var historyStatus = 200
         val server = MockWebServer().apply {
             dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse = when {
                     request.path!!.startsWith("/api/printer") -> MockResponse().setBody(
                         """{"state":{"flags":{"operational":true,"printing":$printing}}}""")
-                    request.path == "/api/job" -> MockResponse().setBody(
-                        """{"state":"${if (printing) "Printing" else "Operational"}","job":{"file":{"origin":"local","path":"$jobPath","name":"cube.gcode"}},"progress":{"completion":100.0}}""")
+                    request.path == "/api/job" -> MockResponse().setResponseCode(jobStatus).setBody(
+                        """{"state":"${jobState ?: if (printing) "Printing" else "Operational"}","job":{"file":{"origin":"local","path":"$jobPath","name":"cube.gcode"}},"progress":{"completion":100.0}}""")
                     request.path!!.startsWith("/api/files/local/") -> MockResponse().setResponseCode(historyStatus).setBody(
                         """{"origin":"local","path":"$filePath","hash":"$fileHash"$history}""")
                     else -> MockResponse().setResponseCode(404)
@@ -94,6 +96,24 @@ class OctoPrintAdapterTest {
                 assertEquals(PrinterState.READY, idle.state)
                 assertNull(idle.completedFileName)
             }
+        }
+    }
+
+    @Test fun aTransitionAndOneUnavailablePollDoNotMisreportTheActivePrint() = PrintEvidenceFixture().use { fixture ->
+        open(fixture.server).use { session ->
+            fixture.jobState = "Starting"
+            assertEquals(PrinterState.PRINTING, session.status().state)
+            fixture.jobState = " printing "
+            assertEquals(PrinterState.PRINTING, session.status().state)
+            fixture.jobStatus = 503
+            assertEquals(PrinterState.OFFLINE, session.status().state)
+            fixture.jobStatus = 200
+            fixture.jobState = null
+            fixture.printing = false
+            fixture.history = ""","prints":{"success":5,"failure":1,"last":{"date":2000,"success":true}}"""
+            val done = session.status()
+            assertEquals(PrinterState.FINISHED, done.state)
+            assertEquals("parts/cube.gcode", done.completedFileName)
         }
     }
 
