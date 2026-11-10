@@ -402,7 +402,7 @@ class SimulatedSendMonitorUiTest {
                 assertEquals(0, session.starts)
             }
             review()
-            compose.onNodeWithText("Don't send").performSemanticsAction(SemanticsActions.OnClick)
+            compose.onNodeWithText("Don't start").performSemanticsAction(SemanticsActions.OnClick)
             compose.waitUntil(15_000) { app.fleet.queue.value.isEmpty() }
             assertEquals(0, session.starts)
             review()

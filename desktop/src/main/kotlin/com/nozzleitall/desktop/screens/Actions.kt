@@ -105,7 +105,8 @@ fun ActionFlowUi(flow: ActionFlow, entry: PrinterEntry, onDismiss: () -> Unit = 
         ConfirmDialog(title = "${term.confirm.ifBlank { term.label }} on ${entry.config.identity.displayName}?", body = p.summary,
             confirmLabel = term.confirm.ifBlank { term.label }, destructive = term.destructive,
             detail = "Nozzle checks the printer is still ${p.reviewedState.label.lowercase()} before sending, and never repeats a command on its own.",
-            cancelLabel = "Don't send",
+            cancelLabel = if (p.action is PrinterAction.StartJob || p.action is PrinterAction.UploadAndStart)
+                "Don't start" else "Don't send",
             onConfirm = { scope.launch(Dispatchers.Main) {
                 val outcome = flow.confirm(beforeExecute, executionGate)
                 if (outcome != null) onResult(p, outcome)

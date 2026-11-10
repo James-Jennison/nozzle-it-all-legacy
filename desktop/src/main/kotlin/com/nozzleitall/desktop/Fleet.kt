@@ -371,7 +371,8 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
                 targetProfileId: String? = null, engineBuild: String? = null,
                 inputDigest: String? = null, sourceJobId: String? = null,
                 expectedSha256: String? = null, draftPlateId: String? = null,
-                materialPlan: com.nozzleitall.desktop.prepare.PreparedMaterialPlan? = null): com.nozzleitall.desktop.queue.QueueItem {
+                materialPlan: com.nozzleitall.desktop.prepare.PreparedMaterialPlan? = null,
+                directDraft: Boolean = false): com.nozzleitall.desktop.queue.QueueItem {
         if (printerId != null) {
             check(!printerProfileMismatch(targetProfileId, printers[printerId]?.config?.identity?.profileId)) {
                 "This file was sliced for a different machine profile. Choose a matching printer or slice again."
@@ -396,7 +397,7 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
             projectId = projectId, projectRevision = projectRevision, plateId = plateId,
             targetProfileId = targetProfileId, engineBuild = engineBuild, inputDigest = inputDigest,
             sourceJobId = sourceJobId, expectedSha256 = sourceDigest ?: expectedSha256,
-            draftPlateId = draftPlateId, materialPlan = materialPlan)
+            draftPlateId = draftPlateId, materialPlan = materialPlan, directDraft = directDraft)
         refreshQueue()
         return try { finishPendingQueueItem(pending).also { refreshQueue() } }
         catch (e: Exception) {
@@ -544,6 +545,9 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         retryCurrentObservationOutbox()
         reconcileCurrentObservations()
         retryPendingQueueLinks()
+        runCatching { queueStore.discardAbandonedDirectDrafts() }
+            .onSuccess { refreshQueue() }
+            .onFailure { queueRecoveryProblems.value += "Abandoned print reviews could not be cleared: ${it.message}" }
         reconcileStartedQueueEntries()
         applyStockSetting()
         store.load().forEach { add(it, persist = false) }

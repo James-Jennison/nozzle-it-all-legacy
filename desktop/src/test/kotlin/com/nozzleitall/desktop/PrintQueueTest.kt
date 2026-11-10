@@ -16,6 +16,22 @@ class PrintQueueTest {
     private fun tmp() = Files.createTempDirectory("queue").toFile()
     private fun gcode(dir: File, text: String = "G28\n") = File.createTempFile("job", ".gcode", dir).apply { writeText(text) }
 
+    @Test fun restartDiscardsOnlyUnstartedDirectReviews() {
+        val root = tmp()
+        val folder = File(root, "q")
+        val queue = PrintQueue(folder)
+        val file = gcode(root)
+        val queued = queue.add("Explicit queue", file, "cc1")
+        val abandoned = queue.add("Unconfirmed review", file, "cc1", directDraft = true)
+        val started = queue.add("Uncertain review", file, "cc1", pendingLink = true, directDraft = true)
+        queue.link(started.id, java.util.UUID.randomUUID().toString(), java.util.UUID.randomUUID().toString())
+        val held = queue.markStartUncertain(started.id, "cc1", "review.gcode")
+        val reopened = PrintQueue(folder)
+        reopened.discardAbandonedDirectDrafts()
+        assertEquals(listOf(queued, held), reopened.items())
+        assertFalse(File(folder, abandoned.fileName).exists())
+    }
+
     @Test fun invalidDraftIdentityLeavesNoUnindexedFile() {
         val root = Files.createTempDirectory("queue-invalid-draft").toFile()
         try {

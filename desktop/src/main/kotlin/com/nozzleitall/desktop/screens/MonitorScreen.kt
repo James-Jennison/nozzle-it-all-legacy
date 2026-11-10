@@ -90,8 +90,8 @@ fun MonitorScreen(state: AppState) {
                     kind = ButtonKind.QUIET, icon = NzIcon.LAYERS, testTag = "monitor-back-preview")
         }
         val handoff = state.monitorHandoff?.takeIf { it.printerId == entry.config.identity.id }
-        val handoffSuperseded = if (handoff?.state == com.nozzleitall.desktop.MonitorHandoffState.START_UNCERTAIN)
-            state.fleet.queue.value.none { it.startUncertain && it.startPrinterId == handoff.printerId }
+        val handoffSuperseded = if (handoff?.state in recoveryHandoffs)
+            state.fleet.queue.value.none { it.startUncertain && it.startPrinterId == handoff?.printerId }
         else monitorHandoffSuperseded(status)
         val showHandoff = handoff != null && !handoffSuperseded
         LaunchedEffect(handoff, handoffSuperseded) {
@@ -108,7 +108,7 @@ fun MonitorScreen(state: AppState) {
                             Txt("${plate.plateName} · ${plate.machine} · ${plate.nozzles} · ${plate.bed}", Nz.type.bodySmall, Nz.colors.textMuted)
                         }
                     }
-                    if (it.state == com.nozzleitall.desktop.MonitorHandoffState.START_UNCERTAIN)
+                    if (it.state in recoveryHandoffs)
                         NzButton("Open queue", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.PRIMARY)
                 }
                 Txt("Live printer status below remains authoritative.", Nz.type.bodySmall, Nz.colors.textMuted)
@@ -139,6 +139,11 @@ fun MonitorScreen(state: AppState) {
         }
     }
 }
+
+private val recoveryHandoffs = setOf(
+    com.nozzleitall.desktop.MonitorHandoffState.START_UNCERTAIN,
+    com.nozzleitall.desktop.MonitorHandoffState.STARTED_RECORD_PENDING,
+)
 
 /** A printer-reported job or terminal outcome supersedes the optimistic queue/upload handoff card. */
 internal fun monitorHandoffSuperseded(status: PrinterStatus): Boolean =

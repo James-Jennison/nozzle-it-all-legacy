@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.nozzleitall.desktop.AppState
+import com.nozzleitall.desktop.MonitorHandoffState
 import com.nozzleitall.desktop.PrinterEntry
 import com.nozzleitall.desktop.PrinterTransferBusyException
 import com.nozzleitall.desktop.printerProfileMismatch
@@ -34,6 +35,7 @@ class QueueRowUiState {
     val detailsOpen = mutableStateOf(false)
     val pinnedPrinterId = mutableStateOf<String?>(null)
     val uploading = mutableStateOf<Float?>(null)
+    var transferActive by mutableStateOf(false)
     val problem = mutableStateOf<String?>(null)
     val expectedStart = mutableStateOf<PrinterAction?>(null)
     val resolveStart = mutableStateOf<String?>(null)
@@ -102,15 +104,17 @@ internal fun DirectPrintStart(
     state: AppState,
     item: QueueItem,
     stillCurrent: () -> Boolean,
-    onHandoff: (String, ActionOutcome) -> Unit,
+    onReviewProblem: (String) -> Unit,
+    onHandoff: (String, MonitorHandoffState) -> Unit,
 ) {
     DisposableEffect(item.id) {
         onDispose {
             val ui = state.queueRowUi[item.id]
             if (state.fleet.queue.value.any { it == item } && !item.startUncertain && !item.pendingLink &&
-                ui?.uploading?.value == null && ui?.flow?.busy != true) {
+                ui?.transferActive != true && ui?.flow?.busy != true) {
                 ui?.flow?.pending = null
-                runCatching { state.fleet.dequeue(item.id, expectedItem = item) }
+                ui?.reviewStart?.value = null
+                if (item.directDraft) runCatching { state.fleet.dequeue(item.id, expectedItem = item) }
                     .onFailure { state.prepare.notice = "The local print record needs attention in Queue & history: ${it.message}" }
             }
         }
@@ -121,14 +125,15 @@ internal fun DirectPrintStart(
         NzButton("Open queue", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.SECONDARY)
         return
     }
-    QueueRow(state, current, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff)
+    QueueRow(state, current, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff, onReviewProblem = onReviewProblem)
 }
 
 @Composable
 private fun QueueRow(
     state: AppState, item: QueueItem, first: Boolean, last: Boolean,
     stillCurrent: () -> Boolean = { true },
-    onHandoff: ((String, ActionOutcome) -> Unit)? = null,
+    onHandoff: ((String, MonitorHandoffState) -> Unit)? = null,
+    onReviewProblem: ((String) -> Unit)? = null,
 ) {
     val c = Nz.colors
     val fleet = state.fleet
@@ -208,7 +213,7 @@ private fun QueueRow(
         reviewStart = null
         expectedStart = null
         clearReview()
-        if (onHandoff != null && !item.startUncertain && !item.pendingLink && uploading == null && flow?.busy != true)
+        if (onHandoff != null && item.directDraft && !item.startUncertain && !item.pendingLink && !ui.transferActive && flow?.busy != true)
             runCatching { fleet.dequeue(item.id, expectedItem = item) }
                 .onFailure { problem = "The local print record could not be removed: ${it.message}" }
     }
@@ -338,6 +343,7 @@ private fun QueueRow(
                         dismissReview()
                         problem = if (onHandoff == null) "The queued job or printer changed. Review it again."
                             else "The prepared print or printer changed. Review it again."
+                        problem?.let { onReviewProblem?.invoke(it) }
                         return@ConfirmDialog
                     }
                     problem = null
@@ -362,6 +368,7 @@ private fun QueueRow(
                         if (expectedStart == null) { problem = flow.message?.first ?: "Start could not be prepared. Review the printer before retrying."; clearReview() }
                     }
                     else scope.launch(Dispatchers.Main) {
+                        ui.transferActive = true
                         uploading = 0f
                         val r = try { fleet.withQueuedTransfer(item.id, candidate.config.identity.id) {
                             check(ui.reviewContext?.invoke() == true && fleet.printers[candidate.config.identity.id] === candidate && reviewedConnection.isCurrent(candidate)) {
@@ -375,12 +382,15 @@ private fun QueueRow(
                         } }
                             catch (e: CancellationException) { throw e }
                             catch (e: Exception) {
-                                problem = if (e is PrinterTransferBusyException) e.message else
-                                    "Transfer failed: ${e.message ?: "unknown error"}. Check the printer before retrying."
-                                clearReview()
-                                return@launch
+                                UploadResult.Failed(if (e is PrinterTransferBusyException) e.message ?: "Printer transfer busy."
+                                    else "Transfer failed: ${e.message ?: "unknown error"}. Check the printer before retrying.")
                             }
-                            finally { uploading = null }
+                            finally { uploading = null; ui.transferActive = false }
+                        if (onHandoff != null && !stillCurrent()) {
+                            dismissReview()
+                            state.prepare.notice = "The print review closed during upload. A file may remain on ${candidate.config.identity.displayName}; no Start was sent."
+                            return@launch
+                        }
                         when (r) {
                             is UploadResult.Uploaded -> {
                                 if (ui.reviewContext?.invoke() != true || fleet.printers[candidate.config.identity.id] !== candidate || !reviewedConnection.isCurrent(candidate) ||
@@ -390,6 +400,7 @@ private fun QueueRow(
                                         item.targetProfileId != candidate.config.identity.profileId) ||
                                     runCatching { fleet.queuedFile(item) }.isFailure) {
                                     problem = "The queued job or printer changed during transfer. Review it again before Start."
+                                    problem?.let { onReviewProblem?.invoke(it) }
                                     dismissReview()
                                     return@launch
                                 }
@@ -436,9 +447,9 @@ private fun QueueRow(
                             }
                             fleet.noteQueuedStarted(requireNotNull(dispatchedHold), printerId, startedPath)
                         }
-                            .onSuccess { dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, outcome) } }
+                            .onSuccess { dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, MonitorHandoffState.STARTED) } }
                             .onFailure {
-                                dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, ActionOutcome.Unknown("Local Start record needs recovery.")) }
+                                dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, MonitorHandoffState.STARTED_RECORD_PENDING) }
                                 problem = "Print started; its local record needs recovery: ${it.message}" }
                         is ActionOutcome.Rejected -> {
                             if (dispatchedHold != null)
@@ -448,7 +459,7 @@ private fun QueueRow(
                         }
                         is ActionOutcome.Unknown -> {
                             problem = "Start outcome is unknown. Inspect the printer before resolving this queued job."
-                            dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, outcome) }
+                            dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, MonitorHandoffState.START_UNCERTAIN) }
                         }
                     }
                 }

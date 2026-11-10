@@ -97,6 +97,7 @@ enum class MonitorHandoffState(val label: String) {
     UPLOADED("Uploaded to printer"),
     QUEUED("Queued for review and start"),
     STARTED("Start accepted"),
+    STARTED_RECORD_PENDING("Start accepted · local record needs recovery"),
     START_UNCERTAIN("Check Start outcome"),
 }
 
@@ -626,9 +627,7 @@ private fun AppHeader(state: AppState) {
                     PrintWorkflowBar(
                         active = activeWorkflow,
                         hasPreview = done?.preview != null,
-                        hasPrinter = state.prepare.printer() != null || state.selectedPrinter != null ||
-                            state.fleet.queue.value.isNotEmpty() || state.fleet.queueRecoveryProblems.value.isNotEmpty() ||
-                            state.fleet.history.value.isNotEmpty(),
+                        hasPrinter = true, // Queue & history is available even without a printer.
                         onSelect = state::openWorkflowStage,
                         modifier = Modifier.semantics { testTag = "header-workflow" },
                         compact = compactWorkflow,

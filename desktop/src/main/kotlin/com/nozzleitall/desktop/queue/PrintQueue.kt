@@ -46,6 +46,7 @@ data class QueueItem(
     val draftPlateId: String? = null,
     val materialPlan: PreparedMaterialPlan? = null,
     val startHoldId: String? = null,
+    val directDraft: Boolean = false,
 ) {
     internal val output: String get() = preparedOutput(fileName)
     init { require(startRemotePath == null || (startUncertain && startRemotePath.isNotBlank())) }
@@ -54,6 +55,7 @@ data class QueueItem(
             printerId?.let { put("printerId", it) }; sha256?.let { put("sha256", it) }
             jobId?.let { put("jobId", it) }; artifactId?.let { put("artifactId", it) }
             if (pendingLink) put("pendingLink", true)
+            if (directDraft) put("directDraft", true)
             projectId?.let { put("projectId", it) }; projectRevision?.let { put("projectRevision", it) }
             plateId?.let { put("plateId", it) }; targetProfileId?.let { put("targetProfileId", it) }
             engineBuild?.let { put("engineBuild", it) }; inputDigest?.let { put("inputDigest", it) }
@@ -78,7 +80,7 @@ data class QueueItem(
             j.optString("startRemotePath").ifBlank { null }, j.optString("sourceJobId").ifBlank { null },
             j.optString("draftPlateId").ifBlank { null },
             if (j.has("materialPlan")) PreparedMaterialPlan.fromJson(j.getJSONObject("materialPlan")) else null,
-            j.optString("startHoldId").ifBlank { null })
+            j.optString("startHoldId").ifBlank { null }, j.optBoolean("directDraft", false))
     }
 }
 
@@ -202,7 +204,7 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
             projectId: String? = null, projectRevision: Long? = null, plateId: String? = null,
             targetProfileId: String? = null, engineBuild: String? = null, inputDigest: String? = null,
             sourceJobId: String? = null, expectedSha256: String? = null,
-            draftPlateId: String? = null, materialPlan: PreparedMaterialPlan? = null): QueueItem = withQueueLock {
+            draftPlateId: String? = null, materialPlan: PreparedMaterialPlan? = null, directDraft: Boolean = false): QueueItem = withQueueLock {
         dir.mkdirs()
         require(source.isFile) { "Queued source file is missing." }
         require(expectedSha256 == null || Regex("[0-9a-f]{64}").matches(expectedSha256)) { "Invalid expected prepared digest." }
@@ -218,7 +220,7 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
             }
             val item = QueueItem(id, name, stored, printerId, toolheadMap, clock(), hash, jobId, artifactId, pendingLink,
                 projectId, projectRevision, plateId, targetProfileId, engineBuild, inputDigest,
-                sourceJobId = sourceJobId, draftPlateId = draftPlateId, materialPlan = materialPlan)
+                sourceJobId = sourceJobId, draftPlateId = draftPlateId, materialPlan = materialPlan, directDraft = directDraft)
             requireSafeName(item)
             Files.move(tmp.toPath(), File(dir, stored).toPath(), StandardCopyOption.ATOMIC_MOVE)
             LocalFileDurability.syncDirectory(dir)
@@ -235,6 +237,15 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         save(list - item)
         // An interrupted cleanup leaves an explicit orphan reported by problems(); it cannot erase an indexed job.
         File(dir, item.fileName).delete()
+    }
+
+    /** Only startup may discard drafts from the previous session. Holds always survive. */
+    fun discardAbandonedDirectDrafts() = withQueueLock {
+        val abandoned = list.filter { it.directDraft && !it.startUncertain && !it.pendingLink }
+        if (abandoned.isNotEmpty()) {
+            save(list - abandoned.toSet())
+            abandoned.forEach { File(dir, it.fileName).delete() }
+        }
     }
 
     /** Moves an item [by] places (negative = earlier), staying inside the list. */

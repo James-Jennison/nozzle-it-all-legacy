@@ -3432,11 +3432,10 @@ private fun SendPanel(state: AppState) {
     val items = state.fleet.queue.value
     val staged = stagedItem?.takeIf { expected -> items.any { it.id == expected.id } }
     if (staged != null) {
-        DirectPrintStart(state, staged, ::stillCurrent) { remotePath, outcome ->
+        DirectPrintStart(state, staged, ::stillCurrent, { problem = it }) { remotePath, handoff ->
             state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
                 printerId, staged.name, remotePath.substringAfterLast('/').substringAfterLast('\\'),
-                if (outcome == ActionOutcome.Accepted) com.nozzleitall.desktop.MonitorHandoffState.STARTED
-                else com.nozzleitall.desktop.MonitorHandoffState.START_UNCERTAIN, done.plateContext))
+                handoff, done.plateContext))
         }
         return
     }
@@ -3446,7 +3445,9 @@ private fun SendPanel(state: AppState) {
             item.printerId == printerId && item.targetProfileId == sendIdentity.targetProfileId &&
             (item.inputDigest == null || item.engineBuild == null || item.draftPlateId == null ||
                 sendIdentity.inputDigest == null || sendIdentity.engineBuild == null || sendIdentity.draftPlateId == null))
-    val existing = items.any(::conflicts)
+    fun reusable(item: com.nozzleitall.desktop.queue.QueueItem) =
+        !item.pendingLink && !item.startUncertain && !item.directDraft && isSameQueuedPrint(item, sendIdentity)
+    val existing = items.any { conflicts(it) && !reusable(it) }
     val compatible = done.result.output in caps.acceptedOutputs &&
         (caps.uploadAndStart || (caps.uploadJob && caps.startPrint))
     val profileMismatch = done.targetProfileId != null && profileId != null && done.targetProfileId != profileId
@@ -3472,8 +3473,12 @@ private fun SendPanel(state: AppState) {
             entry.config.identity.profileId != profileId || entry.guard?.needsReconcile == true ||
             entry.status.value.state !in PrinterAction.StartJob("x").allowedStates ||
             preparedMaterialChecks(done.materialPlan, entry.status.value, caps).any { it.blocks } ||
-            state.fleet.queue.value.any(::conflicts)) {
+            state.fleet.queue.value.any { conflicts(it) && !reusable(it) }) {
             problem = "The plate or printer changed. Review the print again."
+            return@NzButton
+        }
+        state.fleet.queue.value.firstOrNull(::reusable)?.let {
+            stagedItem = it
             return@NzButton
         }
         val tools = if (caps.multiMaterial && done.materials.size > 1)
@@ -3482,7 +3487,7 @@ private fun SendPanel(state: AppState) {
             state.fleet.enqueue(p.name, done.result.printFile, printerId, tools,
                 done.savedProjectId, done.savedProjectRevision, done.savedPlateId, done.targetProfileId,
                 done.result.engineSha256, done.result.inputSha256, expectedSha256 = digest,
-                draftPlateId = sendIdentity.draftPlateId, materialPlan = done.materialPlan)
+                draftPlateId = sendIdentity.draftPlateId, materialPlan = done.materialPlan, directDraft = true)
         }.onSuccess { stagedItem = it }
             .onFailure { problem = "Couldn't prepare Start: ${it.message}" }
     }, kind = ButtonKind.PRIMARY, icon = NzIcon.PLAY, testTag = "print-plate-review",
