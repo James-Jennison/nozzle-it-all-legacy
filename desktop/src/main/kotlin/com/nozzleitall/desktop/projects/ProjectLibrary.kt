@@ -313,7 +313,7 @@ class ProjectLibrary(private val paths: AppPaths) {
                 "Project $projectId has an interrupted save awaiting review. The original file was left unchanged."
             }
             val target = fileFor(source.nameWithoutExtension)
-            ThreeMf.writeAtomically(project, target)
+            ThreeMf.writeAtomicallyNew(project, target)
             syncDirectory(dir)
             LegacyProjectImport(target, true)
         }

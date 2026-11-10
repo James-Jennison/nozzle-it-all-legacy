@@ -296,17 +296,18 @@ object ThreeMf {
         val sourceLinks = rootLinks(entries[ROOT_RELS])
         val covers = coverLinks(sourceLinks, passthrough)
         val losses = buildList {
-            if (manifest == null && entries.keys.any { it != root && it.startsWith("3D/") }) {
+            val omittedParts = entries.keys.filter { it != root && it !in owned && it !in passthrough }
+            if (omittedParts.any { it.endsWith(".model", ignoreCase = true) }) {
                 add("Separate component files are flattened into the main model.")
             }
-            if (manifest == null) {
-                val omittedLinks = sourceLinks.filter { it.getAttribute("Type") != MODEL_REL && it !in covers }
-                omittedLinks.forEach { link ->
-                    add("Archive link omitted: ${link.getAttribute("Type")} → ${link.getAttribute("Target")}")
-                }
-                if ("Metadata/Slic3r_PE_model.config" in entries) {
-                    add("PrusaSlicer part settings are converted where supported; the original part settings file is omitted.")
-                }
+            omittedParts.forEach { add("Archive entry omitted: $it") }
+            sourceLinks.filter { it.getAttribute("Type") != MODEL_REL && it !in covers }.forEach { link ->
+                val type = link.getAttribute("Type")
+                val label = if (type in coverTypes) "Cover image link" else "Unsupported archive link"
+                add("$label omitted: ${link.getAttribute("Target")}")
+            }
+            if (!fromNozzle && manifest == null && "Metadata/model_settings.config" in entries) {
+                add("The source slicer's model settings are rewritten using the supported object, material and plate settings.")
             }
         }
         val carried = if (covers.isEmpty()) passthrough else passthrough +

@@ -262,8 +262,8 @@ fun ProjectsScreen(state: AppState) {
             if (currentCoroutineContext().isActive) comparisonLoading = false
         }
     }
-    fun openRecoveryCopy(candidate: ProjectRecoveryCandidate) {
-        if (openingRecoveryCopy) return
+    fun openRecoveryCopy(candidate: ProjectRecoveryCandidate) = state.reviewCurrentConversion {
+        if (openingRecoveryCopy) return@reviewCurrentConversion
         openingRecoveryCopy = true
         state.scope.launch(Dispatchers.Main) {
             try {
@@ -305,7 +305,11 @@ fun ProjectsScreen(state: AppState) {
             val losses = reviewed?.conversionLosses.orEmpty()
             if (losses.isEmpty()) saveCopy()
             else {
-                state.reviewConversion(listOf(file.name) + losses) {
+                state.reviewConversion(listOf(file.name) + losses, onCancel = {
+                    notice = if (index < files.lastIndex) {
+                        "Import stopped at ${file.name}. Later files in this selection were skipped." to null
+                    } else "Import canceled for ${file.name}." to null
+                }) {
                     saveCopy()
                     importProjects(files, index + 1)
                 }
@@ -454,23 +458,25 @@ fun ProjectsScreen(state: AppState) {
                         kind = ButtonKind.PRIMARY, enabled = recoveryComparison != null && comparisonProblem == null &&
                             !comparisonLoading && !openingRecoveryCopy && !restoringRecovery && !keepingSavedVersion)
                     else NzButton("Restore recovery", {
-                        restoringRecovery = true
-                        state.scope.launch(Dispatchers.Main) {
-                            try {
-                                val draft = if (state.prepare.dirty) state.prepare.toProject() else null
-                                val restored = withContext(Dispatchers.IO) {
-                                    draft?.let { state.library.preserveSessionDraft(it) }
-                                    state.library.recoverFromPart(candidate)
-                                }
-                                selectedRecovery = null; refresh++
-                                if (state.destination == Destination.PROJECTS) {
-                                    runCatching { state.prepare.open(restored) }
-                                        .onSuccess { state.destination = Destination.PREPARE }
-                                        .onFailure { notice = "Recovery was saved, but could not be opened: ${it.message}" to null }
-                                } else notice = "Recovery was saved. Open it from Projects when ready." to null
-                            } catch (e: CancellationException) { throw e }
-                            catch (e: Exception) { recoveryProblem = "Recovery was not applied: ${e.message}" }
-                            finally { restoringRecovery = false }
+                        state.reviewCurrentConversion {
+                            restoringRecovery = true
+                            state.scope.launch(Dispatchers.Main) {
+                                try {
+                                    val draft = if (state.prepare.dirty) state.prepare.toProject() else null
+                                    val restored = withContext(Dispatchers.IO) {
+                                        draft?.let { state.library.preserveSessionDraft(it) }
+                                        state.library.recoverFromPart(candidate)
+                                    }
+                                    selectedRecovery = null; refresh++
+                                    if (state.destination == Destination.PROJECTS) {
+                                        runCatching { state.prepare.open(restored) }
+                                            .onSuccess { state.destination = Destination.PREPARE }
+                                            .onFailure { notice = "Recovery was saved, but could not be opened: ${it.message}" to null }
+                                    } else notice = "Recovery was saved. Open it from Projects when ready." to null
+                                } catch (e: CancellationException) { throw e }
+                                catch (e: Exception) { recoveryProblem = "Recovery was not applied: ${e.message}" }
+                                finally { restoringRecovery = false }
+                            }
                         }
                     }, kind = ButtonKind.PRIMARY, enabled = recoveryComparison != null && candidate.problem == null &&
                         comparisonProblem == null && !comparisonLoading && !restoringRecovery && !keepingSavedVersion && !openingRecoveryCopy)

@@ -2349,7 +2349,7 @@ class PrepareState(private val app: AppState) {
     fun save(): File {
         if (!dirty && conversionLosses.isEmpty()) file?.let { return it }
         val source = file
-        val saveCopy = source != null && (source.canonicalFile.parentFile != app.library.dir.canonicalFile || manifest == null)
+        val saveCopy = source != null && (source.canonicalFile.parentFile != app.library.dir.canonicalFile || manifest == null || conversionLosses.isNotEmpty())
         val current = toProject()
         val project = if (saveCopy) forkProject(current, name) else current
         val target = if (source == null || saveCopy) app.library.saveNew(project, name)
@@ -2360,7 +2360,10 @@ class PrepareState(private val app: AppState) {
 
     /** A library Save As becomes a new project identity; an outside destination is an export copy. */
     fun saveAs(target: File): File {
-        if (file?.canonicalFile == target.canonicalFile) return save()
+        if (file?.canonicalFile == target.canonicalFile) {
+            check(conversionLosses.isEmpty()) { "Choose a new filename for the converted copy. The original was left unchanged." }
+            return save()
+        }
         check(!target.exists()) { "Save as will not replace an existing file. Choose a new name." }
         check(target.name.endsWith(".3mf", ignoreCase = true)) { "Choose a .3mf filename." }
         val libraryRoot = app.library.dir.canonicalFile

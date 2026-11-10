@@ -49,7 +49,7 @@ class ThreeMfTest {
 
     @Test fun preservesInternalCoverLinksAndReportsOmittedParts() {
         val thumb = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
-        val original = ThreeMf.readEntries(ByteArrayInputStream(ThreeMf.write(sample(null)))).toMutableMap()
+        val original = ThreeMf.readEntries(ByteArrayInputStream(ThreeMf.write(sample(null).copy(plateNames = listOf("Plate 1"))))).toMutableMap()
         val root = original.getValue("_rels/.rels").decodeToString()
         original["_rels/.rels"] = root.replace("</Relationships>", """
             <Relationship Id="cover" Type="$thumb" Target="Metadata/cover.png"/>
@@ -60,10 +60,11 @@ class ThreeMfTest {
         val cover = byteArrayOf(1, 2, 3)
         original["Metadata/cover.png"] = cover
         original["3D/_rels/3dmodel.model.rels"] = "<Relationships/>".toByteArray()
+        original["3D/Objects/source.model"] = "<model/>".toByteArray()
         val opened = ThreeMf.read(ByteArrayInputStream(zip(*original.toList().toTypedArray())))
-        assertEquals(3, opened.conversionLosses.size)
+        assertEquals(6, opened.conversionLosses.size)
         assertTrue(opened.conversionLosses.first().contains("flattened"))
-        val saved = ThreeMf.write(opened)
+        val saved = ThreeMf.write(opened.copy(manifest = manifest()))
         val entries = ThreeMf.readEntries(ByteArrayInputStream(saved))
         assertArrayEquals(cover, entries.getValue("Metadata/cover.png"))
         val links = entries.getValue("_rels/.rels").decodeToString()

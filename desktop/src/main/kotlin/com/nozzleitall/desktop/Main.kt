@@ -247,27 +247,35 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         projectSaveProblem = null
     }
 
-    internal data class ConversionReview(val losses: List<String>, val confirm: () -> Unit)
+    internal data class ConversionReview(
+        val losses: List<String>, val confirm: () -> Unit, val cancel: () -> Unit,
+    )
     internal var conversionReview by mutableStateOf<ConversionReview?>(null)
         private set
 
-    internal fun reviewConversion(losses: List<String>, action: () -> Unit) {
-        if (conversionReview != null) return
-        if (losses.isEmpty()) action() else conversionReview = ConversionReview(losses, action)
+    internal fun reviewConversion(losses: List<String>, onCancel: () -> Unit = {}, action: () -> Unit) {
+        if (conversionReview != null) {
+            prepare.notice = "Finish the current 3MF conversion review before starting another."
+            return
+        }
+        if (losses.isEmpty()) action() else conversionReview = ConversionReview(losses, action, onCancel)
     }
 
     internal fun resolveConversion(approved: Boolean) {
         val review = conversionReview ?: return
         conversionReview = null
-        if (approved) review.confirm()
+        if (approved) review.confirm() else review.cancel()
     }
 
-    internal fun reviewCurrentConversion(action: () -> Unit) {
+    internal fun reviewCurrentConversion(onStale: () -> Unit = {}, action: () -> Unit) {
         val generation = prepare.editorGeneration
         val file = prepare.file
         reviewConversion(prepare.conversionLosses) {
             if (prepare.editorGeneration == generation && prepare.file == file) action()
-            else prepare.notice = "The project changed. Review the conversion again."
+            else {
+                onStale()
+                prepare.notice = "The project changed. Review the conversion again."
+            }
         }
     }
 
@@ -278,7 +286,7 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
             action()
             return
         }
-        reviewCurrentConversion {
+        reviewCurrentConversion(onStale = ::cancelProjectReplacement) {
             if (pendingProjectAction !== action) return@reviewCurrentConversion
             try {
                 prepare.save()

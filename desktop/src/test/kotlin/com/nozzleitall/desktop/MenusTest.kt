@@ -231,6 +231,12 @@ class MenusTest {
         assertEquals(source, a.prepare.file)
         assertTrue(a.prepare.dirty)
         assertTrue(a.library.dir.listFiles().orEmpty().none { it.extension == "3mf" })
+        assertTrue(runCatching { a.prepare.saveAs(source) }.isFailure)
+
+        a.item("File", "Save").run()
+        a.prepare.addPlate()
+        a.resolveConversion(true)
+        assertTrue(a.library.dir.listFiles().orEmpty().none { it.extension == "3mf" })
 
         a.item("File", "New project").run()
         a.continueProjectReplacement(save = true)
@@ -240,7 +246,7 @@ class MenusTest {
         assertNull(a.pendingProjectAction)
         assertArrayEquals(original, source.readBytes())
         val saved = a.library.dir.listFiles()!!.single { it.extension == "3mf" }
-        assertEquals(2, ThreeMf.read(saved).manifest!!.plates.size)
+        assertEquals(3, ThreeMf.read(saved).manifest!!.plates.size)
     }
 
     @Test fun savingEditedExternalProjectLeavesItsSourceIntact() {
