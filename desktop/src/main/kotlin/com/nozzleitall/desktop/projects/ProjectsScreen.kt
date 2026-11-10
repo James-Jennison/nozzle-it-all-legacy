@@ -285,13 +285,38 @@ fun ProjectsScreen(state: AppState) {
             finally { openingRecoveryCopy = false }
         }
     }
+    fun importProjects(files: List<File>, start: Int = 0) {
+        for (index in start until files.size) {
+            val file = files[index]
+            val reviewed = try {
+                if (file.extension.equals("3mf", true)) ThreeMf.read(file, ReadLimits(maxTriangles = 50_000_000))
+                else null
+            } catch (error: Exception) {
+                notice = "Couldn't import ${file.name}: ${error.message}" to null
+                continue
+            }
+            fun saveCopy() {
+                runCatching {
+                    if (reviewed == null) state.library.import(file, state.version)
+                    else state.library.importReviewed(file, state.version, reviewed)
+                }.onFailure { notice = "Couldn't import ${file.name}: ${it.message}" to null }
+                refresh++
+            }
+            val losses = reviewed?.conversionLosses.orEmpty()
+            if (losses.isEmpty()) saveCopy()
+            else {
+                state.reviewConversion(listOf(file.name) + losses) {
+                    saveCopy()
+                    importProjects(files, index + 1)
+                }
+                return
+            }
+        }
+    }
     Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         SectionHeader("Projects", "Saved as standard 3MF files, so Android, the Web app and other slicers can open them.") {
             NzButton("Import", {
-                chooseFiles("Import models or projects", listOf("stl", "3mf", "obj")).forEach { f ->
-                    runCatching { state.library.import(f, state.version) }.onFailure { notice = "Couldn't import ${f.name}: ${it.message}" to null }
-                }
-                refresh++
+                importProjects(chooseFiles("Import models or projects", listOf("stl", "3mf", "obj")))
             }, icon = NzIcon.IMPORT, enabled = !openingRecoveryCopy)
             NzButton("New project", { state.guardProjectReplacement { state.prepare.newProject(); state.destination = Destination.PREPARE } }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, enabled = !openingRecoveryCopy)
         }

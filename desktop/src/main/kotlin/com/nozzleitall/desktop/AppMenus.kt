@@ -82,13 +82,22 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
                 chooseFiles("Inspect G-code", listOf("gcode"), multiple = false).firstOrNull()?.let { state.gcodeInspection = it }
             },
             null,
-            MenuAction("Save", ctrl(Key.S, "S"), enabled = p.dirty || p.file != null) { runCatching { p.save() }.onFailure(::report) },
+            MenuAction("Save", ctrl(Key.S, "S"), enabled = p.dirty || p.file != null) { state.reviewCurrentConversion { runCatching { p.save() }.onFailure(::report) } },
             MenuAction("Save as…", ctrl(Key.S, "S", shift = true), enabled = p.items.isNotEmpty()) {
-                chooseSaveFile("Save project as", p.name + ".3mf")?.let { f -> runCatching { p.saveAs(f) }.onFailure(::report) }
+                state.reviewCurrentConversion {
+                    chooseSaveFile("Save project as", p.name + ".3mf")?.let { f -> runCatching { p.saveAs(f) }.onFailure(::report) }
+                }
             },
             MenuAction("Reload from disk", enabled = p.file != null) { p.file?.let { f -> guarded { runCatching { p.open(f) }.onFailure(::report) } } },
             MenuAction("Export 3MF…", enabled = p.items.isNotEmpty()) {
-                chooseSaveFile("Export project", p.name + ".3mf")?.let { f -> runCatching { ThreeMf.writeAtomically(p.toProject(), f) }.onFailure(::report) }
+                state.reviewCurrentConversion {
+                    chooseSaveFile("Export project", p.name + ".3mf")?.let { f ->
+                        runCatching {
+                            if (p.conversionLosses.isEmpty()) ThreeMf.writeAtomically(p.toProject(), f)
+                            else ThreeMf.writeAtomicallyNew(p.toProject(), f)
+                        }.onFailure(::report)
+                    }
+                }
             },
             MenuAction("Export sliced file…", ctrl(Key.E, "E"), enabled = sliced != null && !p.exportingPrintFile) {
                 p.exportCurrentPrint()

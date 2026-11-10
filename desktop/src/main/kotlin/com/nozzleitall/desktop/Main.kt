@@ -247,18 +247,48 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         projectSaveProblem = null
     }
 
+    internal data class ConversionReview(val losses: List<String>, val confirm: () -> Unit)
+    internal var conversionReview by mutableStateOf<ConversionReview?>(null)
+        private set
+
+    internal fun reviewConversion(losses: List<String>, action: () -> Unit) {
+        if (conversionReview != null) return
+        if (losses.isEmpty()) action() else conversionReview = ConversionReview(losses, action)
+    }
+
+    internal fun resolveConversion(approved: Boolean) {
+        val review = conversionReview ?: return
+        conversionReview = null
+        if (approved) review.confirm()
+    }
+
+    internal fun reviewCurrentConversion(action: () -> Unit) {
+        val generation = prepare.editorGeneration
+        val file = prepare.file
+        reviewConversion(prepare.conversionLosses) {
+            if (prepare.editorGeneration == generation && prepare.file == file) action()
+            else prepare.notice = "The project changed. Review the conversion again."
+        }
+    }
+
     internal fun continueProjectReplacement(save: Boolean) {
         val action = pendingProjectAction ?: return
-        if (save) {
+        if (!save) {
+            cancelProjectReplacement()
+            action()
+            return
+        }
+        reviewCurrentConversion {
+            if (pendingProjectAction !== action) return@reviewCurrentConversion
             try {
                 prepare.save()
             } catch (error: Exception) {
                 projectSaveProblem = error.message ?: "The project could not be saved."
-                return
+                return@reviewCurrentConversion
             }
+            cancelProjectReplacement()
+            action()
         }
-        cancelProjectReplacement()
-        action()
     }
     internal var droppedProject by mutableStateOf<File?>(null)
     internal var gcodeInspection by mutableStateOf<File?>(null)
@@ -557,7 +587,12 @@ private fun runApp(open: List<File>) = application {
                 ConfirmDialog(edit.kind.label + "?", edit.detail, edit.kind.label,
                     destructive = true, onConfirm = state::confirmPlateEdit, onDismiss = state::cancelPlateEdit)
             }
-            if (state.pendingProjectAction != null) {
+            state.conversionReview?.let { review ->
+                ConfirmDialog("Save a converted copy?", "The original 3MF will stay as it is.", "Save converted copy",
+                    destructive = false, detail = review.losses.joinToString("\n\n"),
+                    onConfirm = { state.resolveConversion(true) }, onDismiss = { state.resolveConversion(false) })
+            }
+            if (state.pendingProjectAction != null && state.conversionReview == null) {
                 ConfirmDialog("Save changes?", "${state.prepare.name} has unsaved changes.", "Discard changes",
                     destructive = true, detail = state.projectSaveProblem,
                     onConfirm = { state.continueProjectReplacement(save = false) },

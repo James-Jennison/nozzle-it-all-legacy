@@ -231,6 +231,8 @@ class PrepareState(private val app: AppState) {
         get() = dirtyFlag
         set(v) { dirtyFlag = v; editorGeneration++; if (v) history.recordChange() }
     val history = PlateHistory(this)
+    var conversionLosses by mutableStateOf<List<String>>(emptyList())
+        private set
     var passthrough: Map<String, ByteArray> = emptyMap()
     var metadata: Map<String, String> = emptyMap()
     var printerId by mutableStateOf<String?>(null)
@@ -1215,7 +1217,7 @@ class PrepareState(private val app: AppState) {
         overrides.clear(); selectedUserPresetIds.clear(); supports = false; infill = 15
         mixed.clear(); mixedSettings = emptyMap(); mixSublayers = true; mixProblem = null; destinationHeadProfiles.clear()
         printerId = null
-        items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap()
+        items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap(); conversionLosses = emptyList()
         plateNames.clear(); plateNames += "Plate 1"; plateIds.clear(); plateIds += UUID.randomUUID().toString(); currentPlate = 0
         showPlateOverview = false
         nextId = 1; calibration = null
@@ -1260,7 +1262,7 @@ class PrepareState(private val app: AppState) {
             ?: p.metadata["Title"]?.trim()?.takeIf(String::isNotEmpty) ?: f.nameWithoutExtension
         presetSnapshot = openedPreset.getOrNull()
         presetSnapshotProblem = openedPreset.exceptionOrNull()?.let { "The saved preset snapshot cannot be read: ${it.message}. Review this project before slicing." }
-        passthrough = p.passthrough; metadata = p.metadata
+        passthrough = p.passthrough; metadata = p.metadata; conversionLosses = p.conversionLosses
         // Resolve the machine before interpreting a saved Process identity. Older
         // projects used "process:standard", which is a guided-quality alias rather
         // than an id in a printer library; library-backed machines must fall back to
@@ -2345,14 +2347,14 @@ class PrepareState(private val app: AppState) {
     }
 
     fun save(): File {
-        if (!dirty) file?.let { return it }
+        if (!dirty && conversionLosses.isEmpty()) file?.let { return it }
         val source = file
         val saveCopy = source != null && (source.canonicalFile.parentFile != app.library.dir.canonicalFile || manifest == null)
         val current = toProject()
         val project = if (saveCopy) forkProject(current, name) else current
         val target = if (source == null || saveCopy) app.library.saveNew(project, name)
             else source.also { app.library.save(project, it) }
-        file = target; manifest = project.manifest; dirty = false
+        file = target; manifest = project.manifest; dirty = false; conversionLosses = emptyList()
         return target
     }
 

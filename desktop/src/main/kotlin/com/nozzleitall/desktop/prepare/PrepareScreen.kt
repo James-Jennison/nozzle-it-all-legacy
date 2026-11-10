@@ -1422,7 +1422,7 @@ private fun RowScope.WorkspaceProjectControls(state: AppState) {
     NzIconButton(
         NzIcon.SAVE,
         "Save project",
-        { runCatching { p.save() }.onFailure { p.notice = "Couldn't save: ${it.message}" } },
+        { state.reviewCurrentConversion { runCatching { p.save() }.onFailure { p.notice = "Couldn't save: ${it.message}" } } },
         kind = if (p.dirty) ButtonKind.SECONDARY else ButtonKind.QUIET,
         enabled = p.dirty || p.file != null,
         testTag = "save-project",

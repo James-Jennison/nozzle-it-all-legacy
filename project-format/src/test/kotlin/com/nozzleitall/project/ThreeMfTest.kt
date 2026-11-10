@@ -47,6 +47,32 @@ class ThreeMfTest {
         assertNull(back.manifestProblem)
     }
 
+    @Test fun preservesInternalCoverLinksAndReportsOmittedParts() {
+        val thumb = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
+        val original = ThreeMf.readEntries(ByteArrayInputStream(ThreeMf.write(sample(null)))).toMutableMap()
+        val root = original.getValue("_rels/.rels").decodeToString()
+        original["_rels/.rels"] = root.replace("</Relationships>", """
+            <Relationship Id="cover" Type="$thumb" Target="Metadata/cover.png"/>
+            <Relationship Id="external" Type="$thumb" Target="https://example.invalid/cover.png" TargetMode="External"/>
+            <Relationship Id="missing" Type="$thumb" Target="/Metadata/missing.png"/>
+            </Relationships>
+        """.trimIndent()).toByteArray()
+        val cover = byteArrayOf(1, 2, 3)
+        original["Metadata/cover.png"] = cover
+        original["3D/_rels/3dmodel.model.rels"] = "<Relationships/>".toByteArray()
+        val opened = ThreeMf.read(ByteArrayInputStream(zip(*original.toList().toTypedArray())))
+        assertEquals(3, opened.conversionLosses.size)
+        assertTrue(opened.conversionLosses.first().contains("flattened"))
+        val saved = ThreeMf.write(opened)
+        val entries = ThreeMf.readEntries(ByteArrayInputStream(saved))
+        assertArrayEquals(cover, entries.getValue("Metadata/cover.png"))
+        val links = entries.getValue("_rels/.rels").decodeToString()
+        assertTrue(links.contains("""Target="/Metadata/cover.png""""))
+        assertFalse(links.contains("example.invalid"))
+        assertFalse(links.contains("missing.png"))
+        assertTrue(ThreeMf.read(ByteArrayInputStream(saved)).conversionLosses.isEmpty())
+    }
+
     @Test fun unknownManifestFieldsSurviveAnOlderReader() {
         val newer = manifest {
             put("version", org.json.JSONArray().put(1).put(3))

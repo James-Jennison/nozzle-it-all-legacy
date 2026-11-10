@@ -105,6 +105,7 @@ data class Project3mf(
     val plateNames: List<String> = emptyList(),
     /** The bed the file was laid out on (its printable_area), for placing another slicer's plates. */
     val sourceBed: Pair<Double, Double>? = null,
+    val conversionLosses: List<String> = emptyList(),
 )
 
 /** Resource limits for reading untrusted archives. */
@@ -113,6 +114,13 @@ data class ReadLimits(val maxEntries: Int = 10_000, val maxEntryBytes: Long = 51
 
 object ThreeMf {
     const val MODEL_PATH = "3D/3dmodel.model"
+    private const val ROOT_RELS = "_rels/.rels"
+    private const val MODEL_REL = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+    private val coverTypes = setOf(
+        "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail",
+        "http://schemas.bambulab.com/package/2021/cover-thumbnail-middle",
+        "http://schemas.bambulab.com/package/2021/cover-thumbnail-small",
+    )
     private const val CORE_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
     private const val PROD_NS = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
     /** Entries Nozzle regenerates on every save. Everything else is passthrough. */
@@ -285,7 +293,26 @@ object ThreeMf {
         }
         // Geometry parts (3D/...) are flattened into the canonical model on save, so they are not carried forward.
         val passthrough = entries.filterKeys { it !in owned && it != root && !it.startsWith("3D/") && it !in partSettings }
-        return Project3mf(objects, metadata, manifest, passthrough, problem, sourceFilaments(entries), parts.plateNames, sourceBed(entries))
+        val sourceLinks = rootLinks(entries[ROOT_RELS])
+        val covers = coverLinks(sourceLinks, passthrough)
+        val losses = buildList {
+            if (manifest == null && entries.keys.any { it != root && it.startsWith("3D/") }) {
+                add("Separate component files are flattened into the main model.")
+            }
+            if (manifest == null) {
+                val omittedLinks = sourceLinks.filter { it.getAttribute("Type") != MODEL_REL && it !in covers }
+                omittedLinks.forEach { link ->
+                    add("Archive link omitted: ${link.getAttribute("Type")} → ${link.getAttribute("Target")}")
+                }
+                if ("Metadata/Slic3r_PE_model.config" in entries) {
+                    add("PrusaSlicer part settings are converted where supported; the original part settings file is omitted.")
+                }
+            }
+        }
+        val carried = if (covers.isEmpty()) passthrough else passthrough +
+            (ROOT_RELS to writeRootLinks(covers))
+        return Project3mf(objects, metadata, manifest, carried, problem, sourceFilaments(entries),
+            parts.plateNames, sourceBed(entries), losses)
     }
 
     /**
@@ -299,8 +326,7 @@ object ThreeMf {
             val types = """<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="json" ContentType="application/json"/><Default Extension="config" ContentType="text/xml"/><Default Extension="gcode" ContentType="text/x.gcode"/></Types>"""
             put("[Content_Types].xml", types.toByteArray())
-            put("_rels/.rels", """<?xml version="1.0" encoding="UTF-8"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/$MODEL_PATH" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>""".toByteArray())
+            put(ROOT_RELS, writeRootLinks(coverLinks(rootLinks(project.passthrough[ROOT_RELS]), project.passthrough)))
             val meta = LinkedHashMap(project.metadata)
             project.manifest?.let { m ->
                 meta[ProjectManifest.META_PROJECT_ID] = m.projectId
@@ -481,6 +507,31 @@ object ThreeMf {
             }
         }
     }
+
+    private fun rootLinks(bytes: ByteArray?): List<Element> =
+        bytes?.let { children(parseXml(it), "Relationship") }.orEmpty()
+
+    private fun coverLinks(links: List<Element>, entries: Map<String, ByteArray>): List<Element> =
+        links.filter { link ->
+            val target = link.getAttribute("Target").removePrefix("/")
+            link.getAttribute("Type") in coverTypes &&
+                link.getAttribute("TargetMode") in listOf("", "Internal") &&
+                validEntryName(target) && target.startsWith("Metadata/") &&
+                target.endsWith(".png", ignoreCase = true) && target in entries
+        }.distinctBy { it.getAttribute("Type") to it.getAttribute("Target").removePrefix("/") }
+
+    private fun writeRootLinks(covers: List<Element>): ByteArray = buildString {
+        append("""<?xml version="1.0" encoding="UTF-8"?>""")
+        append("\n")
+        append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
+        append("""<Relationship Target="/$MODEL_PATH" Id="rel0" Type="$MODEL_REL"/>""")
+        covers.forEachIndexed { index, link ->
+            val target = xml(link.getAttribute("Target").removePrefix("/"))
+            val type = xml(link.getAttribute("Type"))
+            append("""<Relationship Target="/$target" Id="rel${index + 1}" Type="$type"/>""")
+        }
+        append("</Relationships>")
+    }.toByteArray()
 
     private fun modelPath(entries: Map<String, ByteArray>): String {
         entries["_rels/.rels"]?.let { rels ->

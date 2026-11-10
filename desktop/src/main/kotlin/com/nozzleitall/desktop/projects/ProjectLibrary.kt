@@ -232,6 +232,9 @@ class ProjectLibrary(private val paths: AppPaths) {
     /** Brings any STL/OBJ/3MF into the library as a new Nozzle project. The original file is never modified. */
     fun import(source: File, version: String): File = importInternal(source, version, null).file
 
+    internal fun importReviewed(source: File, version: String, project: Project3mf): File =
+        importInternal(source, version, null, project).file
+
     /** Repeat-safe migration of one legacy recent 3MF. Non-NIA files receive a stable migration-bound identity. */
     fun importLegacy(source: File, version: String, migrationKey: String): LegacyProjectImport =
         importInternal(source, version, UUID.nameUUIDFromBytes(migrationKey.toByteArray()).toString())
@@ -263,9 +266,10 @@ class ProjectLibrary(private val paths: AppPaths) {
         }
     }
 
-    private fun importInternal(source: File, version: String, fallbackProjectId: String?): LegacyProjectImport {
+    private fun importInternal(source: File, version: String, fallbackProjectId: String?,
+                               reviewed: Project3mf? = null): LegacyProjectImport {
         val project = if (source.name.endsWith(".3mf", true)) {
-            val p = ThreeMf.read(source, ReadLimits(maxTriangles = 50_000_000))
+            val p = reviewed ?: ThreeMf.read(source, ReadLimits(maxTriangles = 50_000_000))
             check(p.manifestProblem == null) {
                 "${p.manifestProblem} The original file was left unchanged."
             }

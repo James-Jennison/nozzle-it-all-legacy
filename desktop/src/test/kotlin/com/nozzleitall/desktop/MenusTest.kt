@@ -215,6 +215,34 @@ class MenusTest {
         assertEquals(1, quitCount)
     }
 
+    @Test fun convertingForeignProjectRequiresConfirmationAndPreservesOriginal() {
+        val a = app()
+        val source = File(a.library.dir.parentFile, "Foreign components.3mf")
+        val project = Project3mf(listOf(ModelObject(1, "cube", cube)),
+            conversionLosses = listOf("Separate component files are flattened into the main model."))
+        ThreeMf.writeAtomically(project, source)
+        val original = source.readBytes()
+        a.prepare.openProject(source, project)
+        a.prepare.addPlate()
+
+        a.item("File", "Save").run()
+        assertEquals(project.conversionLosses, a.conversionReview!!.losses)
+        a.resolveConversion(false)
+        assertEquals(source, a.prepare.file)
+        assertTrue(a.prepare.dirty)
+        assertTrue(a.library.dir.listFiles().orEmpty().none { it.extension == "3mf" })
+
+        a.item("File", "New project").run()
+        a.continueProjectReplacement(save = true)
+        assertNotNull(a.conversionReview)
+        assertNotNull(a.pendingProjectAction)
+        a.resolveConversion(true)
+        assertNull(a.pendingProjectAction)
+        assertArrayEquals(original, source.readBytes())
+        val saved = a.library.dir.listFiles()!!.single { it.extension == "3mf" }
+        assertEquals(2, ThreeMf.read(saved).manifest!!.plates.size)
+    }
+
     @Test fun savingEditedExternalProjectLeavesItsSourceIntact() {
         val a = app()
         val external = File(a.paths.config, "Foreign.3mf")
