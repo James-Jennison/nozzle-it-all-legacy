@@ -26,6 +26,8 @@ class PrintQueueTest {
         val transferred = queue.add("Uploaded review", file, "cc1", directDraft = true)
         queue.recordDirectUpload(transferred, "cc1", "uploaded.gcode")
         assertTrue(queue.problems().any { it.contains("may remain") })
+        assertTrue(runCatching { queue.recordDirectUpload(transferred, "cc1", "other.gcode") }.isFailure)
+        assertTrue(queue.problems().any { it.contains("may remain on the printer as uploaded.gcode") })
         queue.recordDirectUpload(transferred, "cc1", "remote/uploaded.gcode", uploaded = true)
         queue.recordDirectUpload(transferred, "cc1", "uploaded.gcode")
         val started = queue.add("Uncertain review", file, "cc1", pendingLink = true, directDraft = true)

@@ -120,9 +120,10 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
             val receipt = uploadReceipt(item)
             if (receipt.exists() && !item.startUncertain) {
                 val record = runCatching { JSONObject(receipt.readText()) }.getOrNull()
-                val path = record?.optString("remotePath")?.filterNot(Char::isISOControl)?.take(160)?.takeIf(String::isNotBlank)
+                val path = record?.optString("remotePath")?.takeIf(::validUploadPath)?.take(160)
                 add(when {
-                    path == null || record == null || record.optString("itemId") != item.id || record.optString("sha256") != item.sha256 ->
+                    path == null || record == null || record.optString("itemId") != item.id || record.optString("sha256") != item.sha256 || record.optString("printerId") != item.printerId ||
+                        record.opt("uploaded") !is Boolean ->
                         "The upload receipt for ${item.name} needs local review."
                     record.optBoolean("uploaded") ->
                         "The printer acknowledged upload of $path. Review ${item.name} before starting."
@@ -256,22 +257,31 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         // An interrupted cleanup leaves an explicit orphan reported by problems(); it cannot erase an indexed job.
         File(dir, item.fileName).delete()
         uploadReceipt(item).delete()
+        LocalFileDurability.syncDirectory(dir)
     }
 
     private fun canDiscardDirectDraft(item: QueueItem) =
         item.directDraft && !item.startUncertain && !item.pendingLink && !uploadReceipt(item).exists()
 
+    private fun validUploadPath(path: String) =
+        path.isNotBlank() && path.length <= 1024 && path.none(Char::isISOControl)
+
     /** A receipt begins before upload dispatch. It says the remote file might exist, never that Start was sent. */
     fun recordDirectUpload(item: QueueItem, printerId: String, remotePath: String, uploaded: Boolean = false) = withQueueLock {
         check(list.any { it == item } && item.directDraft && !item.startUncertain && !item.pendingLink &&
             item.printerId == printerId) { "The direct print review changed before upload." }
-        require(remotePath.length in 1..1024 && remotePath.none(Char::isISOControl)) { "The remote upload path is invalid." }
+        require(validUploadPath(remotePath)) { "The remote upload path is invalid." }
         val receipt = uploadReceipt(item)
         if (receipt.exists()) {
             val previous = JSONObject(receipt.readText())
             check(previous.optString("itemId") == item.id && previous.optString("sha256") == item.sha256 &&
                 previous.optString("printerId") == printerId) { "The upload receipt belongs to a different prepared print." }
-            if (!uploaded && previous.optBoolean("uploaded")) return@withQueueLock
+            if (!uploaded) {
+                if (previous.optBoolean("uploaded")) return@withQueueLock
+                check(previous.optString("remotePath") == remotePath) {
+                    "An earlier upload may still exist at a different path. Review it before uploading again."
+                }
+            }
         }
         PrinterStore.atomicWrite(receipt, JSONObject().put("itemId", item.id)
             .put("sha256", requireNotNull(item.sha256)).put("printerId", printerId)
@@ -353,6 +363,7 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         save(list - item)
         File(dir, item.fileName).delete()
         uploadReceipt(item).delete()
+        LocalFileDurability.syncDirectory(dir)
     }
 
     fun clearStartUncertain(id: String, printerId: String, expectedHold: QueueItem? = null) = withQueueLock {
