@@ -15,6 +15,7 @@ import com.nozzleitall.desktop.settings.Choice
 import com.nozzleitall.desktop.settings.NzSelect
 import com.nozzleitall.desktop.ui.*
 import java.util.Locale
+import org.json.JSONObject
 
 @Composable
 internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, dismiss: () -> Unit) {
@@ -33,6 +34,7 @@ internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, di
         val reviewed = prepare.layerActions.toMap()
         val target = prepare.layerActionTarget()
         val needsReview = !prepare.layerActionsReviewed
+        val machine = runCatching { JSONObject(target.machine) }.getOrDefault(JSONObject())
         ConfirmDialog(
             if (needsReview) "Review saved layer actions" else "Manage layer actions",
             "These actions change printer instructions at a specific height. Remove an action to choose a new layer after slicing again.",
@@ -48,7 +50,7 @@ internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, di
                     Txt(prepare.plateNames.getOrNull(plate) ?: "Saved plate", Nz.type.label)
                     actions.forEach { action ->
                         Txt("Layer ${action.layer} · Z ${height(action.z)} mm · ${action.kind.label}", Nz.type.body)
-                        val code = LayerAction.command(action.kind, prepare.machineJson(), action.text)
+                        val code = LayerAction.command(action.kind, machine, action.text)
                         Txt(code ?: "Unavailable for the selected printer profile.", Nz.type.bodySmall, c.textMuted)
                         NzButton("Remove layer ${action.layer} action", { prepare.removeLayerAction(id, action.id) },
                             kind = ButtonKind.QUIET)
@@ -69,7 +71,7 @@ internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, di
     val stillCurrent = matchesPreview()
     var kind by remember(plateId, cursor.index, existing) { mutableStateOf(existing?.kind ?: LayerAction.Kind.PAUSE) }
     var commands by remember(plateId, cursor.index, existing) { mutableStateOf(existing?.text.orEmpty()) }
-    val machine = prepare.machineJson()
+    val machine = runCatching { JSONObject(target.machine) }.getOrDefault(JSONObject())
     val code = LayerAction.command(kind, machine, commands)
     val types = LayerAction.Kind.entries.map { Choice(it.name, it.label) }
     ConfirmDialog(

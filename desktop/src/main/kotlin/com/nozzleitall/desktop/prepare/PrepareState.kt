@@ -39,6 +39,7 @@ private data class SliceInputSnapshot(
     val physical: List<Pair<String, String?>>,
     val mixSublayers: Boolean,
     val presetSelection: PrepareState.PresetSelection,
+    val layerActionMachine: String?,
 )
 
 /**
@@ -535,7 +536,10 @@ class PrepareState(private val app: AppState) {
 
     internal val layerActions = mutableStateMapOf<String, List<LayerAction>>()
     internal data class LayerActionTarget(val printerId: String?, val profileId: String, val nozzle: String?, val machine: String)
-    internal fun layerActionTarget() = LayerActionTarget(printerId, profileId, nozzle, machineJson().toString())
+    internal fun layerActionTarget(): LayerActionTarget {
+        val machine = runCatching { File(profileDir(), "machine.json").readText() }.getOrDefault("")
+        return LayerActionTarget(printerId, profileId, nozzle, machine)
+    }
     internal var reviewedLayerActionTarget by mutableStateOf<LayerActionTarget?>(null)
         private set
     internal val layerActionsReviewed: Boolean
@@ -546,7 +550,7 @@ class PrepareState(private val app: AppState) {
         get() = "Some saved layer actions could not be read. The original data was preserved."
             .takeIf { unreadableLayerActions.isNotEmpty() }
     internal fun reviewLayerActions(target: LayerActionTarget = layerActionTarget()) {
-        if (layerActionProblem == null && target == layerActionTarget()) reviewedLayerActionTarget = target
+        if (layerActionProblem == null && target.machine.isNotEmpty() && target == layerActionTarget()) reviewedLayerActionTarget = target
     }
     internal fun restoreLayerActions(actions: Map<String, List<LayerAction>>, target: LayerActionTarget?, unreadable: Map<String, String>) {
         layerActions.clear(); layerActions.putAll(actions)
@@ -567,7 +571,9 @@ class PrepareState(private val app: AppState) {
         val done = slice as? SliceState.Done ?: return false
         val actual = done.preview?.let { previewLayerCursor(it, layer - 1) } ?: return false
         if (actual.index + 1 != layer || kotlin.math.abs(actual.z - z) > 0.0001) return false
-        if (LayerAction.command(kind, machineJson(), text) == null) return false
+        val target = layerActionTarget()
+        val machine = runCatching { JSONObject(target.machine) }.getOrNull() ?: return false
+        if (LayerAction.command(kind, machine, text) == null) return false
         val actions = layerActions[plateId].orEmpty()
         val prior = actions.firstOrNull { it.layer == layer }
         if (prior == null && actions.size >= LayerAction.MAX_ACTIONS) return false
@@ -575,7 +581,7 @@ class PrepareState(private val app: AppState) {
             if (kind == LayerAction.Kind.CUSTOM) text.trim() else "")
         editSelection {
             layerActions[plateId] = (actions.filterNot { it.layer == layer } + action).sortedBy { it.layer }
-            reviewedLayerActionTarget = layerActionTarget()
+            reviewedLayerActionTarget = target
             changed()
         }
         return true
@@ -1131,8 +1137,8 @@ class PrepareState(private val app: AppState) {
     /** Each nozzle's flow type ("standard" / "high_flow"); missing entries are standard. */
     val nozzleFlows = mutableStateListOf<String>()
 
-    private var machineCache: Pair<Triple<String, String?, PresetSnapshot?>, JSONObject>? = null
-    fun machineJson(): JSONObject { val key = Triple("$profileId@${activeCustomSetup?.hashCode() ?: 0}", nozzle, presetSnapshot)
+    private var machineCache: Pair<String, JSONObject>? = null
+    fun machineJson(): JSONObject { val key = "$profileId@${nozzle.orEmpty()}@${activeCustomSetup?.hashCode() ?: 0}"
         return machineCache?.takeIf { it.first == key }?.second
             ?: runCatching { JSONObject(File(profileDir(), "machine.json").readText()) }.getOrDefault(JSONObject()).also { machineCache = key to it } }
     fun beds(): PrinterSetup.Beds = PrinterSetup.beds(machineJson())
@@ -1272,7 +1278,7 @@ class PrepareState(private val app: AppState) {
             runCatching { LayerAction.read(plate) }.onSuccess { actions ->
                 if (actions.isNotEmpty()) layerActions[id] = actions
             }.onFailure {
-                unreadableLayerActions = unreadableLayerActions + (id to plate.unknown.toString())
+                unreadableLayerActions = unreadableLayerActions + (id to LayerAction.unreadable(plate))
             }
         }
 
@@ -2200,8 +2206,7 @@ class PrepareState(private val app: AppState) {
                     ProjectManifest.ObjectEntry(it.id, it.name, sliceSlot(it.slot), paintSlots = it.paintSlots.map { s -> if (s in unoffered) sliceSlot(it.slot) else s }, settings = it.settings.toMap(), parts = it.parts.toList(), heightRanges = it.ranges.toList(), layerProfile = it.layerProfile.toList(), instanceOf = it.instanceOf) },
                     (base.plates.firstOrNull { old -> (old.id ?: ProjectManifest.legacyPlateId(base.projectId, old.index)) == plateIds[i] }
                         ?.unknown ?: JSONObject()).let { unknown ->
-                        unreadableLayerActions[plateIds[i]]?.let(::JSONObject)
-                            ?: LayerAction.write(unknown, layerActions[plateIds[i]].orEmpty())
+                        LayerAction.write(unknown, layerActions[plateIds[i]].orEmpty(), unreadableLayerActions[plateIds[i]])
                     },
                     plateIds[i]) },
                 materials = materials(),
@@ -2305,7 +2310,8 @@ class PrepareState(private val app: AppState) {
                 val project = toProject(forSlice = true, slicePlate = plate)
                 plateIds[plate] to (plateNames[plate] to SliceInputSnapshot(project, preset, supports, infill,
                     project.manifest?.materials.orEmpty(), library() == null, editedFlush()?.toList(),
-                    printerOverrides() + (effectiveOverrides() - FLUSH_KEY), offeredMixed(), typedPhysical(), mixSublayers, presetSelection()))
+                    printerOverrides() + (effectiveOverrides() - FLUSH_KEY), offeredMixed(), typedPhysical(), mixSublayers, presetSelection(),
+                    reviewedLayerActionTarget?.machine?.takeIf { layerActions[plateIds[plate]].orEmpty().isNotEmpty() }))
             }
         }.getOrElse { error ->
             slice = SliceState.Failed("The slice inputs could not be prepared: ${error.message}", GuidanceFailureKind.INPUTS)
@@ -2330,7 +2336,8 @@ class PrepareState(private val app: AppState) {
                         val request = SliceRequest(input.project, profileDirectory, input.preset, input.supports, input.infill,
                             input.materials, applyPreset = input.applyPreset, flushMatrix = input.flush,
                             savedFilamentProfiles = selectedPreset?.filamentProfiles.orEmpty(),
-                            extraOverrides = input.overrides + settings, bambuBundle = bambuBundle && calibrationAtStart == null)
+                            extraOverrides = input.overrides + settings, bambuBundle = bambuBundle && calibrationAtStart == null,
+                            layerActionMachine = input.layerActionMachine)
                         if (sliceCancelRequested || generation != sliceGeneration) return@withContext SliceState.Cancelled
                         val index = results.size
                         when (val outcome = worker.slice(request) { progress, stage ->

@@ -35,6 +35,7 @@ data class SliceRequest(
     /** Exact filament preset JSON captured with the saved project, until its update is reviewed. */
     val savedFilamentProfiles: Map<String, String> = emptyMap(),
     val bambuBundle: Boolean = false,
+    val layerActionMachine: String? = null,
 )
 
 data class SliceStats(val layers: Int?, val seconds: Double?, val grams: Double?, val metres: Double?, val toolChanges: Int)
@@ -188,9 +189,9 @@ class SliceEngine(private val binary: File, private val workDir: File) {
          * files unmodified, then guided preset, infill, supports, the multi-material recipe when more than one slot is in use,
          * and explicit overrides last; each object as its own mesh placed by footprint centre relative to the bed centre.
          */
-        private fun layerCommands(req: SliceRequest, actions: List<LayerAction>): Map<String, String> {
+        private fun layerCommands(machineText: String, actions: List<LayerAction>): Map<String, String> {
             if (actions.isEmpty()) return emptyMap()
-            val machine = JSONObject(File(req.profileDir, "machine.json").readText())
+            val machine = JSONObject(machineText)
             return actions.associate { action ->
                 val commands = LayerAction.command(action.kind, machine, action.text)
                     ?: throw IllegalArgumentException("${action.kind.label} at layer ${action.layer} is unavailable for this printer profile.")
@@ -198,10 +199,20 @@ class SliceEngine(private val binary: File, private val workDir: File) {
             }
         }
 
-        fun nativeRequest(req: SliceRequest, job: File, gcode: File): String =
-            nativeRequest(req, job, gcode, layerCommands(req, LayerAction.fromSlice(req.project)))
+        fun nativeRequest(req: SliceRequest, job: File, gcode: File): String {
+            val actions = LayerAction.fromSlice(req.project)
+            val machine = layerActionMachineFile(req, job)
+            return nativeRequest(req, job, gcode, machine, layerCommands(machine.readText(), actions))
+        }
 
-        private fun nativeRequest(req: SliceRequest, job: File, gcode: File, commands: Map<String, String>): String {
+        private fun layerActionMachineFile(req: SliceRequest, job: File): File {
+            val source = File(req.profileDir, "machine.json")
+            val reviewed = req.layerActionMachine ?: return source
+            require(source.readText() == reviewed) { "The machine preset changed after review. Review the layer actions again." }
+            return File(job, "reviewed-machine.json").apply { writeText(reviewed) }
+        }
+
+        private fun nativeRequest(req: SliceRequest, job: File, gcode: File, machine: File, commands: Map<String, String>): String {
             val lines = mutableListOf("out\t${gcode.absolutePath}")
             if (req.bambuBundle) lines += "format\tbambu-bundle"
             val entries = req.project.manifest?.plates?.flatMap { it.objects }?.associateBy { it.objectId } ?: emptyMap()
@@ -217,7 +228,7 @@ class SliceEngine(private val binary: File, private val workDir: File) {
             // slicer combines its filament presets); otherwise the printer profile's own filament.
             val filaments = FilamentLibrary.writeCombined(FilamentLibrary.keyForDir(req.profileDir.name), req.profileDir, slots, job,
                 req.savedFilamentProfiles) ?: File(req.profileDir, "filament.json")
-            listOf(File(req.profileDir, "machine.json"), File(req.profileDir, "process.json"), filaments).forEach { lines += "profile\t${it.absolutePath}" }
+            listOf(machine, File(req.profileDir, "process.json"), filaments).forEach { lines += "profile\t${it.absolutePath}" }
             val baseNozzleC = runCatching { JSONObject(File(req.profileDir, "filament.json").readText()).optJSONArray("nozzle_temperature")?.optString(0)?.toIntOrNull() }.getOrNull()
             fun slotNozzleC(s: ProjectManifest.MaterialSlot): Int? = (s.filamentProfile?.let { id -> FilamentLibrary.savedProfile(id, req.savedFilamentProfiles)
                 ?: FilamentLibrary.profileJson(FilamentLibrary.keyForDir(req.profileDir.name), id) }
@@ -237,7 +248,7 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                 require(!Regex("[\t\n\r]").containsMatchIn(k + v)) { "Settings may not contain tabs or line breaks." }
                 lines += "set\t$k\t$v"
             }
-            val machineText = File(req.profileDir, "machine.json").readText()
+            val machineText = machine.readText()
             for (action in LayerAction.fromSlice(req.project)) {
                 val payload = commands.getValue(action.id).encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 0xff) }
                 lines += "layer_action\t${action.layer}\t${action.z}\t${action.id}\t$payload"
@@ -355,17 +366,24 @@ class SliceEngine(private val binary: File, private val workDir: File) {
         val gcode = File(outputDir, "plate.gcode")
         val bundle = if (req.bambuBundle) File(outputDir, "plate.gcode.3mf") else null
         val request = File(job, "request.txt")
-        val actions = LayerAction.fromSlice(req.project)
-        val commands = layerCommands(req, actions)
-        val requestText = try { nativeRequest(req, job, gcode, commands) }
-            catch (e: IllegalArgumentException) { return SliceOutcome.Failed(e.message ?: "The slice request is invalid.", "") }
+        val actions: List<LayerAction>
+        val commands: Map<String, String>
+        val machine: File
+        val requestText = try {
+            actions = LayerAction.fromSlice(req.project)
+            machine = layerActionMachineFile(req, job)
+            commands = layerCommands(machine.readText(), actions)
+            nativeRequest(req, job, gcode, machine, commands)
+        } catch (e: IllegalArgumentException) {
+            return SliceOutcome.Failed(e.message ?: "The slice request is invalid.", "")
+        }
         request.writeText(requestText)
         // These sources follow nativeRequest's precedence. Keep invalid entries in place so indices never shift.
         val nozzleOverride = req.extraOverrides["nozzle_diameter"]
             ?: req.preset.overrides["nozzle_diameter"]?.takeIf { req.applyPreset }
         val nozzleValues = nozzleOverride?.split(',') ?: runCatching {
-            val machine = JSONObject(File(req.profileDir, "machine.json").readText())
-            if (machine.has("nozzle_diameter")) PrinterSetup.nozzles(machine) else emptyList()
+            val profile = JSONObject(machine.readText())
+            if (profile.has("nozzle_diameter")) PrinterSetup.nozzles(profile) else emptyList()
         }.getOrDefault(emptyList())
         val nozzleDiameters = nozzleValues.map { it.trim().toDoubleOrNull()?.takeIf { mm -> mm.isFinite() && mm > 0 } }
         val inputs = request.readLines().mapNotNull { line ->

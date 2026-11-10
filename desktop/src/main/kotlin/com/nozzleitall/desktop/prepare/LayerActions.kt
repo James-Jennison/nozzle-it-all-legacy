@@ -36,12 +36,18 @@ internal data class LayerAction(val id: String, val layer: Int, val z: Double, v
             }
         }
 
-        fun write(unknown: JSONObject, actions: List<LayerAction>): JSONObject = JSONObject(unknown.toString()).apply {
-            if (actions.isEmpty()) remove(KEY) else put(KEY, JSONArray(actions.map { action ->
-                JSONObject().put("id", action.id).put("layer", action.layer).put("z", action.z)
-                    .put("kind", action.kind.name).put("text", action.text)
-            }))
-        }
+        fun unreadable(plate: ProjectManifest.PlateEntry): String =
+            JSONObject().put(KEY, plate.unknown.get(KEY)).toString()
+
+        fun write(unknown: JSONObject, actions: List<LayerAction>, unreadable: String? = null): JSONObject =
+            JSONObject(unknown.toString()).apply {
+                if (unreadable != null) put(KEY, JSONObject(unreadable).get(KEY))
+                else if (actions.isEmpty()) remove(KEY)
+                else put(KEY, JSONArray(actions.map { action ->
+                    JSONObject().put("id", action.id).put("layer", action.layer).put("z", action.z)
+                        .put("kind", action.kind.name).put("text", action.text)
+                }))
+            }
 
         fun validCommands(text: String): Boolean =
             text.length in 1..2048 && text.any { !it.isWhitespace() } &&

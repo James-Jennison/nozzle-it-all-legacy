@@ -111,6 +111,13 @@ class LayerActionsTest {
                 assertTrue(prepare.slice is SliceState.Failed)
                 prepare.nozzle = oldNozzle
                 prepare.reviewLayerActions()
+                val reviewedProject = prepare.toProject(forSlice = true)
+                val changedMachine = SliceRequest(reviewedProject, prepare.profileDir(), QualityPreset.STANDARD,
+                    false, 15, emptyList(), layerActionMachine = "{}")
+                val incompatible = runCatching {
+                    SliceEngine.nativeRequest(changedMachine, root, root.resolve("unexpected.gcode"))
+                }.exceptionOrNull()
+                assertTrue(incompatible?.message.orEmpty().contains("changed after review"))
                 val restored = slice()
                 assertTrue(restored.result.gcode.readText().contains(";NIA_LAYER_ACTION ${edited.id}\nM117 Layer fixture"))
                 prepare.showPlate(1)
@@ -119,7 +126,7 @@ class LayerActionsTest {
                 val beforeRecovery = prepare.toProject()
                 val manifest = requireNotNull(beforeRecovery.manifest)
                 val broken = manifest.plates[1].let {
-                    it.copy(unknown = JSONObject(it.unknown.toString()).put("nia_layer_actions", "future data"))
+                    it.copy(unknown = JSONObject(it.unknown.toString()).put("nia_layer_actions", "future data").put("future_plate_key", 17))
                 }
                 val recoveryFile = root.resolve("unreadable-actions.3mf")
                 recoveryFile.writeBytes(ThreeMf.write(beforeRecovery.copy(manifest = manifest.copy(
@@ -132,6 +139,7 @@ class LayerActionsTest {
                 prepare.discardUnreadableLayerActions()
                 assertNull(prepare.layerActionProblem)
                 assertFalse(prepare.toProject().manifest!!.plates[1].unknown.has("nia_layer_actions"))
+                assertEquals(17, prepare.toProject().manifest!!.plates[1].unknown.getInt("future_plate_key"))
                 prepare.history.undo()
                 assertNotNull(prepare.layerActionProblem)
                 prepare.history.redo()
