@@ -46,7 +46,7 @@ import kotlinx.coroutines.SupervisorJob
 /** Main areas stay reachable from the invariant header. Prepare is the product's primary slicer workspace. */
 enum class Destination(val label: String, val icon: NzIcon, val key: Key, val inDestinations: Boolean = true) {
     PREPARE("Workspace", NzIcon.PREPARE, Key.Six),
-    JOBS("Jobs", NzIcon.MONITOR, Key.One),
+    JOBS("Queue & history", NzIcon.MONITOR, Key.One, inDestinations = false),
     PROJECTS("Projects", NzIcon.PROJECTS, Key.Two),
     FLEET("Printers", NzIcon.FLEET, Key.Three),
     MATERIALS("Materials", NzIcon.MATERIALS, Key.Four),
@@ -67,7 +67,7 @@ enum class Destination(val label: String, val icon: NzIcon, val key: Key, val in
 }
 
 /** The destination menu distinguishes the slicing workflow from libraries and workshop tools. */
-internal val primaryDestinations = listOf(Destination.PREPARE, Destination.JOBS)
+internal val primaryDestinations = listOf(Destination.PREPARE)
 internal val libraryDestinations = listOf(Destination.PROJECTS, Destination.FLEET, Destination.MATERIALS)
 internal val workshopDestinations = listOf(Destination.ENVIRONMENT)
 
@@ -96,6 +96,8 @@ internal data class PendingPlateEdit(
 enum class MonitorHandoffState(val label: String) {
     UPLOADED("Uploaded to printer"),
     QUEUED("Queued for review and start"),
+    STARTED("Start accepted"),
+    START_UNCERTAIN("Check Start outcome"),
 }
 
 data class MonitorHandoff(
@@ -373,6 +375,7 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
             PrintWorkflowStage.PREVIEW -> returnToWorkspace(preview = true)
             PrintWorkflowStage.SEND -> returnToWorkspace(preview = true, send = true)
             PrintWorkflowStage.MONITOR -> (prepare.printer()?.config?.identity?.id ?: selectedPrinter)?.let(::openPrinter)
+                ?: run { destination = Destination.MONITOR }
         }
     }
     fun reportWorkspaceSendOpen(open: Boolean) { workspaceSendOpen = open }
@@ -623,7 +626,8 @@ private fun AppHeader(state: AppState) {
                     PrintWorkflowBar(
                         active = activeWorkflow,
                         hasPreview = done?.preview != null,
-                        hasPrinter = state.prepare.printer() != null || state.selectedPrinter != null,
+                        hasPrinter = state.prepare.printer() != null || state.selectedPrinter != null ||
+                            state.fleet.queue.value.isNotEmpty() || state.fleet.queueRecoveryProblems.value.isNotEmpty(),
                         onSelect = state::openWorkflowStage,
                         modifier = Modifier.semantics { testTag = "header-workflow" },
                         compact = compactWorkflow,
@@ -633,11 +637,9 @@ private fun AppHeader(state: AppState) {
                 Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     val selected = when (state.destination) {
                         Destination.FLEET, Destination.PRINTER_MATERIALS -> Destination.FLEET
-                        Destination.JOBS, Destination.HISTORY -> Destination.JOBS
                         else -> null
                     }
                     HeaderDestinationTab(Destination.FLEET, selected == Destination.FLEET) { state.destination = Destination.FLEET }
-                    HeaderDestinationTab(Destination.JOBS, selected == Destination.JOBS) { state.destination = Destination.JOBS }
                 }
             }
         }

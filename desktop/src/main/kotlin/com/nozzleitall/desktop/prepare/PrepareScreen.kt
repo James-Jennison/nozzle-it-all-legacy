@@ -910,7 +910,7 @@ fun PrepareScreen(state: AppState) {
                         drawer == Drawer.PRINTER -> { DrawerTitle("Printer", { drawer = null }); StepPrinter(state) }
                         drawer == Drawer.FILAMENT -> { DrawerTitle("Filament", { drawer = null }); MaterialsSection(state) }
                         sendPreflightVisible(p.showPreview, drawer == Drawer.SEND, done != null) -> {
-                            DrawerTitle("Send", { drawer = null })
+                            DrawerTitle("Print plate", { drawer = null })
                             SendDrawer(state, done!!, showSetupContext = true) { drawer = it }
                         }
                     }
@@ -1122,7 +1122,7 @@ private fun WorkspaceInspector(
         ) {
             when {
                 sendPreflightVisible(p.showPreview, drawer == Drawer.SEND, done != null) -> {
-                    DrawerTitle("Send review", { setDrawer(null) })
+                    DrawerTitle("Print plate", { setDrawer(null) })
                     SendDrawer(state, done!!, showSetupContext = false) { setDrawer(it) }
                 }
                 p.showPreview && done?.preview != null -> {
@@ -2130,7 +2130,7 @@ internal fun RowScope.WorkspaceSliceAction(state: AppState) {
             Txt(listOfNotNull(formatDuration(st.seconds), st.grams?.let { "%.0f g".format(it) }).joinToString(" · "), Nz.type.metricSmall, maxLines = 1)
             com.nozzleitall.desktop.settings.IconToggle(NzIcon.SLICE, "Slice again", false) { p.slice(state.scope) }
             if (p.showPreview)
-                NzButton("Send", { state.openWorkflowStage(PrintWorkflowStage.SEND) }, kind = ButtonKind.PRIMARY, icon = NzIcon.SEND, testTag = "open-send")
+                NzButton("Print plate", { state.openWorkflowStage(PrintWorkflowStage.SEND) }, kind = ButtonKind.PRIMARY, icon = NzIcon.SEND, testTag = "open-send")
             else NzButton("Preview", { state.openWorkflowStage(PrintWorkflowStage.PREVIEW) }, kind = ButtonKind.PRIMARY, icon = NzIcon.LAYERS, testTag = "open-preview")
         }
     }
@@ -2168,7 +2168,12 @@ private fun SendDrawer(
     s.preview?.let { PreviewWarnings(it) }
     val outside = p.outOfBounds().map { it.name }
     outside.forEach { Banner("$it is outside the selected printer's build area; move it onto the plate before queuing or sending.", BannerKind.DANGER) }
-    SendPanel(state)
+    var uploadOnly by remember(s) { mutableStateOf(false) }
+    if (uploadOnly) UploadOnlyPanel(state) else SendPanel(state)
+    if (p.printer()?.capabilities?.value?.uploadJob == true) {
+        NzButton(if (uploadOnly) "Back to print review" else "Upload only", { uploadOnly = !uploadOnly },
+            kind = ButtonKind.QUIET, testTag = "upload-only")
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NzButton("Export file", { chooseSaveFile("Export sliced file", p.name + "." + s.result.output)?.let { t -> s.result.printFile.copyTo(t, overwrite = true) } }, kind = ButtonKind.QUIET, icon = NzIcon.EXPORT)
         NzButton("Add to queue", {
@@ -2179,8 +2184,8 @@ private fun SendDrawer(
                     s.savedProjectId, s.savedProjectRevision, s.savedPlateId, s.targetProfileId,
                     s.result.engineSha256, s.result.inputSha256,
                     draftPlateId = s.plateContext?.draftQueueId?.takeIf { s.savedProjectId == null }, materialPlan = s.materialPlan)
-            }.onSuccess { p.notice = "Added to the print queue on the Jobs page." }
-                .onFailure { p.notice = "Couldn't add the prepared file to Jobs: ${it.message ?: "Unknown queue error."}" }
+            }.onSuccess { p.notice = "Added to Queue & history in Monitor." }
+                .onFailure { p.notice = "Couldn't add the prepared file to the queue: ${it.message ?: "Unknown queue error."}" }
         }, kind = ButtonKind.QUIET, enabled = outside.isEmpty(), testTag = "add-to-queue")
     }
 }
@@ -3391,12 +3396,102 @@ private fun NumberField(label: String, value: Float, onValue: (Float) -> Unit) {
 private fun SendPanel(state: AppState) {
     val p = state.prepare
     val c = Nz.colors
+    val entry = p.printer() ?: run { Txt("No printer connected: export the file and send it yourself, or choose Connection in the Printer section.", Nz.type.bodySmall, c.textMuted); return }
+    val caps = entry.capabilities.value ?: run { Txt("Connecting to ${entry.config.identity.displayName}…", Nz.type.bodySmall, c.textMuted); return }
+    val done = p.slice as? SliceState.Done ?: return
+    var preparedDigest by remember(done) { mutableStateOf<String?>(null) }
+    var digestChecked by remember(done) { mutableStateOf(false) }
+    var stagedId by remember(done, entry) { mutableStateOf<String?>(null) }
+    var problem by remember(done, entry) { mutableStateOf<String?>(null) }
+    LaunchedEffect(done) {
+        preparedDigest = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try { digestPreparedFile(done.result.printFile) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { null }
+        }
+        digestChecked = true
+    }
+    val printerId = entry.config.identity.id
+    val profileId = entry.config.identity.profileId
+    val status = entry.status.value
+    val session = entry.session
+    val guard = entry.guard
+    fun stillCurrent() = p.slice === done && p.printer() === entry && !entry.retired &&
+        state.destination == Destination.PREPARE && state.workspaceSendOpen &&
+        p.outOfBounds().isEmpty()
+    val sendIdentity = PreparedSendIdentity(printerId, preparedDigest,
+        done.savedProjectId, done.savedProjectRevision, done.savedPlateId, done.targetProfileId,
+        done.result.inputSha256, done.result.engineSha256,
+        if (done.savedProjectId == null) done.plateContext?.draftQueueId
+            ?: p.plateIds.getOrNull(p.currentPlate)?.let(p::draftQueuePlateId) else null)
+    val items = state.fleet.queue.value
+    val staged = items.firstOrNull { it.id == stagedId }
+    if (staged != null) {
+        DirectPrintStart(state, staged, ::stillCurrent) { remotePath, outcome ->
+            state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
+                printerId, staged.name, remotePath.substringAfterLast('/').substringAfterLast('\\'),
+                if (outcome == ActionOutcome.Accepted) com.nozzleitall.desktop.MonitorHandoffState.STARTED
+                else com.nozzleitall.desktop.MonitorHandoffState.START_UNCERTAIN, done.plateContext))
+        }
+        return
+    }
+    fun conflicts(item: com.nozzleitall.desktop.queue.QueueItem) = isSameQueuedPrint(item, sendIdentity) ||
+        (item.startUncertain && item.startPrinterId == printerId) ||
+        (sendIdentity.projectId == null && item.projectId == null && item.sha256 == preparedDigest &&
+            item.printerId == printerId && item.targetProfileId == sendIdentity.targetProfileId &&
+            (item.inputDigest == null || item.engineBuild == null || item.draftPlateId == null ||
+                sendIdentity.inputDigest == null || sendIdentity.engineBuild == null || sendIdentity.draftPlateId == null))
+    val existing = items.any(::conflicts)
+    val compatible = done.result.output in caps.acceptedOutputs &&
+        (caps.uploadAndStart || (caps.uploadJob && caps.startPrint))
+    val profileMismatch = done.targetProfileId != null && profileId != null && done.targetProfileId != profileId
+    val preflight = preparedMaterialChecks(done.materialPlan, status, caps)
+    val ready = status.state in PrinterAction.StartJob("x").allowedStates
+    Txt("Printer: ${entry.config.identity.displayName}", Nz.type.bodySmall, c.textMuted)
+    problem?.let { Banner(it, BannerKind.WARNING) }
+    preflight.forEach { Banner(it.message, if (it.blocks) BannerKind.DANGER else BannerKind.WARNING) }
+    if (!compatible) Banner("This printer cannot start the prepared file. Export it or choose a compatible printer.", BannerKind.WARNING)
+    if (profileMismatch) Banner("Choose a printer matching ${done.targetProfileId} or slice again.", BannerKind.DANGER)
+    if (!ready) Banner("Wait for the printer to be ready before starting a print.", BannerKind.WARNING)
+    if (guard?.needsReconcile == true) Banner("Check the last printer command in Monitor before starting another print.", BannerKind.DANGER)
+    if (digestChecked && preparedDigest == null) Banner("The prepared file could not be verified. Slice it again.", BannerKind.DANGER)
+    if (existing) {
+        Banner("A matching prepared print or unresolved Start needs attention in Queue & history.", BannerKind.WARNING)
+        NzButton("Open queue", { state.destination = Destination.JOBS }, kind = ButtonKind.SECONDARY)
+    }
+    NzButton("Review and Start", {
+        val digest = preparedDigest ?: return@NzButton
+        if (!stillCurrent() || entry.session !== session || entry.guard !== guard || entry.capabilities.value != caps ||
+            entry.config.identity.profileId != profileId || entry.guard?.needsReconcile == true ||
+            entry.status.value.state !in PrinterAction.StartJob("x").allowedStates ||
+            preparedMaterialChecks(done.materialPlan, entry.status.value, caps).any { it.blocks } ||
+            state.fleet.queue.value.any(::conflicts)) {
+            problem = "The plate or printer changed. Review the print again."
+            return@NzButton
+        }
+        val tools = if (caps.multiMaterial && done.materials.size > 1)
+            done.materials.map { it.toolhead ?: (it.slot - 1) } else emptyList()
+        runCatching {
+            state.fleet.enqueue(p.name, done.result.printFile, printerId, tools,
+                done.savedProjectId, done.savedProjectRevision, done.savedPlateId, done.targetProfileId,
+                done.result.engineSha256, done.result.inputSha256, expectedSha256 = digest,
+                draftPlateId = sendIdentity.draftPlateId, materialPlan = done.materialPlan)
+        }.onSuccess { stagedId = it.id }
+            .onFailure { problem = "Couldn't prepare Start: ${it.message}" }
+    }, kind = ButtonKind.PRIMARY, icon = NzIcon.PLAY, testTag = "print-plate-review",
+        enabled = preparedDigest != null && session != null && guard != null && !guard.needsReconcile &&
+            compatible && !profileMismatch && !existing && ready && preflight.none { it.blocks } && p.outOfBounds().isEmpty())
+}
+
+@Composable
+private fun UploadOnlyPanel(state: AppState) {
+    val p = state.prepare
+    val c = Nz.colors
     val scope = state.scope
     val entry = p.printer() ?: run { Txt("No printer connected: export the file and send it yourself, or choose Connection in the Printer section.", Nz.type.bodySmall, c.textMuted); return }
     val caps = entry.capabilities.value ?: run { Txt("Connecting to ${entry.config.identity.displayName}…", Nz.type.bodySmall, c.textMuted); return }
     val flow = rememberActionFlow(entry)
     var uploaded by remember(p.slice, entry.config.identity.id) { mutableStateOf<String?>(null) }
-    var queuedThisSlice by remember(p.slice, entry.config.identity.id) { mutableStateOf(false) }
     var problem by remember(p.slice, entry.config.identity.id) { mutableStateOf<String?>(null) }
     val done = p.slice as? SliceState.Done ?: return
     var preparedDigest by remember(done) { mutableStateOf<String?>(null) }
@@ -3418,19 +3513,6 @@ private fun SendPanel(state: AppState) {
         done.targetProfileId != entry.config.identity.profileId
     val unknownProfile = done.targetProfileId != null && entry.config.identity.profileId == null
     val commandUnknown = entry.guard?.needsReconcile == true
-    val sendIdentity = PreparedSendIdentity(entry.config.identity.id, preparedDigest,
-        done.savedProjectId, done.savedProjectRevision, done.savedPlateId, done.targetProfileId,
-        done.result.inputSha256, done.result.engineSha256,
-        if (done.savedProjectId == null) done.plateContext?.draftQueueId
-            ?: p.plateIds.getOrNull(p.currentPlate)?.let(p::draftQueuePlateId) else null)
-    fun sameQueued(item: com.nozzleitall.desktop.queue.QueueItem) = isSameQueuedPrint(item, sendIdentity)
-    val alreadyQueued = state.fleet.queue.value.any(::sameQueued)
-    val uncertainDuplicate = done.savedProjectId == null && state.fleet.queue.value.any { item ->
-        item.projectId == null && item.sha256 == preparedDigest && item.printerId == sendIdentity.printerId &&
-            item.targetProfileId == sendIdentity.targetProfileId && !sameQueued(item) &&
-            (item.inputDigest == null || item.engineBuild == null || item.draftPlateId == null ||
-                sendIdentity.inputDigest == null || sendIdentity.engineBuild == null || sendIdentity.draftPlateId == null)
-    }
     val status = entry.status.value
     val session = entry.session
     val guard = entry.guard
@@ -3447,30 +3529,6 @@ private fun SendPanel(state: AppState) {
     ActionFlowUi(flow, entry)
     problem?.let { Banner(it, BannerKind.WARNING) }
     if (commandUnknown) NzButton("Check printer", { state.scope.launch(kotlinx.coroutines.Dispatchers.Main) { flow.reconcile() } }, kind = ButtonKind.SECONDARY)
-    fun queueForReviewedStart() {
-        if (preparedDigest == null || bundleProblem != null || queuedThisSlice || state.fleet.queue.value.any(::sameQueued) ||
-            p.slice !== done || !sameConnection() || !materialsMatchNow() || p.outOfBounds().isNotEmpty() ||
-            profileMismatch || entry.guard?.needsReconcile == true || flow.pending != null || flow.busy ||
-            done.result.output !in (entry.capabilities.value?.acceptedOutputs ?: emptySet()) ||
-            entry.status.value.state !in PrinterAction.StartJob("x").allowedStates) {
-            problem = "The job or printer changed after review. Review the job again."
-            readinessReviewed = false
-            return
-        }
-        val toolMap = if (caps.multiMaterial && done.materials.size > 1) done.materials.map { it.toolhead ?: (it.slot - 1) } else emptyList()
-        runCatching {
-            state.fleet.enqueue(p.name, done.result.printFile, entry.config.identity.id, toolMap,
-                done.savedProjectId, done.savedProjectRevision, done.savedPlateId,
-                done.targetProfileId, done.result.engineSha256, done.result.inputSha256,
-                expectedSha256 = preparedDigest, draftPlateId = sendIdentity.draftPlateId, materialPlan = done.materialPlan)
-        }.onSuccess {
-            queuedThisSlice = true
-            state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
-                entry.config.identity.id, p.name, done.result.printFile.name,
-                com.nozzleitall.desktop.MonitorHandoffState.QUEUED, done.plateContext))
-        }
-            .onFailure { problem = "The prepared job could not be queued: ${it.message}" }
-    }
     if (!readinessReviewed) {
         Txt("Review before Send", Nz.type.title)
         Txt("Connection: ${entry.config.identity.displayName}", Nz.type.bodySmall, c.textMuted)
@@ -3497,11 +3555,9 @@ private fun SendPanel(state: AppState) {
     }
     if (commandUnknown) Banner("The last printer command has an unknown outcome. Check the printer before sending or starting another job.", BannerKind.DANGER)
     if (preparedDigest == null) Banner(
-        if (digestChecked) "The prepared print could not be verified. Slice it again before queueing."
-        else "Checking the prepared print before it can be queued.",
+        if (digestChecked) "The prepared print could not be verified. Slice it again before uploading."
+        else "Checking the prepared print before it can be uploaded.",
         if (digestChecked) BannerKind.DANGER else BannerKind.INFO)
-    if (alreadyQueued) Banner("This prepared print is already waiting in Jobs for ${entry.config.identity.displayName}.", BannerKind.INFO)
-    if (uncertainDuplicate) Banner("A matching prepared file is already in Jobs, but an older or incomplete draft lacks identity needed to verify whether it is this plate. Review that job before sending another copy.", BannerKind.WARNING)
     when {
         // Everything below follows what this printer's adapter reports; nothing depends on who made it.
         done.result.output !in caps.acceptedOutputs -> Banner("${entry.config.identity.displayName} needs a ${caps.acceptedOutputs.joinToString(" or ")} file, but this plate produced a .${done.result.output} file. Select a matching machine profile and slice again.", BannerKind.INFO)
@@ -3543,17 +3599,7 @@ private fun SendPanel(state: AppState) {
                 }
             } }, kind = ButtonKind.PRIMARY, icon = NzIcon.SEND, enabled = preparedDigest != null &&
                 outside.isEmpty() && !profileMismatch && !commandUnknown && p.uploadProgress == null && flow.pending == null && !flow.busy && status.state in PrinterAction.StartJob("x").allowedStates, testTag = "send")
-        } else {
-            Banner("Sent to ${entry.config.identity.displayName}. Review and Start from Jobs when the plate is clear; the queue may transfer a verified copy.", BannerKind.SUCCESS)
-            if (caps.startPrint) NzButton("Review and Start in Jobs", ::queueForReviewedStart, kind = ButtonKind.PRIMARY, icon = NzIcon.PLAY,
-                enabled = preparedDigest != null && !alreadyQueued && !queuedThisSlice && outside.isEmpty() && !profileMismatch && !commandUnknown &&
-                    status.state in PrinterAction.StartJob("x").allowedStates && flow.pending == null && !flow.busy)
         }
-        // The queue writes a durable Start hold before any upload-and-start command.
-        caps.uploadAndStart -> NzButton("Review and Start in Jobs", ::queueForReviewedStart,
-            kind = ButtonKind.PRIMARY, icon = NzIcon.SEND, enabled = preparedDigest != null && !alreadyQueued && !queuedThisSlice && outside.isEmpty() && !profileMismatch && !commandUnknown &&
-                flow.pending == null && !flow.busy &&
-                status.state in PrinterAction.UploadAndStart("", "").allowedStates, testTag = "send")
         else -> Txt("${entry.config.identity.displayName} can't receive jobs from Nozzle It All. Export the file instead.", Nz.type.bodySmall, c.textMuted)
     }
     if (caps.anyControl || caps.camera) NzButton("Watch it print", { state.openPrinter(entry.config.identity.id) }, kind = ButtonKind.QUIET, icon = NzIcon.MONITOR)

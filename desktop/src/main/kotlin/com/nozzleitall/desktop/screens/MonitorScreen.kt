@@ -77,6 +77,8 @@ fun MonitorScreen(state: AppState) {
             } },
             modifier = Modifier.horizontalScroll(rememberScrollState()),
         )
+        NzButton("Queue & history", { state.destination = com.nozzleitall.desktop.Destination.JOBS },
+            kind = ButtonKind.SECONDARY, testTag = "monitor-queue-history")
         val entry = PrinterHeader(state, com.nozzleitall.desktop.Destination.MONITOR, "Watch a job and control the printer. Every command asks first.") ?: run { NoPrinterYet(state, "live status, cameras and controls"); return@Column }
         val sameWorkspacePrinter = state.prepare.printer()?.config?.identity?.id == entry.config.identity.id
         val status = entry.status.value
@@ -104,10 +106,10 @@ fun MonitorScreen(state: AppState) {
                             Txt("${plate.plateName} · ${plate.machine} · ${plate.nozzles} · ${plate.bed}", Nz.type.bodySmall, Nz.colors.textMuted)
                         }
                     }
-                    if (it.state == com.nozzleitall.desktop.MonitorHandoffState.QUEUED)
-                        NzButton("Open Jobs", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.PRIMARY)
+                    if (it.state == com.nozzleitall.desktop.MonitorHandoffState.START_UNCERTAIN)
+                        NzButton("Open queue", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.PRIMARY)
                 }
-                Txt("Uploaded, queued, and actively printing are separate states. Live printer status below remains authoritative.", Nz.type.bodySmall, Nz.colors.textMuted)
+                Txt("Live printer status below remains authoritative.", Nz.type.bodySmall, Nz.colors.textMuted)
             }
         }
         val activeJobs = state.fleet.order.value.mapNotNull { id -> state.fleet.printers[id]?.let { id to it } }

@@ -27,7 +27,8 @@ fun JobsScreen(state: AppState) {
     val active = fleet.order.value.mapNotNull { id -> fleet.printers[id]?.let { id to it } }
         .filter { (_, entry) -> entry.status.value.job != null && entry.status.value.state in setOf(PrinterState.PRINTING, PrinterState.PAUSED) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        SectionHeader("Jobs", "Active prints, prepared jobs and recent machine results.") {
+        SectionHeader("Queue & history", "Active prints, prepared jobs and recent machine results.") {
+            NzButton("Back to Monitor", { state.destination = Destination.MONITOR }, kind = ButtonKind.SECONDARY)
             NzButton("New job", { creating = !creating }, kind = ButtonKind.PRIMARY, icon = NzIcon.ADD, testTag = "new-job")
         }
         com.nozzleitall.desktop.settings.DenseInput(search, { search = it }, "Search jobs",

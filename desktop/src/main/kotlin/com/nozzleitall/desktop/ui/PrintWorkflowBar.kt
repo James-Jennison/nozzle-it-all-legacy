@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 enum class PrintWorkflowStage(val label: String, val icon: NzIcon) {
     PREPARE("Prepare", NzIcon.PREPARE),
     PREVIEW("Preview", NzIcon.LAYERS),
-    SEND("Send", NzIcon.SEND),
+    SEND("Print plate", NzIcon.PLAY),
     MONITOR("Monitor", NzIcon.MONITOR),
 }
 

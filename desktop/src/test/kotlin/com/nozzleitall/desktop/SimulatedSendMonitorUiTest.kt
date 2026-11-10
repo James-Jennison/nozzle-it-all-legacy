@@ -306,6 +306,7 @@ class SimulatedSendMonitorUiTest {
             app.prepare.showPreview = true
             compose.setContent { NozzleTheme("dark") { App(app) } }
             compose.onNodeWithTag("open-send").performSemanticsAction(SemanticsActions.OnClick)
+            compose.onNodeWithTag("upload-only").performSemanticsAction(SemanticsActions.OnClick)
             awaitText("reports a 0.6 mm nozzle")
             awaitText("reports PETG")
             awaitText("The RFID spool")
@@ -350,6 +351,56 @@ class SimulatedSendMonitorUiTest {
             assertEquals(3, session.uploads)
             assertEquals(1, session.remoteNames.distinct().size)
             assertEquals(0, session.starts)
+        } finally {
+            app.fleet.shutdown()
+            scope.cancel()
+        }
+    }
+
+    @Test fun previewStartsInContextAndRecoversLostAcknowledgmentThroughMonitor() {
+        val root = Files.createTempDirectory("nia-direct-print").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val app = AppState(AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure(), scope)
+        val session = FakeSession(Capabilities(uploadAndStart = true, acceptedOutputs = setOf("gcode")))
+        val entry = PrinterEntry(PrinterConfig(session.identity, "fake"))
+        try {
+            app.finishFirstRun(SlicingSetup("snapmaker_u1", "Snapmaker U1", "0.4", toolheads = 4))
+            entry.session = session
+            entry.guard = ActionGuard(session) { 1000 }
+            entry.capabilities.value = session.capabilities
+            entry.status.value = session.status()
+            app.fleet.printers[session.identity.id] = entry
+            app.fleet.order.value = listOf(session.identity.id)
+            app.prepare.printerId = session.identity.id
+            app.destination = Destination.PREPARE
+            val source = File(root, "fixture.gcode").apply { writeText("G28\n") }
+            val preview = GcodePreview(listOf(GcodePreview.Layer(0.2f, floatArrayOf(0f, 0f, 1f, 1f),
+                byteArrayOf(0), floatArrayOf())), truncated = false)
+            app.prepare.slice = SliceState.Done(
+                SliceOutcome.Done(source, SliceStats(1, 10.0, 1.0, 1.0, 0), emptyList()),
+                preview, targetProfileId = "fixture")
+            app.prepare.showPreview = true
+            compose.setContent { NozzleTheme("dark") { App(app) } }
+            compose.onNodeWithTag("open-send").performSemanticsAction(SemanticsActions.OnClick)
+            compose.waitUntil(15_000) {
+                compose.onAllNodes(hasTestTag("print-plate-review") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("print-plate-review").performSemanticsAction(SemanticsActions.OnClick)
+            awaitText("Continue to Start")
+            compose.onNodeWithText("I checked that this file, printer profile, and loaded materials are compatible.")
+                .performSemanticsAction(SemanticsActions.OnClick)
+            compose.onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
+            awaitText("Start printing on Simulated printer?")
+            assertEquals(Destination.PREPARE, app.destination)
+            assertEquals(0, session.starts)
+            compose.onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
+            compose.waitUntil(15_000) { app.destination == Destination.MONITOR }
+            assertEquals(session.identity.id, app.selectedPrinter)
+            assertEquals(1, session.starts)
+            assertTrue(app.fleet.queue.value.single().startUncertain)
+            compose.onNodeWithTag("monitor-queue-history").performSemanticsAction(SemanticsActions.OnClick)
+            awaitText("Confirm it started")
+            assertEquals(1, session.starts)
         } finally {
             app.fleet.shutdown()
             scope.cancel()

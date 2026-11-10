@@ -92,7 +92,7 @@ class WorkspaceShellTest {
             printWorkflowStageDescription(PrintWorkflowStage.PREVIEW, PrintWorkflowStage.PREPARE, hasPreview = false, hasPrinter = false),
         )
         assertEquals(
-            "Send. Unavailable until the current plate is sliced.",
+            "Print plate. Unavailable until the current plate is sliced.",
             printWorkflowStageDescription(PrintWorkflowStage.SEND, PrintWorkflowStage.PREPARE, hasPreview = false, hasPrinter = false),
         )
         assertEquals(
@@ -149,14 +149,14 @@ class WorkspaceShellTest {
         assertTrue(Destination.PREPARE.inDestinations)
         assertEquals(Destination.PREPARE, Destination.PREPARE.destinationItem)
         assertEquals(
-            listOf("Workspace", "Jobs", "Projects", "Printers", "Materials", "Environment", "Settings"),
+            listOf("Workspace", "Projects", "Printers", "Materials", "Environment", "Settings"),
             Destination.entries.filter { it.inDestinations }.map { it.label },
         )
     }
 
     @Test
     fun `destination header menu separates slicing from libraries and workshop tools`() {
-        assertEquals(listOf("Workspace", "Jobs"), primaryDestinations.map { it.label })
+        assertEquals(listOf("Workspace"), primaryDestinations.map { it.label })
         assertEquals(listOf("Projects", "Printers", "Materials"), libraryDestinations.map { it.label })
         assertEquals(listOf("Environment"), workshopDestinations.map { it.label })
         assertEquals(

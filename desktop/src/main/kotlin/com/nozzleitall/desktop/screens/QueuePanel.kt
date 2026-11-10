@@ -40,6 +40,7 @@ class QueueRowUiState {
     val resolutionHold = mutableStateOf<QueueItem?>(null)
     var dispatchedHold: QueueItem? = null
     val reviewStart = mutableStateOf<String?>(null)
+    internal var reviewContext: (() -> Boolean)? = null
     internal var reviewedConnection: ReviewedQueueConnection? = null
     val legacyRemotePath = mutableStateOf("")
     var flowEntry: PrinterEntry? = null
@@ -95,7 +96,19 @@ fun QueuePanel(state: AppState, query: String = "") {
 }
 
 @Composable
-private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boolean) {
+internal fun DirectPrintStart(
+    state: AppState,
+    item: QueueItem,
+    stillCurrent: () -> Boolean,
+    onHandoff: (String, ActionOutcome) -> Unit,
+) = QueueRow(state, item, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff)
+
+@Composable
+private fun QueueRow(
+    state: AppState, item: QueueItem, first: Boolean, last: Boolean,
+    stillCurrent: () -> Boolean = { true },
+    onHandoff: ((String, ActionOutcome) -> Unit)? = null,
+) {
     val c = Nz.colors
     val fleet = state.fleet
     val scope = state.scope
@@ -135,6 +148,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
     var reviewStart by ui.reviewStart
     var legacyRemotePath by ui.legacyRemotePath
     fun clearReview() {
+        ui.reviewContext = null
         ui.reviewedConnection = null
         pinnedPrinterId = null
     }
@@ -169,32 +183,53 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
                     kind = ButtonKind.QUIET, testTag = "queue-details-${item.id}")
             }
     }
+    fun requestReview(entry: PrinterEntry) {
+        val session = entry.session
+        val guard = entry.guard
+        val capabilities = entry.capabilities.value
+        if (session == null || guard == null || capabilities == null || entry.retired) {
+            problem = "The printer is not connected. Review again when it reconnects."
+            return
+        }
+        ui.reviewContext = stillCurrent
+        ui.reviewedConnection = ReviewedQueueConnection(entry, session, guard, capabilities,
+            entry.status.value.toolheads.map { it.preflightObservation() })
+        pinnedPrinterId = entry.config.identity.id
+        reviewStart = entry.config.identity.id
+    }
+    LaunchedEffect(item.id) {
+        if (onHandoff != null && candidate != null && !materialConflict && !profileMismatch && stillCurrent() && !item.startUncertain &&
+            !item.pendingLink && reviewStart == null && expectedStart == null && uploading == null)
+            requestReview(candidate)
+    }
     val actions: @Composable () -> Unit = {
-            val anyPrinter = ""
-            val selectedId = item.printerId ?: anyPrinter
-            val targets = ids.mapNotNull { fleet.printers[it] }.filter { entry ->
-                val identity = entry.config.identity
-                identity.id == item.printerId || (!printerProfileMismatch(item.targetProfileId, identity.profileId) &&
-                    entry.canTakeJobs(item))
+            if (onHandoff == null) {
+                val anyPrinter = ""
+                val selectedId = item.printerId ?: anyPrinter
+                val targets = ids.mapNotNull { fleet.printers[it] }.filter { entry ->
+                    val identity = entry.config.identity
+                    identity.id == item.printerId || (!printerProfileMismatch(item.targetProfileId, identity.profileId) &&
+                        entry.canTakeJobs(item))
+                }
+                val choices = buildList {
+                    add(Choice(anyPrinter, "Any compatible printer"))
+                    targets.forEach { add(Choice(it.config.identity.id, it.config.identity.displayName)) }
+                    if (item.printerId != null && target == null) add(Choice(item.printerId, "Saved printer unavailable"))
+                }
+                DenseSelect("Job destination", choices, selectedId, Modifier.width(240.dp),
+                    enabled = !item.pendingLink && !item.startUncertain && uploading == null &&
+                        expectedStart == null && reviewStart == null && flow?.pending == null && flow?.busy != true) { choice ->
+                    if (choice != selectedId) runCatching {
+                        fleet.retargetQueued(item.id, choice.takeUnless(String::isEmpty), expectedItem = item)
+                    }.onSuccess {
+                        clearReview()
+                        problem = null
+                    }.onFailure { problem = it.message ?: "The queued job could not be retargeted." }
+                }
+                NzButton("↑", { fleet.moveInQueue(item.id, -1) }, kind = ButtonKind.QUIET, enabled = !first && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
+                NzButton("↓", { fleet.moveInQueue(item.id, 1) }, kind = ButtonKind.QUIET, enabled = !last && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
+                NzButton("Remove", { fleet.dequeue(item.id) }, kind = ButtonKind.QUIET, enabled = !item.pendingLink && !item.startUncertain && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
             }
-            val choices = buildList {
-                add(Choice(anyPrinter, "Any compatible printer"))
-                targets.forEach { add(Choice(it.config.identity.id, it.config.identity.displayName)) }
-                if (item.printerId != null && target == null) add(Choice(item.printerId, "Saved printer unavailable"))
-            }
-            DenseSelect("Job destination", choices, selectedId, Modifier.width(240.dp),
-                enabled = !item.pendingLink && !item.startUncertain && uploading == null &&
-                    expectedStart == null && reviewStart == null && flow?.pending == null && flow?.busy != true) { choice ->
-                if (choice != selectedId) runCatching {
-                    fleet.retargetQueued(item.id, choice.takeUnless(String::isEmpty), expectedItem = item)
-                }.onSuccess {
-                    clearReview()
-                    problem = null
-                }.onFailure { problem = it.message ?: "The queued job could not be retargeted." }
-            }
-            NzButton("↑", { fleet.moveInQueue(item.id, -1) }, kind = ButtonKind.QUIET, enabled = !first && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
-            NzButton("↓", { fleet.moveInQueue(item.id, 1) }, kind = ButtonKind.QUIET, enabled = !last && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
-            NzButton("Remove", { fleet.dequeue(item.id) }, kind = ButtonKind.QUIET, enabled = !item.pendingLink && !item.startUncertain && uploading == null && expectedStart == null && flow?.pending == null && flow?.busy != true)
             if (item.pendingLink) Txt("Local queue records are being recovered; Start is unavailable.", Nz.type.bodySmall, c.textMuted)
             if (item.startUncertain) {
                 NzButton("Confirm it started", { resolutionHold = item; resolveStart = "choose" }, kind = ButtonKind.QUIET)
@@ -210,26 +245,14 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
             materialChecks.filter { it.blocks }.forEach { Banner(it.message, BannerKind.DANGER) }
             if (candidate != null && flow != null) NzButton(
                 if (uploading != null) "Sending…" else "Review and Start",
-                {
-                    val session = candidate.session
-                    val guard = candidate.guard
-                    val capabilities = candidate.capabilities.value
-                    if (session == null || guard == null || capabilities == null || candidate.retired) {
-                        problem = "The printer is not connected. Review again when it reconnects."
-                        return@NzButton
-                    }
-                    ui.reviewedConnection = ReviewedQueueConnection(candidate, session, guard, capabilities,
-                        candidate.status.value.toolheads.map { it.preflightObservation() })
-                    pinnedPrinterId = candidate.config.identity.id
-                    reviewStart = candidate.config.identity.id
-                },
+                { requestReview(candidate) },
                 kind = ButtonKind.PRIMARY, icon = NzIcon.PLAY, enabled = queuedSourcePresent && !profileMismatch && !materialConflict && !item.pendingLink && !item.startUncertain && item.sha256 != null &&
                     candidate.isFree() && candidate.canTakeJobs(item) && candidate.session != null &&
                     candidate.guard?.needsReconcile == false && uploading == null && expectedStart == null && flow.pending == null && !flow.busy,
                 testTag = "queue-review-${item.id}")
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        summary()
+        if (onHandoff == null) summary()
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { actions() }
         if (detailsOpen) Column(Modifier.fillMaxWidth().padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Txt("Prepared job details", Nz.type.label)
@@ -275,7 +298,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
                     val reviewedId = reviewStart
                     val reviewedConnection = ui.reviewedConnection
                     reviewStart = null
-                    if (reviewedId != candidate.config.identity.id || fleet.printers[reviewedId] !== candidate ||
+                    if (ui.reviewContext?.invoke() != true || reviewedId != candidate.config.identity.id || fleet.printers[reviewedId] !== candidate ||
                         reviewedConnection == null || !reviewedConnection.isCurrent(candidate) ||
                         fleet.queue.value.none { it == item } || !candidate.isFree() || !candidate.canTakeJobs(item) ||
                         candidate.guard?.needsReconcile == true ||
@@ -308,7 +331,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
                     else scope.launch(Dispatchers.Main) {
                         uploading = 0f
                         val r = try { fleet.withQueuedTransfer(item.id, candidate.config.identity.id) {
-                            check(fleet.printers[candidate.config.identity.id] === candidate && reviewedConnection.isCurrent(candidate)) {
+                            check(ui.reviewContext?.invoke() == true && fleet.printers[candidate.config.identity.id] === candidate && reviewedConnection.isCurrent(candidate)) {
                                 "The printer connection changed. Review the queued job again."
                             }
                             check(candidate.guard?.needsReconcile != true) { "The last printer command needs checking before another transfer." }
@@ -327,7 +350,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
                             finally { uploading = null }
                         when (r) {
                             is UploadResult.Uploaded -> {
-                                if (fleet.printers[candidate.config.identity.id] !== candidate || !reviewedConnection.isCurrent(candidate) ||
+                                if (ui.reviewContext?.invoke() != true || fleet.printers[candidate.config.identity.id] !== candidate || !reviewedConnection.isCurrent(candidate) ||
                                     fleet.queue.value.none { it == item } || !candidate.isFree() || !candidate.canTakeJobs(item) ||
                                     candidate.guard?.needsReconcile == true ||
                                     (item.targetProfileId != null && candidate.config.identity.profileId != null &&
@@ -354,7 +377,7 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
         if (candidate != null && flow != null) ActionFlowUi(flow, candidate, onDismiss = { expectedStart = null; clearReview() },
             beforeExecute = { prepared ->
                 check(prepared.action == expectedStart) { "The queued Start changed; review it again." }
-                check(fleet.printers[candidate.config.identity.id] === candidate && ui.reviewedConnection?.isCurrent(candidate) == true &&
+                check(ui.reviewContext?.invoke() == true && fleet.printers[candidate.config.identity.id] === candidate && ui.reviewedConnection?.isCurrent(candidate) == true &&
                     fleet.queue.value.any { it == item } && candidate.isFree() && candidate.canTakeJobs(item) &&
                     candidate.guard?.needsReconcile != true &&
                     (item.targetProfileId == null || candidate.config.identity.profileId == null ||
@@ -381,14 +404,20 @@ private fun QueueRow(state: AppState, item: QueueItem, first: Boolean, last: Boo
                             }
                             fleet.noteQueuedStarted(requireNotNull(dispatchedHold), printerId, startedPath)
                         }
-                            .onFailure { problem = "Print started; its local record needs recovery: ${it.message}" }
+                            .onSuccess { dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, outcome) } }
+                            .onFailure {
+                                dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, ActionOutcome.Unknown("Local Start record needs recovery.")) }
+                                problem = "Print started; its local record needs recovery: ${it.message}" }
                         is ActionOutcome.Rejected -> {
                             if (dispatchedHold != null)
                                 runCatching { fleet.clearQueuedStartUncertain(dispatchedHold, printerId) }
                                     .onFailure { problem = "Start was not sent; the local hold needs review: ${it.message}" }
                             clearReview()
                         }
-                        is ActionOutcome.Unknown -> problem = "Start outcome is unknown. Inspect the printer before resolving this queued job."
+                        is ActionOutcome.Unknown -> {
+                            problem = "Start outcome is unknown. Inspect the printer before resolving this queued job."
+                            dispatchedHold?.startRemotePath?.let { onHandoff?.invoke(it, outcome) }
+                        }
                     }
                 }
                 expectedStart = null
