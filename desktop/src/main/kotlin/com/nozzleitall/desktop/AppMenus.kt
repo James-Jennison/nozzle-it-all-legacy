@@ -90,19 +90,14 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Export 3MF…", enabled = p.items.isNotEmpty()) {
                 chooseSaveFile("Export project", p.name + ".3mf")?.let { f -> runCatching { ThreeMf.writeAtomically(p.toProject(), f) }.onFailure(::report) }
             },
-            MenuAction("Export sliced file…", ctrl(Key.E, "E"), enabled = sliced != null) {
-                sliced?.let { s ->
-                    chooseSaveFile("Export sliced file", p.name + "." + s.result.output)?.let { target ->
-                        runCatching { s.result.printFile.copyTo(target, overwrite = true) }.onFailure(::report)
-                    }
-                }
+            MenuAction("Export sliced file…", ctrl(Key.E, "E"), enabled = sliced != null && !p.exportingPrintFile) {
+                p.exportCurrentPrint()
             },
-            MenuAction("Export raw G-code…", enabled = sliced?.result?.bundle != null) {
-                sliced?.result?.takeIf { it.bundle != null }?.let { result ->
-                    chooseSaveFile("Export raw G-code", p.name + ".gcode")?.let { target ->
-                        runCatching { result.gcode.copyTo(target, overwrite = true) }.onFailure(::report)
-                    }
-                }
+            MenuAction("Export all sliced plates…", enabled = p.batchExportEntries().isNotEmpty() && !p.exportingPrintFile) {
+                p.exportBatchPrint()
+            },
+            MenuAction("Export raw G-code…", enabled = sliced?.result?.bundle != null && !p.exportingPrintFile) {
+                p.exportCurrentPrint(raw = true)
             },
             null,
             MenuAction("Quit", ctrl(Key.Q, "Q")) { onQuit() },
