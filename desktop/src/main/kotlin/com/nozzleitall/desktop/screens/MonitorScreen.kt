@@ -118,12 +118,28 @@ fun MonitorScreen(state: AppState) {
         val flow = rememberActionFlow(entry)
         ActionFlowUi(flow, entry)
         entry.problem.value?.let { Banner(it, BannerKind.WARNING) }
-        JobHero(entry, status, caps, flow)
-        if (caps != null) ControlsPanel(entry, status, caps, flow)
-        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            Column(Modifier.weight(1.4f)) { CameraPanel(entry) }
-            Column(Modifier.weight(1f)) { TemperaturePanel(status) }
+        val cameraAvailable = entry.cameras.value.isNotEmpty()
+        if (cameraAvailable) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 900.dp) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Column(Modifier.weight(1.5f)) { CameraPanel(entry) }
+                        Column(Modifier.weight(1f)) { JobHero(entry, status, caps, flow) }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                        CameraPanel(entry)
+                        JobHero(entry, status, caps, flow)
+                    }
+                }
+            }
+        } else {
+            JobHero(entry, status, caps, flow)
+            Txt(if (caps?.camera == false) "No supported camera for this printer." else "No camera found on this printer.",
+                Nz.type.bodySmall, Nz.colors.textMuted)
         }
+        if (caps != null) ControlsPanel(entry, status, caps, flow)
+        TemperaturePanel(status)
     }
 }
 
