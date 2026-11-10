@@ -513,6 +513,10 @@ fun PrepareScreen(state: AppState) {
             drawer = Drawer.MODEL
         }
     }
+    var layerActionCursor by remember { mutableStateOf<PreviewLayerCursor?>(null) }
+    var reviewSavedLayerActions by remember { mutableStateOf(false) }
+    if (reviewSavedLayerActions) LayerActionsDialog(state, null) { reviewSavedLayerActions = false }
+    layerActionCursor?.let { cursor -> LayerActionsDialog(state, cursor) { layerActionCursor = null } }
     val done = p.slice as? SliceState.Done
     val previewReady = p.showPreview && done?.preview?.layers?.isNotEmpty() == true
     val previewFocused = previewFocusRequested && previewReady && drawer != Drawer.SEND
@@ -617,6 +621,13 @@ fun PrepareScreen(state: AppState) {
                         kind = ButtonKind.QUIET, testTag = "preview-focus-mode")
                 }
             }
+        }
+        if (!p.layerActionsReviewed && p.layerActionProblem == null) {
+            Banner("This project contains saved layer actions. Review them before slicing.", BannerKind.WARNING,
+                "Review layer actions" to { reviewSavedLayerActions = true })
+        } else if (!p.showPreview && p.layerActions.isNotEmpty() && p.layerActionProblem == null) {
+            NzButton("Manage layer actions", { reviewSavedLayerActions = true }, Modifier.padding(horizontal = 12.dp),
+                kind = ButtonKind.QUIET, testTag = "manage-layer-actions")
         }
         if (compactWorkspace) {
             val alertScroll = rememberScrollState()
@@ -840,7 +851,14 @@ fun PrepareScreen(state: AppState) {
                         overlayHeight = previewLegendHeight,
                         onShowWarnings = { warningsOpen = true })
                 }
-                PreviewResetButton(camera::reset, Modifier.align(Alignment.TopStart).padding(12.dp))
+                Row(Modifier.align(Alignment.TopStart).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PreviewResetButton(camera::reset)
+                    if (!previewSection && !previewRealistic) previewLayerCursor(done.preview, p.previewLayer)?.let { cursor ->
+                        val hasAction = p.layerActions[p.plateIds[p.currentPlate]].orEmpty().any { it.layer == cursor.index + 1 }
+                        NzButton(if (hasAction) "Edit layer action" else "Layer action", { layerActionCursor = cursor },
+                            kind = ButtonKind.SECONDARY, testTag = "preview-layer-action")
+                    }
+                }
                 if (warningsOpen) PreviewWarningPopup(
                     done.preview,
                     (viewportWidth - 24.dp).coerceIn(0.dp, 460.dp),

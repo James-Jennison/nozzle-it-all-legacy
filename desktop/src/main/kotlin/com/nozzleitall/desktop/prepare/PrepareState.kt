@@ -532,6 +532,47 @@ class PrepareState(private val app: AppState) {
     // --- Plates (Orca's plate list): names in order, the one shown, and the objects on it.
     val plateNames = androidx.compose.runtime.mutableStateListOf("Plate 1")
     val plateIds = androidx.compose.runtime.mutableStateListOf(UUID.randomUUID().toString())
+
+    internal val layerActions = mutableStateMapOf<String, List<LayerAction>>()
+    internal var layerActionsReviewed by mutableStateOf(true)
+        private set
+    internal var layerActionProblem by mutableStateOf<String?>(null)
+        private set
+    internal fun reviewLayerActions() { if (layerActionProblem == null) layerActionsReviewed = true }
+    internal fun restoreLayerActions(actions: Map<String, List<LayerAction>>, reviewed: Boolean) {
+        layerActions.clear(); layerActions.putAll(actions)
+        layerActionsReviewed = reviewed
+    }
+
+    internal fun setLayerAction(plateId: String, layer: Int, z: Double, kind: LayerAction.Kind, text: String): Boolean {
+        if (plateIds.getOrNull(currentPlate) != plateId || layerActionProblem != null || !layerActionsReviewed) return false
+        val done = slice as? SliceState.Done ?: return false
+        val actual = done.preview?.let { previewLayerCursor(it, layer - 1) } ?: return false
+        if (actual.index + 1 != layer || kotlin.math.abs(actual.z - z) > 0.0001) return false
+        if (LayerAction.command(kind, machineJson(), text) == null) return false
+        val actions = layerActions[plateId].orEmpty()
+        val prior = actions.firstOrNull { it.layer == layer }
+        if (prior == null && actions.size >= LayerAction.MAX_ACTIONS) return false
+        val action = LayerAction(prior?.id ?: UUID.randomUUID().toString(), layer, z, kind,
+            if (kind == LayerAction.Kind.CUSTOM) text.trim() else "")
+        editSelection {
+            layerActions[plateId] = (actions.filterNot { it.layer == layer } + action).sortedBy { it.layer }
+            changed()
+        }
+        return true
+    }
+
+    internal fun removeLayerAction(plateId: String, actionId: String) {
+        val old = layerActions[plateId].orEmpty()
+        val remaining = old.filterNot { it.id == actionId }
+        if (remaining.size == old.size) return
+        editSelection {
+            if (remaining.isEmpty()) layerActions.remove(plateId) else layerActions[plateId] = remaining
+            if (layerActions.isEmpty()) layerActionsReviewed = true
+            changed()
+        }
+    }
+
     private var draftSessionId = UUID.randomUUID()
 
     internal fun draftQueuePlateId(plateId: String): String =
@@ -627,6 +668,7 @@ class PrepareState(private val app: AppState) {
             if (i == currentPlate) deselect()
             items.removeAll { it.plate == i }
             plateNames.removeAt(i)
+            layerActions.remove(plateIds[i])
             plateIds.removeAt(i)
             items.forEach { if (it.plate > i) it.plate -= 1 }
             currentPlate = (if (currentPlate > i) currentPlate - 1 else currentPlate).coerceAtMost(plateNames.lastIndex)
@@ -1140,6 +1182,7 @@ class PrepareState(private val app: AppState) {
         draftSessionId = UUID.randomUUID()
         manualSlots.clear()
         manualSlots.addAll(defaultMaterialSlots)
+        layerActions.clear(); layerActionsReviewed = true; layerActionProblem = null
         bedType = null; nozzleFlows.clear(); nozzle = null; processId = null
         presetSnapshot = null; presetSnapshotProblem = null
         machineCache = null
@@ -1204,6 +1247,16 @@ class PrepareState(private val app: AppState) {
         val entries = p.manifest?.plates?.flatMap { it.objects }?.associateBy { it.objectId } ?: emptyMap()
         plateNames.clear(); plateNames.addAll((0 until count).map { i -> names.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "Plate ${i + 1}" })
         plateIds.clear(); plateIds.addAll(openedPlateIds)
+        runCatching {
+            ownPlates.orEmpty().mapIndexed { index, plate -> openedPlateIds[index] to LayerAction.read(plate) }
+                .filter { it.second.isNotEmpty() }.toMap()
+        }.onSuccess {
+            layerActions.putAll(it)
+            layerActionsReviewed = it.isEmpty()
+        }.onFailure {
+            layerActionProblem = "The saved layer actions could not be read. The original data was preserved."
+        }
+
         val layoutBed = (if (ownPlates != null) p.manifest?.printer?.profileId?.let { ProfileCatalog.byId(it) }?.let { it.bedW.toDouble() to it.bedD.toDouble() } else p.sourceBed)
             ?: bed.let { it.first.toDouble() to it.second.toDouble() }
         p.objects.forEach { o ->
@@ -1261,7 +1314,8 @@ class PrepareState(private val app: AppState) {
         }
         val readerProblem = "A reader tag was assigned to more than one slot. Review those spool mappings."
             .takeIf { conflictingReaderTags.isNotEmpty() }
-        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem, importedProcess?.notice).joinToString(" ").ifBlank { null }
+        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem, importedProcess?.notice, layerActionProblem,
+            "Review the saved layer actions before slicing.".takeIf { !layerActionsReviewed }).joinToString(" ").ifBlank { null }
         dirty = false
         history.reset()
         showPlateOverview = count > 1
@@ -2125,7 +2179,10 @@ class PrepareState(private val app: AppState) {
                     nozzleDiameters = machineVariant()?.let { m -> PrinterSetup.nozzles(machineJson()).map { it.toDoubleOrNull() ?: 0.4 } } ?: base.printer?.nozzleDiameters.orEmpty()),
                 plates = plates.mapIndexed { n, i -> ProjectManifest.PlateEntry(n + 1, plateNames[i], plateItems(i).map {
                     ProjectManifest.ObjectEntry(it.id, it.name, sliceSlot(it.slot), paintSlots = it.paintSlots.map { s -> if (s in unoffered) sliceSlot(it.slot) else s }, settings = it.settings.toMap(), parts = it.parts.toList(), heightRanges = it.ranges.toList(), layerProfile = it.layerProfile.toList(), instanceOf = it.instanceOf) },
-                    base.plates.firstOrNull { old -> (old.id ?: ProjectManifest.legacyPlateId(base.projectId, old.index)) == plateIds[i] }?.unknown ?: org.json.JSONObject(),
+                    (base.plates.firstOrNull { old -> (old.id ?: ProjectManifest.legacyPlateId(base.projectId, old.index)) == plateIds[i] }
+                        ?.unknown ?: JSONObject()).let { unknown ->
+                        if (layerActionProblem == null) LayerAction.write(unknown, layerActions[plateIds[i]].orEmpty()) else unknown
+                    },
                     plateIds[i]) },
                 materials = materials(),
                 extensions = PresetSnapshot.withSnapshot(base.extensions, savedPreset),
@@ -2198,6 +2255,8 @@ class PrepareState(private val app: AppState) {
         if (slice is SliceState.Running) return
         batchSlices = emptyMap()
         presetSnapshotProblem?.let { slice = SliceState.Failed(it, GuidanceFailureKind.PRESET); return }
+        val actionProblem = layerActionProblem ?: "Review the saved layer actions before slicing.".takeIf { !layerActionsReviewed }
+        actionProblem?.let { slice = SliceState.Failed(it, GuidanceFailureKind.INPUTS); return }
         val bin = SliceEngine.locateEngine() ?: run {
             slice = SliceState.Failed("The slicing engine is missing, invalid, or cannot run. Check the Desktop installation and engine permissions.", GuidanceFailureKind.ENGINE_UNAVAILABLE)
             return

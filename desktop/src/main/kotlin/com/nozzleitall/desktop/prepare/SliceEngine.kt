@@ -224,7 +224,18 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                 require(!Regex("[\t\n\r]").containsMatchIn(k + v)) { "Settings may not contain tabs or line breaks." }
                 lines += "set\t$k\t$v"
             }
-            val (bedW, bedD) = bedOf(File(req.profileDir, "machine.json").readText())
+            val machineText = File(req.profileDir, "machine.json").readText()
+            val layerActions = LayerAction.fromSlice(req.project)
+            if (layerActions.isNotEmpty()) {
+                val machine = JSONObject(machineText)
+                for (action in layerActions) {
+                    val commands = LayerAction.command(action.kind, machine, action.text)
+                        ?: throw IllegalArgumentException("${action.kind.label} at layer ${action.layer} is unavailable for this printer profile.")
+                    val payload = commands.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                    lines += "layer_action\t${action.z}\t${action.id}\t$payload"
+                }
+            }
+            val (bedW, bedD) = bedOf(machineText)
             req.project.objects.forEachIndexed { i, o ->
                 // A painted object goes as a 3MF, which the engine's own importer reads paint from; others as STL.
                 val stl = paint[o.id]?.let { (painted, _) -> File(job, "object-$i.3mf").apply { writeBytes(ThreeMf.write(Project3mf(listOf(ModelObject(1, o.name, painted))))) } }
@@ -384,6 +395,10 @@ class SliceEngine(private val binary: File, private val workDir: File) {
         val unchanged = runCatching { hashInputs(listOf(engine)) == engineSha256 &&
             hashInputs(listOf(request) + inputs, job) == inputSha256 }.getOrDefault(false)
         if (!unchanged) return SliceOutcome.Failed("A slicing input changed while the engine was running; review and slice again.", text.takeLast(8000))
+        LayerAction.verifyExport(gcode, LayerAction.fromSlice(req.project))?.let { problem ->
+            gcode.delete(); bundle?.delete()
+            return SliceOutcome.Failed(problem, text.takeLast(8000))
+        }
         onProgress(1f, "Done")
         return SliceOutcome.Done(gcode, parseStats(gcode), emptyList(), engineSha256, inputSha256, nozzleDiameters, bundle)
     }

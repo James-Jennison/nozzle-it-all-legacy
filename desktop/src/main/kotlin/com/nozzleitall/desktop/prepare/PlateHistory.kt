@@ -23,7 +23,8 @@ class PlateHistory(private val p: PrepareState) {
     private class Snapshot(val items: List<ItemRecord>, val overrides: Map<String, String>, val plateNames: List<String>, val plateIds: List<String>,
                            val currentPlate: Int, var selected: Int?, val nextId: Int, var selectedIds: Set<Int>,
                            val mixes: List<com.nozzleitall.printer.ext.MixedFilamentFormat.Row>,
-                           val mixSettings: Map<String, String>, val mixSublayers: Boolean)
+                           val mixSettings: Map<String, String>, val mixSublayers: Boolean,
+                           val layerActions: Map<String, List<LayerAction>>, val layerActionsReviewed: Boolean)
 
     private val undoStack = ArrayDeque<Snapshot>()
     private val redoStack = ArrayDeque<Snapshot>()
@@ -46,7 +47,7 @@ class PlateHistory(private val p: PrepareState) {
         p.items.map { i -> ItemRecord(i.id, i.name, i.mesh, i.x, i.y, i.rotZ, i.scale, i.slot, i.paintSlots.toList(), i.sources, i.settings.toMap(), i.plate, i.sx, i.sy, i.sz,
             i.parts.toList(), i.ranges.toList(), i.layerProfile.toList(), i.ownFilament, i.instanceOf) },
         p.overrides.toMap(), p.plateNames.toList(), p.plateIds.toList(), p.currentPlate, p.selected, p.nextItemId, p.selectedIds.toSet(),
-        p.mixed.toList(), p.mixedSettings, p.mixSublayers)
+        p.mixed.toList(), p.mixedSettings, p.mixSublayers, p.layerActions.toMap(), p.layerActionsReviewed)
 
     /** The plate as it is now is the first step's starting point: a new or opened project has nothing to undo. */
     fun reset() { undoStack.clear(); redoStack.clear(); current = capture(); lastRecorded = 0L; editing = false; editRecorded = false; sync() }
@@ -70,6 +71,7 @@ class PlateHistory(private val p: PrepareState) {
         restoring = true
         try {
             p.restoreMixes(s.mixes, s.mixSettings, s.mixSublayers)
+            p.restoreLayerActions(s.layerActions, s.layerActionsReviewed)
             p.restorePlate(s.items.map { r ->
                 PrepItem(r.id, r.name, r.mesh, r.x, r.y, r.rotZ, r.scale, r.slot, r.paintSlots, r.sources, r.settings, r.plate).also {
                     it.sx = r.sx; it.sy = r.sy; it.sz = r.sz; it.parts.addAll(r.parts); it.ranges.addAll(r.ranges); it.layerProfile.addAll(r.layerProfile)
