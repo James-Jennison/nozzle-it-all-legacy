@@ -747,10 +747,10 @@ fun PrepareScreen(state: AppState) {
                     add(ContextMenuItem("Fit build plate", camera::fitView))
                 }
             }
-            LocalContextMenuRepresentation.current.Representation(plateContextMenu) {
+            if (onPlate.isNotEmpty()) LocalContextMenuRepresentation.current.Representation(plateContextMenu) {
                 contextObject?.let { objectContextActions(p, it) } ?: bedActions()
             }
-            if (onPlate.isEmpty() && !p.showPreview) ContextMenuArea(items = bedActions, modifier = Modifier.matchParentSize()) {
+            if (onPlate.isEmpty() && !p.showPreview) ContextMenuArea(items = bedActions, state = plateContextMenu, modifier = Modifier.matchParentSize()) {
                 EmptyState(NzIcon.IMPORT, if (p.items.isEmpty()) "Start with a model" else "${p.plateNames.getOrNull(p.currentPlate) ?: "This plate"} is empty",
                     "Add an STL, 3MF or OBJ file, or open a saved project. Nothing leaves this computer.", Modifier.align(Alignment.Center)) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
