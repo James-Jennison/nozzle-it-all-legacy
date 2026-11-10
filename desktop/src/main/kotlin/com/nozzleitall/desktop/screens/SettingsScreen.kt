@@ -10,6 +10,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.nozzleitall.desktop.AppState
+import com.nozzleitall.desktop.migration.LegacySettingsMigration
+import com.nozzleitall.desktop.settings.Choice
+import com.nozzleitall.desktop.settings.NzSelect
 import com.nozzleitall.desktop.ui.*
 import com.nozzleitall.printer.Glossary
 import com.nozzleitall.printer.external.AdapterAccount
@@ -98,6 +101,7 @@ fun SettingsScreen(state: AppState) {
             Txt("Nozzle It All keeps its own folders. It reads another slicer's settings only after you choose an import source, and never changes that source.", Nz.type.bodySmall, c.textMuted)
         }
         LegacySettingsPanel(state)
+        ArchivedProcessPanel(state)
         Card(Modifier.fillMaxWidth()) {
             Txt("NIA updates", Nz.type.title)
             Txt(com.nozzleitall.desktop.updates.NiaUpdatePolicy.status, Nz.type.body, c.textMuted)
@@ -242,6 +246,68 @@ private fun LegacySettingsPanel(state: AppState) {
                     }
                 }, kind = ButtonKind.PRIMARY, enabled = !busy && (review.profiles.isNotEmpty() || review.projects.isNotEmpty() || review.theme != null))
                 NzButton("Cancel", { prepared = null }, kind = ButtonKind.QUIET, enabled = !busy)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchivedProcessPanel(state: AppState) {
+    val scope = rememberCoroutineScope()
+    val profileId = state.prepare.profileId
+    val machine = state.prepare.machineVariant()
+    val library = state.prepare.library()
+    val bases = machine?.processes.orEmpty().mapNotNull { id -> library?.processes?.get(id) }
+    var candidates by remember { mutableStateOf<List<LegacySettingsMigration.ArchivedProcess>?>(null) }
+    var selected by remember { mutableStateOf("") }
+    var base by remember(profileId, machine?.id) { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    Card(Modifier.fillMaxWidth()) {
+        Txt("Link a preserved Process preset", Nz.type.title)
+        Txt("Choose the target printer and nozzle in Prepare. Linking creates a Process preset for that setup and keeps the original archived settings.",
+            Nz.type.body, Nz.colors.textMuted)
+        notice?.let { Banner(it, if (it.startsWith("Couldn't")) BannerKind.WARNING else BannerKind.INFO) }
+        if (candidates == null) NzButton(if (busy) "Looking…" else "Find preserved Process presets", {
+            busy = true
+            scope.launch {
+                runCatching { withContext(Dispatchers.IO) { state.legacySettings.archivedProcesses() } }
+                    .onSuccess {
+                        candidates = it
+                        notice = if (it.isEmpty()) "No unresolved Process presets were found in completed migrations." else null
+                    }
+                    .onFailure { notice = "Couldn't read preserved Process presets: ${it.message}" }
+                busy = false
+            }
+        }, enabled = !busy, kind = ButtonKind.SECONDARY)
+        val available = candidates.orEmpty()
+        if (available.isNotEmpty()) {
+            Txt("Preserved preset", Nz.type.label)
+            NzSelect("Preserved Process preset", available.map { Choice(it.sha256, "${it.name} · ${it.source}") }, selected) {
+                if (!busy) selected = it
+            }
+            if (machine == null || bases.isEmpty()) {
+                Txt("Choose a printer and nozzle with a bundled Process library in Prepare.", Nz.type.body, Nz.colors.textMuted)
+            } else {
+                Txt("Base Process for ${machine.name}", Nz.type.label)
+                NzSelect("Base Process", bases.map { Choice(it.id, it.displayLabel) }, base) { if (!busy) base = it }
+                val archived = available.firstOrNull { it.sha256 == selected }
+                NzButton(if (busy) "Linking…" else "Link Process preset", {
+                    if (archived != null) {
+                        val targetBase = base
+                        busy = true
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    state.legacySettings.linkArchivedProcess(archived, profileId, machine.id, targetBase)
+                                }
+                            }.onSuccess {
+                                notice = "Linked ${it.name}. Applied ${it.applied} settings and skipped ${it.skipped}. Select the preset under Process in Prepare."
+                            }.onFailure { notice = "Couldn't link this Process preset: ${it.message}" }
+                            busy = false
+                        }
+                    }
+                }, enabled = !busy && archived != null && bases.any { it.id == base }, kind = ButtonKind.PRIMARY)
             }
         }
     }

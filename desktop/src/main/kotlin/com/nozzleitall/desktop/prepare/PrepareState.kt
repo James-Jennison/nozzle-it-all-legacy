@@ -375,8 +375,11 @@ class PrepareState(private val app: AppState) {
         }
         if (user == null) selectedUserPresetIds.remove(scope) else selectedUserPresetIds[scope] = user.id
         if (scope == com.nozzleitall.desktop.settings.Scope.PROCESS) {
-            infill = user?.values?.get("sparse_infill_density")?.removeSuffix("%")?.toDoubleOrNull()?.toInt()?.coerceIn(0, 100) ?: 15
-            supports = user?.values?.get("enable_support") == "1"
+            val legacy = app.legacyProcessPresets.find(profileId, baseId)
+                ?.takeIf { it.machineId == machineVariant()?.id }?.processOverrides
+            val density = user?.values?.get("sparse_infill_density") ?: legacy?.optString("sparse_infill_density")
+            infill = density?.removeSuffix("%")?.toDoubleOrNull()?.toInt()?.coerceIn(0, 100) ?: 15
+            supports = (user?.values?.get("enable_support") ?: legacy?.optString("enable_support")) == "1"
         }
         resetSettingsScope(scope, markChanged = false)
         changed()
@@ -1140,7 +1143,8 @@ class PrepareState(private val app: AppState) {
         bedType = null; nozzleFlows.clear(); nozzle = null; processId = null
         presetSnapshot = null; presetSnapshotProblem = null
         machineCache = null
-        overrides.clear(); mixed.clear(); mixedSettings = emptyMap(); mixSublayers = true; mixProblem = null; destinationHeadProfiles.clear()
+        overrides.clear(); supports = false; infill = 15
+        mixed.clear(); mixedSettings = emptyMap(); mixSublayers = true; mixProblem = null; destinationHeadProfiles.clear()
         printerId = null
         items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap()
         plateNames.clear(); plateNames += "Plate 1"; plateIds.clear(); plateIds += UUID.randomUUID().toString(); currentPlate = 0
@@ -1216,6 +1220,14 @@ class PrepareState(private val app: AppState) {
                 processId = requested.takeIf { id -> library() == null || processes().any { it.id == id } }
             }
             else QualityPreset.entries.firstOrNull { it.name.equals(key, true) }?.let { preset = it } }
+        val importedProcess = ForeignProcessSettings.read(p, (machineVariant()?.nozzle ?: nozzle)?.toDoubleOrNull())
+        importedProcess?.values?.forEach { (key, value) ->
+            when (key) {
+                "sparse_infill_density" -> value.removeSuffix("%").toIntOrNull()?.let { infill = it }
+                "enable_support" -> supports = value == "1"
+                else -> overrides[key] = value
+            }
+        }
         p.manifest?.settings?.overrides?.let { ov ->
             ov["sparse_infill_density"]?.removeSuffix("%")?.toIntOrNull()?.let { infill = it }; ov["enable_support"]?.let { supports = it == "1" }
             // Everything else the project changed (from any platform) shows up in All settings.
@@ -1249,7 +1261,7 @@ class PrepareState(private val app: AppState) {
         }
         val readerProblem = "A reader tag was assigned to more than one slot. Review those spool mappings."
             .takeIf { conflictingReaderTags.isNotEmpty() }
-        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem).joinToString(" ").ifBlank { null }
+        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem, importedProcess?.notice).joinToString(" ").ifBlank { null }
         dirty = false
         history.reset()
         showPlateOverview = count > 1

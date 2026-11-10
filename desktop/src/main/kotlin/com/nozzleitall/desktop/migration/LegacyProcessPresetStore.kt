@@ -3,6 +3,8 @@ package com.nozzleitall.desktop.migration
 import com.nozzleitall.desktop.PrinterStore
 import com.nozzleitall.desktop.prepare.PrinterLibrary
 import com.nozzleitall.desktop.prepare.ProfileCatalog
+import net.jamesjennison.klippercompanion.SettingsCatalog
+import net.jamesjennison.klippercompanion.SettingType
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -85,6 +87,45 @@ class LegacyProcessPresetStore(private val file: File) : PrinterLibrary.CustomPr
         }
         if (imported > 0) save(existing.values.toList())
         return Imported(imported, unresolved.sorted())
+    }
+
+    internal data class LinkedProcess(val name: String, val applied: Int, val skipped: Int)
+
+    internal fun link(
+        sourceLabel: String, profile: LegacySettingsMigration.Profile, profileId: String, machineId: String, baseProcessId: String,
+    ): LinkedProcess {
+        require(profile.category == "process") { "Select an archived Process preset." }
+        val library = requireNotNull(PrinterLibrary.of(profileId)) { "Select a printer with a bundled Process library in Prepare." }
+        val machine = requireNotNull(library.machines.singleOrNull { it.id == machineId }) { "The selected nozzle variant is unavailable." }
+        require(baseProcessId in machine.processes) { "Choose a bundled Process for this printer and nozzle." }
+        val base = library.processes.getValue(baseProcessId)
+        val source = overrides(profile.json)
+        val values = JSONObject()
+        for (key in source.keySet()) {
+            val def = SettingsCatalog.get(key) ?: continue
+            if (def.scope != "process" || def.vector || def.type == SettingType.Text || key == "print_sequence") continue
+            val raw = source.opt(key)
+            if (raw !is String && raw !is Number && raw !is Boolean) continue
+            val text = raw.toString()
+            if (text.length > 128 || text.any(Char::isISOControl)) continue
+            val value = SettingsCatalog.validate(def, text) ?: continue
+            if (key == "layer_height" || key == "initial_layer_print_height") {
+                val nozzle = machine.nozzle.toDoubleOrNull() ?: continue
+                val height = value.toDoubleOrNull() ?: continue
+                if (height !in 0.04..nozzle) continue
+            }
+            values.put(key, value)
+        }
+        require(values.length() > 0) { "No compatible Process settings remain for the selected printer and nozzle." }
+        val name = profile.json.optString("name").filterNot(Char::isISOControl).trim().take(100)
+            .ifBlank { "Linked Process preset" }
+        val identity = "$profileId\n$machineId\n$baseProcessId\n${profile.relativePath}\n${profile.json}"
+        val id = "legacy-" + sha256(identity).take(24)
+        val records = records().associateByTo(linkedMapOf()) { it.id }
+        records[id] = PrinterLibrary.CustomProcess(id, profileId, machineId, baseProcessId, name,
+            values.optString("layer_height").ifBlank { base.layerHeight }, sourceLabel, values, JSONObject())
+        save(records.values.toList())
+        return LinkedProcess(name, values.length(), source.length() - values.length())
     }
 
     private fun save(rows: List<PrinterLibrary.CustomProcess>) {
