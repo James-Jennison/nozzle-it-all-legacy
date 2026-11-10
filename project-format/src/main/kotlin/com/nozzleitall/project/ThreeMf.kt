@@ -296,7 +296,10 @@ object ThreeMf {
         val sourceLinks = rootLinks(entries[ROOT_RELS])
         val covers = coverLinks(sourceLinks, passthrough)
         val losses = buildList {
-            val omittedParts = entries.keys.filter { it != root && it !in owned && it !in passthrough }
+            // model_settings.config is regenerated from parsed fields; report that separately for foreign projects.
+            val omittedParts = entries.keys.filter {
+                it != root && it !in owned && it !in passthrough && it != "Metadata/model_settings.config"
+            }
             if (omittedParts.any { it.endsWith(".model", ignoreCase = true) }) {
                 add("Separate component files are flattened into the main model.")
             }
