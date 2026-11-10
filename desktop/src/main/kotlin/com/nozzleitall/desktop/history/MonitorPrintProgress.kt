@@ -41,6 +41,8 @@ internal class MonitorPrintProgress {
         val completed = reportedJobPath(status.completedFileName)
         if (status.state == PrinterState.FINISHED && completed == null) return emptyList()
         val file = active.value?.fileName
+        if (status.state == PrinterState.FINISHED && file != null && reportedJobPath(file) != completed)
+            return emptyList()
         active.value = null
         if (status.state != PrinterState.FINISHED) {
             finished.value = null

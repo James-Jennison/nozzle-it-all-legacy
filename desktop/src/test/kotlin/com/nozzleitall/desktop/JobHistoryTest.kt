@@ -32,8 +32,7 @@ class JobHistoryTest {
         tracker.observe("p", "P", printing("folder/part.gcode", 0.9f))
         assertNull(tracker.observe("p", "P", PrinterStatus(PrinterState.FINISHED, route,
             job = JobProgress("folder/part.gcode", 1f))))
-        assertEquals("unknown", tracker.observe("p", "P", finished("other/part.gcode"))!!.outcome)
-        tracker.observe("p", "P", printing("folder/part.gcode", 0.8f))
+        assertNull(tracker.observe("p", "P", finished("other/part.gcode")))
         assertEquals("finished", tracker.observe("p", "P", finished("folder\\part.gcode"))!!.outcome)
     }
 

@@ -81,7 +81,8 @@ class JobTracker(private val clock: () -> Long = System::currentTimeMillis) {
         val outcome = when (state) {
             PrinterState.FINISHED -> {
                 val completed = reportedJobPath(status.completedFileName) ?: return null
-                if (completed == reportedJobPath(o.fileName)) "finished" else "unknown"
+                if (completed != reportedJobPath(o.fileName)) return null
+                "finished"
             }
             PrinterState.CANCELLED -> "cancelled"
             PrinterState.ERROR -> "failed"

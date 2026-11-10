@@ -115,7 +115,7 @@ class LocalJobStoreTest {
         val job = store.createJob(LocalJobStore.Origin.APP, artifactSha256 = "a".repeat(64), printerId = "p")
         val active = store.bindQueuedStart("p", job.id, "nozzle/part.gcode", 100)
         assertEquals(active, LocalJobStore(file).activeQueuedAttempt("p"))
-        val observed = com.nozzleitall.desktop.history.JobRecord("observation-1", "p", "P", "part.gcode", 100, 200,
+        val observed = com.nozzleitall.desktop.history.JobRecord("observation-1", "p", "P", "nozzle/part.gcode", 100, 200,
             "finished", 10.0, 3)
         assertEquals(job.id to active.attemptId, LocalJobStore(file).recordCurrentObservation(observed))
         assertNull(LocalJobStore(file).activeQueuedAttempt("p"))
@@ -134,14 +134,14 @@ class LocalJobStoreTest {
         val store = LocalJobStore(file)
         val queued = store.createJob(LocalJobStore.Origin.APP, artifactSha256 = "a".repeat(64), printerId = "p")
         val active = store.bindQueuedStart("p", queued.id, "nozzle/first.gcode", 100)
-        val observed = com.nozzleitall.desktop.history.JobRecord("observation-2", "p", "P", "other.gcode", 100, 200,
+        val observed = com.nozzleitall.desktop.history.JobRecord("observation-2", "p", "P", "other/first.gcode", 100, 200,
             "finished", null, null)
         val recorded = store.recordCurrentObservation(observed)
         assertNotEquals(queued.id, recorded.first)
         assertEquals(listOf(LocalJobStore.MachineState.PRINTING), store.machineEvents(active.attemptId).map { it.state })
         assertEquals(LocalJobStore.Origin.OBSERVED_UNLINKED, store.job(recorded.first)!!.origin)
         assertEquals(active, store.activeQueuedAttempt("p"))
-        store.recordCurrentObservation(observed.copy(id = "queued-later", fileName = "first.gcode", endedAtMillis = 300))
+        store.recordCurrentObservation(observed.copy(id = "queued-later", fileName = "nozzle/first.gcode", endedAtMillis = 300))
         assertNull(store.activeQueuedAttempt("p"))
         assertEquals(listOf(LocalJobStore.MachineState.PRINTING, LocalJobStore.MachineState.MACHINE_COMPLETED),
             store.machineEvents(active.attemptId).map { it.state })
