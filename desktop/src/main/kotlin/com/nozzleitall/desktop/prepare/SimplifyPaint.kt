@@ -9,6 +9,7 @@ internal class SimplifyPaint(private val source: Mesh) {
         override fun compareTo(other: Point) = compareValuesBy(this, other, Point::x, Point::y, Point::z)
     }
     private data class Face(val points: List<Point>, val first: Int) {
+        // Canonical rotation preserves the sequence, so reversing a face cannot match.
         val key get() = List(3) { points[(first + it) % 3] }
     }
     private val paint = listOf(source.paint, source.supportPaint, source.seamPaint, source.fuzzyPaint)
@@ -19,7 +20,8 @@ internal class SimplifyPaint(private val source: Mesh) {
         for (i in 0 until source.triangleCount) {
             if (paint.none { it?.get(i) != null }) continue
             val face = face(source, i)
-            check(painted.put(face.key, i to face.first) == null) { "Overlapping painted facets cannot be simplified safely." }
+            if (painted.put(face.key, i to face.first) != null)
+                throw ModelingOps.EngineError("Overlapping painted facets cannot be simplified safely.")
             protected.addAll(face.points)
         }
         // Keeping only the painted end of a cylinder can let the opposite planar face

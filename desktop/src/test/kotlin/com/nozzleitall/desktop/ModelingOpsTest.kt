@@ -1,6 +1,7 @@
 package com.nozzleitall.desktop
 
 import com.nozzleitall.desktop.prepare.CadRecipe
+import com.nozzleitall.desktop.prepare.MeshRepair
 import com.nozzleitall.desktop.prepare.ModelingOps
 import com.nozzleitall.desktop.prepare.PrepItem
 import com.nozzleitall.desktop.prepare.ProfileCatalog
@@ -106,7 +107,7 @@ class ModelingOpsTest {
         assertEquals(90.0, measure.angleDegrees!!, 1e-9)
         assertEquals(13.0, measure.diameter!!, 1e-9)
 
-        val repair = ModelingOps.repairPreview(cube, work)
+        val repair = ModelingOps.repair(cube, work).second
         assertTrue("the STL fixture should exercise repair, but reported ${repair.before.openEdges} open edges",
             repair.before.openEdges > 0)
         assertEquals(0, repair.after.openEdges)
@@ -160,6 +161,19 @@ class ModelingOpsTest {
         } finally { work.deleteRecursively() }
     }
 
+    @Test fun repairLeavesTwoSeparateBoundaryLoopsAndReportsDuplicateEdges() {
+        val bounds = cube.bounds()
+        val openSides = cube.triangles.toList().chunked(3).filterNot { face ->
+            listOf(bounds[2], bounds[5]).any { z -> face.all { cube.vertices[it * 3 + 2] == z } }
+        }.flatten().toIntArray()
+        val open = MeshRepair.closePlanarHole(Mesh(cube.vertices, openSides))
+        assertEquals(8, open.openEdges)
+        assertEquals(8, open.mesh.triangleCount)
+        val duplicate = MeshRepair.closePlanarHole(Mesh(cube.vertices, cube.triangles + cube.triangles.take(3)))
+        assertEquals(3, duplicate.nonManifoldEdges)
+        assertEquals(cube.triangleCount + 1, duplicate.mesh.triangleCount)
+    }
+
     @Test fun simplifyKeepsPaintedCylinderFacetsAndUsesBothTools() {
         engineReady()
         val output = System.getenv("NIA_AUDIT_MESH_OUTPUT")?.let(::File)
@@ -203,8 +217,18 @@ class ModelingOpsTest {
             assertTrue(clean.triangleCount < fixture.triangleCount)
             val simplified = ModelingOps.simplify(painted, target, work)
             assertTrue(simplified.triangleCount < fixture.triangleCount)
-            assertEquals(paint.filterNotNull().groupingBy { it }.eachCount(),
-                simplified.paint!!.filterNotNull().groupingBy { it }.eachCount())
+            fun paintedFaces(mesh: Mesh) = (0 until mesh.triangleCount).mapNotNull { f ->
+                mesh.paint?.get(f)?.let { label ->
+                    val points = (0..2).flatMap { corner ->
+                        val offset = mesh.triangles[f * 3 + corner] * 3
+                        (0..2).map { axis -> mesh.vertices[offset + axis].let { if (it == 0f) 0f else it } }
+                    }
+                    label to points
+                }
+            }.groupingBy { it }.eachCount()
+            assertEquals(paintedFaces(painted), paintedFaces(simplified))
+            val paintProject = Project3mf(listOf(ModelObject(1, "Painted cylinder", painted)))
+            output?.let { File(work, "cylinder-before.3mf").writeBytes(ThreeMf.write(paintProject)) }
             val profile = ProfileCatalog.byId("snapmaker_u1")!!
             val item = PrepItem(1, "Cylinder", simplified, profile.bedW / 2f, profile.bedD / 2f, paintSlots = listOf(1, 2))
             val obj = ModelObject(1, "Cylinder", simplified, item.placement())

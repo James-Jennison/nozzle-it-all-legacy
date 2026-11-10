@@ -28,7 +28,7 @@ object ModelingOps {
     enum class BooleanMode(val wire: String) { UNION("union"), SUBTRACT("subtract"), INTERSECT("intersect") }
     enum class ReliefMode(val label: String) { STANDALONE("New object"), RAISED("Raised"), ENGRAVED("Engraved") }
     data class MeshStats(val triangles: Int, val parts: Int, val openEdges: Int, val volume: Double)
-    data class RepairPreview(val before: MeshStats, val after: MeshStats)
+    data class RepairPreview(val before: MeshStats, val after: MeshStats, val remainingNonManifoldEdges: Int = 0)
     data class Measurement(val distance: Double, val delta: DoubleArray, val angleDegrees: Double?, val diameter: Double?)
 
     private fun run(request: JSONObject, timeoutSeconds: Long = 120): JSONObject {
@@ -263,8 +263,6 @@ object ModelingOps {
         } finally { deleteWorkspace(dir, work) }
     }
 
-    fun repairPreview(mesh: Mesh, work: File): RepairPreview = repair(mesh, work).second
-
     fun repair(mesh: Mesh, work: File): Pair<Mesh, RepairPreview> {
         val dir = workspace(work, "repair")
         return try {
@@ -272,10 +270,10 @@ object ModelingOps {
             val response = run(JSONObject().put("op", "repair").put("model", stl(mesh, dir, "model.stl").absolutePath)
                 .put("apply", true).put("out", out.absolutePath))
             val preview = response.getJSONObject("preview")
-            val (repaired, openEdges) = MeshRepair.closePlanarHole(read(out))
+            val topology = MeshRepair.closePlanarHole(read(out))
             val after = stats(preview.getJSONObject("after"))
-            repaired to RepairPreview(stats(preview.getJSONObject("before")),
-                after.copy(triangles = repaired.triangleCount, openEdges = openEdges))
+            topology.mesh to RepairPreview(stats(preview.getJSONObject("before")),
+                after.copy(triangles = topology.mesh.triangleCount, openEdges = topology.openEdges), topology.nonManifoldEdges)
         } finally { deleteWorkspace(dir, work) }
     }
 

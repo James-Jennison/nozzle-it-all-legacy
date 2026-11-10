@@ -3039,8 +3039,10 @@ private fun MeshEditResult(p: PrepareState, preview: PrepareState.MeshEditPrevie
         Txt("Open edges: ${stats.before.openEdges} → ${stats.after.openEdges}", Nz.type.bodySmall,
             if (stats.after.openEdges == 0) c.textMuted else c.danger)
         Txt("Connected parts: ${stats.before.parts} → ${stats.after.parts}", Nz.type.bodySmall, c.textMuted)
-        if (stats.after.openEdges > 0)
-            Txt("The repaired mesh still has open edges. Review the result before applying.", Nz.type.bodySmall, c.danger)
+        if (stats.remainingNonManifoldEdges > 0)
+            Txt("Non-manifold edges: ${stats.remainingNonManifoldEdges}", Nz.type.bodySmall, c.danger)
+        if (stats.after.openEdges > 0 || stats.remainingNonManifoldEdges > 0)
+            Txt("The repaired mesh still has edge defects. Review the result before applying.", Nz.type.bodySmall, c.danger)
     }
     if (preview.other == null)
         Txt("Size: ${dimensions(preview.primary)} mm → ${dimensions(result)} mm", Nz.type.bodySmall, c.textMuted)
