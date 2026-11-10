@@ -1,5 +1,6 @@
 package com.nozzleitall.desktop
 
+import com.nozzleitall.desktop.history.reportedJobPath
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import com.nozzleitall.printer.*
@@ -481,6 +482,16 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
     fun dequeue(id: String, expectedItem: com.nozzleitall.desktop.queue.QueueItem? = null) = synchronized(this) {
         check(id !in queuedTransfers) { "Wait for the queued file transfer to finish before removing it." }
         queueStore.remove(id, expectedItem = expectedItem); refreshQueue()
+        queueRecoveryProblems.value = queueStore.problems()
+    }
+    fun discardUntransferredDirectDraft(item: com.nozzleitall.desktop.queue.QueueItem) = synchronized(this) {
+        check(item.id !in queuedTransfers) { "Wait for the queued file transfer to finish before discarding this review." }
+        queueStore.discardUntransferredDirectDraft(item)
+        refreshQueue()
+        queueRecoveryProblems.value = queueStore.problems()
+    }
+    fun recordDirectUpload(item: com.nozzleitall.desktop.queue.QueueItem, printerId: String, remotePath: String) {
+        if (item.directDraft) queueStore.recordDirectUpload(item, printerId, remotePath)
     }
     fun moveInQueue(id: String, by: Int) = synchronized(this) {
         check(id !in queuedTransfers) { "Wait for the queued file transfer to finish before reordering it." }
@@ -552,11 +563,14 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         retryCurrentObservationOutbox()
         reconcileCurrentObservations()
         retryPendingQueueLinks()
-        if (queue.value.any { it.directDraft && !it.startUncertain && !it.pendingLink }) {
-            runCatching { queueStore.discardAbandonedDirectDrafts() }
-                .onSuccess { refreshQueue() }
-                .onFailure { queueRecoveryProblems.value += "Abandoned print reviews could not be cleared: ${it.message}" }
-        }
+        runCatching { queueStore.discardAbandonedDirectDrafts() }
+            .onSuccess { changed ->
+                if (changed) {
+                    refreshQueue()
+                    queueRecoveryProblems.value = queueStore.problems()
+                }
+            }
+            .onFailure { queueRecoveryProblems.value = queueStore.problems() }
         reconcileStartedQueueEntries()
         applyStockSetting()
         store.load().forEach { add(it, persist = false) }
@@ -783,7 +797,7 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         val printerName = entry.config.identity.displayName.ifBlank { entry.config.identity.address }
         val milestones = entry.printProgress.observe(reading)
         if (settings.value.printMilestones) milestones.forEach { milestone ->
-            notifier("Print ${milestone.label} · $printerName", milestone.fileName)
+            notifier("Print ${milestone.label} · $printerName", com.nozzleitall.desktop.history.displayJobPath(milestone.fileName))
         }
         val observed = tracker.observe(printerId, printerName, reading) ?: run {
             val outcome = when (reading.state) {
@@ -796,13 +810,13 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
                 else -> null
             } ?: return
             val active = runCatching { localJobs.activeQueuedAttempt(printerId) }.getOrNull() ?: return
-            val reportedFile = reading.completedFileName ?: reading.job?.fileName?.takeIf { it.isNotBlank() }
+            val reportedFile = if (reading.state == PrinterState.FINISHED) reportedJobPath(reading.completedFileName)
+                else reportedJobPath(reading.job?.fileName)
             if (reportedFile == null && reading.state != PrinterState.READY) {
                 currentObservationProblem.value = "Printer $printerName reported ${reading.state} without a file name; the queued attempt remains open for review."
                 return
             }
-            val sameFile = reportedFile == null || reportedFile.substringAfterLast('/').substringAfterLast('\\') ==
-                active.fileName.substringAfterLast('/').substringAfterLast('\\')
+            val sameFile = reportedFile == null || reportedFile == reportedJobPath(active.fileName)
             val observedName = if (sameFile) active.fileName else requireNotNull(reportedFile)
             if (!sameFile && (history.value.asSequence() + unpersistedObservations.values.asSequence()).any {
                     it.printerId == printerId && it.fileName == observedName &&

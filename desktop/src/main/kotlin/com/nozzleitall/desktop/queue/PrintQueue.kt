@@ -12,6 +12,7 @@ import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.UUID
 import com.nozzleitall.desktop.LocalFileDurability
+import com.nozzleitall.desktop.PrinterStore
 import com.nozzleitall.desktop.prepare.PreparedMaterialPlan
 
 /** A sliced file waiting for a printer. It keeps its own copy of the file, so it survives the project being edited or the cache being cleared. */
@@ -91,6 +92,8 @@ data class QueueItem(
 class PrintQueue(private val dir: File, private val clock: () -> Long = System::currentTimeMillis) {
     companion object { private val processLock = Any() }
     private val index get() = File(dir, "queue.json")
+    private fun uploadReceipt(item: QueueItem) = File(dir, "${item.id}.upload.json")
+
     private val unreadableIndexMessage = "Queue index cannot be read. Restore or repair queue.json, then Recheck queue. Queued jobs are unavailable until it can be read."
     private val unreadableFilesMessage = "Queue files could not be checked. Verify local storage, then Recheck queue."
     private var loadProblem: String? = null
@@ -114,6 +117,13 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         for (item in list) {
             if (item.pendingLink) add("Queued job awaits local record recovery: ${item.id}")
             if (item.startUncertain) add("Start outcome needs printer inspection for queued job ${item.id}")
+            val receipt = uploadReceipt(item)
+            if (receipt.exists() && !item.startUncertain) {
+                val path = runCatching { JSONObject(receipt.readText()).getString("remotePath") }.getOrNull()
+                    ?.filterNot(Char::isISOControl)?.take(160)?.takeIf(String::isNotBlank)
+                add(if (path == null) "The upload receipt for ${item.name} needs local review."
+                    else "An upload may remain on the printer as $path. Review ${item.name} before starting.")
+            }
             if (item.sha256 == null) add("Unverified legacy queued file for ${item.id}; requeue it before starting.")
             val stored = file(item)
             if (!stored.isFile) add("Missing queued file for ${item.id}. Restore the file or remove this queued job; Start is unavailable.")
@@ -121,6 +131,9 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         }
         dir.listFiles()?.filter { it.isFile && preparedOutputs.any { output -> it.name.endsWith(".$output") } && list.none { entry -> entry.fileName == it.name } }
             ?.forEach { add("Unindexed queued file: ${it.name}") }
+        dir.listFiles()?.filter { it.isFile && it.name.endsWith(".upload.json") &&
+            list.none { item -> uploadReceipt(item) == it } }
+            ?.forEach { add("Unindexed upload receipt: ${it.name}") }
         dir.listFiles()?.filter { it.isFile && it.name.endsWith(".part") }
             ?.forEach { add("Interrupted queue write: ${it.name}") }
     } } } catch (e: Exception) { listOf(loadProblem ?: unreadableFilesMessage) }
@@ -237,15 +250,38 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         save(list - item)
         // An interrupted cleanup leaves an explicit orphan reported by problems(); it cannot erase an indexed job.
         File(dir, item.fileName).delete()
+        uploadReceipt(item).delete()
     }
 
-    /** Only startup may discard drafts from the previous session. Holds always survive. */
+    private fun canDiscardDirectDraft(item: QueueItem) =
+        item.directDraft && !item.startUncertain && !item.pendingLink && !uploadReceipt(item).exists()
+
+    /** A receipt begins before upload dispatch. It says the remote file might exist, never that Start was sent. */
+    fun recordDirectUpload(item: QueueItem, printerId: String, remotePath: String) = withQueueLock {
+        check(list.any { it == item } && item.directDraft && !item.startUncertain && !item.pendingLink &&
+            item.printerId == printerId) { "The direct print review changed before upload." }
+        require(remotePath.length in 1..1024 && remotePath.none(Char::isISOControl)) { "The remote upload path is invalid." }
+        PrinterStore.atomicWrite(uploadReceipt(item), JSONObject().put("printerId", printerId)
+            .put("remotePath", remotePath).toString(), private = true)
+    }
+
+    /** Closing a review may discard only an unchanged draft that never dispatched an upload or Start. */
+    fun discardUntransferredDirectDraft(expected: QueueItem) = withQueueLock {
+        val item = list.firstOrNull { it == expected } ?: return@withQueueLock
+        if (!canDiscardDirectDraft(item)) return@withQueueLock
+        save(list - item)
+        File(dir, item.fileName).delete()
+        LocalFileDurability.syncDirectory(dir)
+    }
+
+    /** Startup checks the authoritative locked index. Potential remote uploads and Start holds survive. */
     fun discardAbandonedDirectDrafts() = withQueueLock {
-        val abandoned = list.filter { it.directDraft && !it.startUncertain && !it.pendingLink }
-        if (abandoned.isNotEmpty()) {
-            save(list - abandoned.toSet())
-            abandoned.forEach { File(dir, it.fileName).delete() }
-        }
+        val abandoned = list.filter(::canDiscardDirectDraft)
+        if (abandoned.isEmpty()) return@withQueueLock false
+        save(list - abandoned.toSet())
+        abandoned.forEach { File(dir, it.fileName).delete() }
+        LocalFileDurability.syncDirectory(dir)
+        true
     }
 
     /** Moves an item [by] places (negative = earlier), staying inside the list. */
@@ -262,6 +298,9 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         check(expectedItem == null || (i != null && list[i] == expectedItem)) { "The queued job changed. Review it again." }
         if (i == null) return@withQueueLock
         check(!list[i].startUncertain) { "Inspect the printer before changing an uncertain queued Start." }
+        check(list[i].printerId == printerId || !uploadReceipt(list[i]).exists()) {
+            "An upload may remain on the original printer. Review and remove that queued draft before retargeting."
+        }
         save(list.toMutableList().also { it[i] = it[i].copy(printerId = printerId) })
     }
 
@@ -300,6 +339,7 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         bind()
         save(list - item)
         File(dir, item.fileName).delete()
+        uploadReceipt(item).delete()
     }
 
     fun clearStartUncertain(id: String, printerId: String, expectedHold: QueueItem? = null) = withQueueLock {

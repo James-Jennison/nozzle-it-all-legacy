@@ -1,5 +1,6 @@
 package com.nozzleitall.desktop.jobs
 
+import com.nozzleitall.desktop.history.reportedJobPath
 import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
@@ -330,8 +331,7 @@ class LocalJobStore(private val file: File) {
                 } else {
                     val queued = activeQueuedAttempt(db, record.printerId)
                     val active = queued?.takeIf {
-                        it.fileName.substringAfterLast('/').substringAfterLast('\\') ==
-                            record.fileName.substringAfterLast('/').substringAfterLast('\\')
+                        reportedJobPath(it.fileName) == reportedJobPath(record.fileName)
                     }
                     // A different file's ending proves nothing about the queued attempt.
                     // Keep its machine events and active binding unchanged for later resolution.

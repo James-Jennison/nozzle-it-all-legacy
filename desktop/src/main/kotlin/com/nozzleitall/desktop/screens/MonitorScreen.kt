@@ -1,6 +1,8 @@
 @file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package com.nozzleitall.desktop.screens
 
+import com.nozzleitall.desktop.history.displayJobPath
+import com.nozzleitall.desktop.history.reportedJobPath
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -78,7 +80,10 @@ fun MonitorScreen(state: AppState) {
         }
         val handoff = state.monitorHandoff?.takeIf { it.printerId == entry.config.identity.id }
         val handoffSuperseded = if (handoff?.state in recoveryHandoffs)
-            state.fleet.queue.value.none { it.startUncertain && it.startPrinterId == handoff?.printerId }
+            state.fleet.queue.value.none {
+                it.startUncertain && it.startPrinterId == handoff?.printerId &&
+                    (handoff?.remotePath == null || reportedJobPath(it.startRemotePath) == reportedJobPath(handoff.remotePath))
+            }
         else monitorHandoffSuperseded(status)
         val showHandoff = handoff != null && !handoffSuperseded
         LaunchedEffect(handoff, handoffSuperseded) {
@@ -162,14 +167,18 @@ fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flo
     val c = Nz.colors
     val blocked = entry.guard?.needsReconcile == true || flow.busy
     val reconnecting = status.state in com.nozzleitall.desktop.history.MonitorPrintProgress.reconnectingStates
-    val confirmed = entry.printProgress.finished.value?.takeIf { status.state == PrinterState.FINISHED }
-    val displayState = if (status.state == PrinterState.FINISHED && confirmed == null) PrinterState.READY else status.state
+    val reportedCompletion = reportedJobPath(status.completedFileName)
+    val confirmed = entry.printProgress.finished.value?.takeIf {
+        status.state == PrinterState.FINISHED && reportedJobPath(it) == reportedCompletion
+    }
     Card(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Txt(entry.config.identity.displayName, Nz.type.title, modifier = Modifier.weight(1f))
             RouteBadge(status.route)
             if (reconnecting && entry.printProgress.active.value != null) Txt("Reconnecting", Nz.type.label, c.textMuted)
-            else StatusPill(displayState)
+            else if (status.state == PrinterState.FINISHED && reportedCompletion == null)
+                Txt("Completion unverified", Nz.type.label, c.textMuted)
+            else StatusPill(status.state)
         }
         val job = when {
             reconnecting -> entry.printProgress.active.value
@@ -177,14 +186,16 @@ fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flo
             else -> null
         }
         if (job == null) Txt(when {
-            confirmed != null -> "$confirmed finished."
-            status.state == PrinterState.FINISHED -> "Completion could not be matched to the tracked print."
+            confirmed != null -> "${displayJobPath(confirmed)} finished."
+            status.state == PrinterState.FINISHED && reportedCompletion != null ->
+                "Printer reports ${displayJobPath(reportedCompletion)} finished."
+            status.state == PrinterState.FINISHED -> "The printer reported completion without a job name."
             else -> status.message ?: "Nothing is printing."
         }, Nz.type.body, c.textMuted)
         else {
             val reported = job.remainingSeconds?.takeIf { it.isFinite() && it >= 0 }
             val left = if (reconnecting) null else reported ?: JobEta.remainingSeconds(job.fraction, job.elapsedSeconds)
-            Txt(job.fileName, Nz.type.headline)
+            Txt(displayJobPath(job.fileName), Nz.type.headline)
             ProgressBar(job.fraction, Nz.status.forState(status.state.glossaryId), label = "Print progress ${(job.fraction * 100).toInt()} percent")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Metric(if (reconnecting) "Last reported" else "Done", "${(job.fraction * 100).toInt()}%")

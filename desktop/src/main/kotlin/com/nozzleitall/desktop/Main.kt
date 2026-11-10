@@ -107,6 +107,7 @@ data class MonitorHandoff(
     val fileName: String,
     val state: MonitorHandoffState,
     val plate: com.nozzleitall.desktop.prepare.SlicedPlateContext? = null,
+    val remotePath: String? = null,
 )
 
 data class AddPrinterRequest(val autoScan: Boolean, val returnToFirstRunOnCancel: Boolean = false,

@@ -18,7 +18,7 @@ internal class MonitorPrintProgress {
         val job = status.job?.takeIf { it.fileName.isNotBlank() }
         if (status.state.isActiveJob && job != null) {
             val current = active.value
-            if (current?.fileName != job.fileName) {
+            if (reportedJobPath(current?.fileName) != reportedJobPath(job.fileName)) {
                 highest = 0f
                 observedStart = false
             }
@@ -38,18 +38,19 @@ internal class MonitorPrintProgress {
             return events
         }
         if (status.state in reconnectingStates || status.state.isActiveJob) return emptyList()
+        val completed = reportedJobPath(status.completedFileName)
+        if (status.state == PrinterState.FINISHED && completed == null) return emptyList()
         val file = active.value?.fileName
         active.value = null
         if (status.state != PrinterState.FINISHED) {
             finished.value = null
             return emptyList()
         }
-        val completed = (status.completedFileName ?: job?.fileName)?.replace('\\', '/')
-        if (file != null && file.replace('\\', '/') == completed) {
+        if (file != null && reportedJobPath(file) == completed) {
             finished.value = file
             return listOf(PrintMilestone("finished", file))
         }
-        if (finished.value?.replace('\\', '/') != completed) finished.value = null
+        if (reportedJobPath(finished.value) != completed) finished.value = null
         return emptyList()
     }
 

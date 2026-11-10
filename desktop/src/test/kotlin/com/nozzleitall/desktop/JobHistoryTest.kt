@@ -13,6 +13,7 @@ class JobHistoryTest {
     private fun printing(file: String, fraction: Float, elapsed: Double = 600.0, layers: Int = 100) =
         PrinterStatus(PrinterState.PRINTING, route, job = JobProgress(file, fraction, elapsed, 10, layers))
     private fun idle(state: PrinterState) = PrinterStatus(state, route)
+    private fun finished(path: String) = PrinterStatus(PrinterState.FINISHED, route, completedFileName = path)
 
     @Test fun aJobThatEndsIsRecordedOnceWithHowItEnded() {
         var now = 1_000_000L
@@ -20,10 +21,20 @@ class JobHistoryTest {
         assertNull(t.observe("p", "CC1", printing("a.gcode", 0.2f)))
         now += 60_000; assertNull(t.observe("p", "CC1", printing("a.gcode", 0.9f, elapsed = 3600.0)))
         now += 60_000
-        val r = t.observe("p", "CC1", idle(PrinterState.FINISHED))!!
+        val r = t.observe("p", "CC1", finished("a.gcode"))!!
         assertEquals("finished", r.outcome); assertEquals("a.gcode", r.fileName); assertEquals("CC1", r.printerName)
         assertEquals(3600.0, r.elapsedSeconds!!, 0.0); assertEquals(100, r.totalLayers)
         assertNull("the same ending is not recorded twice", t.observe("p", "CC1", idle(PrinterState.FINISHED)))
+    }
+
+    @Test fun unnamedOrInexactTerminalReadingNeverConfirmsTheTrackedFile() {
+        val tracker = JobTracker()
+        tracker.observe("p", "P", printing("folder/part.gcode", 0.9f))
+        assertNull(tracker.observe("p", "P", PrinterStatus(PrinterState.FINISHED, route,
+            job = JobProgress("folder/part.gcode", 1f))))
+        assertEquals("unknown", tracker.observe("p", "P", finished("other/part.gcode"))!!.outcome)
+        tracker.observe("p", "P", printing("folder/part.gcode", 0.8f))
+        assertEquals("finished", tracker.observe("p", "P", finished("folder\\part.gcode"))!!.outcome)
     }
 
     @Test fun stoppedAndFailedAreToldApart() {
@@ -53,7 +64,7 @@ class JobHistoryTest {
         t.observe("p", "P", printing("a", 0.5f))
         assertNull(t.observe("p", "P", idle(PrinterState.OFFLINE)))
         assertNull(t.observe("p", "P", idle(PrinterState.UNKNOWN)))
-        assertEquals("finished", t.observe("p", "P", idle(PrinterState.FINISHED))!!.outcome)
+        assertEquals("finished", t.observe("p", "P", finished("a"))!!.outcome)
     }
 
     @Test fun aPrinterAlreadyFinishedWhenTheAppStartsIsNotANewResult() {
@@ -65,7 +76,7 @@ class JobHistoryTest {
     @Test fun twoPrintersAreTrackedSeparately() {
         val t = JobTracker()
         t.observe("a", "A", printing("x", 0.5f)); t.observe("b", "B", printing("y", 0.5f))
-        assertEquals("y", t.observe("b", "B", idle(PrinterState.FINISHED))!!.fileName)
+        assertEquals("y", t.observe("b", "B", finished("y"))!!.fileName)
         assertEquals("x", t.observe("a", "A", idle(PrinterState.CANCELLED))!!.fileName)
     }
 
@@ -74,8 +85,8 @@ class JobHistoryTest {
         val second = JobTracker { 1_000_000L }
         first.observe("a", "A", printing("a.gcode", 0.5f))
         second.observe("b", "B", printing("b.gcode", 0.5f))
-        val one = first.observe("a", "A", idle(PrinterState.FINISHED))!!
-        val two = second.observe("b", "B", idle(PrinterState.FINISHED))!!
+        val one = first.observe("a", "A", finished("a.gcode"))!!
+        val two = second.observe("b", "B", finished("b.gcode"))!!
         assertNotEquals(one.id, two.id)
         val store = JobHistoryStore(File(Files.createTempDirectory("tracker-ids").toFile(), "history.json"))
         store.prependPreserving(one)
@@ -89,7 +100,7 @@ class JobHistoryTest {
         assertEquals("a.gcode", unresolved.fileName)
         assertEquals("unknown", unresolved.outcome)
         assertNull(tracker.observe("p", "P", printing("b.gcode", 0.2f)))
-        assertEquals("b.gcode", tracker.observe("p", "P", idle(PrinterState.FINISHED))!!.fileName)
+        assertEquals("b.gcode", tracker.observe("p", "P", finished("b.gcode"))!!.fileName)
     }
 
     @Test fun historySurvivesARestartNewestFirstAndIsCapped() {
@@ -160,7 +171,7 @@ class JobHistoryTest {
         fleet.notifier = { t, b -> sent += t to b }
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p1", "CC1", "Elegoo CC1", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "moonraker"))
         fleet.recordEnd(entry, printing("Possum.gcode", 0.5f))
-        fleet.recordEnd(entry, idle(PrinterState.FINISHED))
+        fleet.recordEnd(entry, finished("Possum.gcode"))
         assertEquals(1, fleet.history.value.size); assertTrue("milestones default to off", sent.isEmpty())
         assertEquals("a restart reads it back", 1, JobHistoryStore(File(paths.data, "history.json")).load().size)
         fleet.settings.value = fleet.settings.value.copy(notifications = false)
@@ -177,7 +188,7 @@ class JobHistoryTest {
         fleet.notifier = { _, _ -> }
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p1", "P", "Test", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "fake"))
         fleet.recordEnd(entry, printing("new.gcode", 0.5f))
-        fleet.recordEnd(entry, idle(PrinterState.FINISHED))
+        fleet.recordEnd(entry, finished("new.gcode"))
         assertEquals("corrupt legacy source", source.readText())
         assertEquals(1, JobHistoryStore(File(paths.data, "history-pending.json")).load().size)
         fleet.shutdown()
@@ -246,7 +257,7 @@ class JobHistoryTest {
         fleet.notifier = { _, _ -> }
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p", "P", "Test", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "fake"))
         fleet.recordEnd(entry, printing("part.gcode", 0.5f))
-        fleet.recordEnd(entry, idle(PrinterState.FINISHED))
+        fleet.recordEnd(entry, finished("part.gcode"))
         assertTrue(fleet.historyMigrationProblem.value!!.contains("Pending history cannot be read"))
         assertEquals(1, fleet.history.value.size)
         fleet.shutdown()
@@ -317,12 +328,10 @@ class JobHistoryTest {
         val reopened = Fleet(paths, kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()), stockHelper = { null })
         reopened.notifier = { _, _ -> }
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p", "P", "Test", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "fake"))
-        reopened.recordEnd(entry, printing("different.gcode", 0.5f, elapsed = 10.0))
-        reopened.recordEnd(entry, PrinterStatus(PrinterState.FINISHED, route,
-            job = JobProgress("different.gcode", 1f, 20.0)))
-        reopened.recordEnd(entry, PrinterStatus(PrinterState.FINISHED, route,
-            job = JobProgress("different.gcode", 1f, 20.0)))
-        assertEquals("different.gcode", reopened.history.value.single().fileName)
+        reopened.recordEnd(entry, printing("other/part.gcode", 0.5f, elapsed = 10.0))
+        reopened.recordEnd(entry, finished("other/part.gcode"))
+        reopened.recordEnd(entry, finished("other/part.gcode"))
+        assertEquals("other/part.gcode", reopened.history.value.single().fileName)
         val jobs = LocalJobStore(File(paths.data, "jobs.sqlite"))
         val queuedAttempt = jobs.attempts(item.jobId!!).single()
         assertEquals(LocalJobStore.MachineState.PRINTING, jobs.machineEvents(queuedAttempt.id).last().state)
@@ -357,7 +366,7 @@ class JobHistoryTest {
         }
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p", "P", "Test", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "fake"))
         fleet.recordEnd(entry, printing("part.gcode", 0.5f))
-        fleet.recordEnd(entry, idle(PrinterState.FINISHED))
+        fleet.recordEnd(entry, finished("part.gcode"))
         assertTrue(fleet.history.value.isEmpty())
         assertTrue(fleet.currentObservationProblem.value!!.contains("could not be saved in any local store"))
         listOf("history.json", "history-pending.json", "current-observation-retry.json").forEach {
@@ -388,7 +397,7 @@ class JobHistoryTest {
         historyFiles.forEach { assertTrue(File(paths.data, it).mkdir()) }
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p", "P", "Test", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "fake"))
         fleet.recordEnd(entry, printing("other.gcode", 0.5f))
-        val terminal = PrinterStatus(PrinterState.FINISHED, route, job = JobProgress("other.gcode", 1f, 20.0))
+        val terminal = finished("other.gcode")
         fleet.recordEnd(entry, terminal)
         fleet.recordEnd(entry, terminal)
         assertTrue(fleet.history.value.isEmpty())
@@ -418,7 +427,7 @@ class JobHistoryTest {
         assertTrue(retry.mkdir())
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p", "P", "Test", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "fake"))
         fleet.recordEnd(entry, printing("part.gcode", 0.5f))
-        fleet.recordEnd(entry, idle(PrinterState.FINISHED))
+        fleet.recordEnd(entry, finished("part.gcode"))
         assertEquals(1, JobHistoryStore(File(paths.data, "history.json")).load().size)
         assertTrue(JobHistoryStore(File(paths.data, "history.json")).load().single().currentObservation)
         fleet.shutdown()
@@ -490,7 +499,7 @@ class JobHistoryTest {
         assertTrue(db.mkdir())
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p", "P", "Test", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "fake"))
         fleet.recordEnd(entry, printing("part.gcode", 0.5f))
-        fleet.recordEnd(entry, idle(PrinterState.FINISHED))
+        fleet.recordEnd(entry, finished("part.gcode"))
         assertEquals(1, JobHistoryStore(File(paths.data, "current-observation-retry.json")).load().size)
         assertTrue(db.delete())
         assertTrue(held.renameTo(db))

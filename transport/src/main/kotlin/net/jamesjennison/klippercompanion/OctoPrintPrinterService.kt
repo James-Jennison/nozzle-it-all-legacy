@@ -16,13 +16,18 @@ import java.util.concurrent.TimeUnit
 // application API key in the X-Api-Key header. Scoped like the Prusa Link integration: live status and temperatures, the file list,
 // upload-and-print of plain G-code, and pause / resume / cancel. Verified against a real OctoPrint 1.11 server driving its virtual
 // printer (see OctoPrintPrinterServiceTest / OctoPrintLiveTest); no physical printer behind it.
-class OctoPrintPrinterService(host: String, private val apiKey: String) : PrinterService {
+class OctoPrintPrinterService(
+    host: String,
+    private val apiKey: String,
+    private val confirmLocalPrintCompletion: Boolean = false,
+) : PrinterService {
     private val base: HttpUrl = (if (host.contains("://")) host else "http://$host/").let {
         it.toHttpUrlOrNull() ?: throw IllegalArgumentException("Enter a valid OctoPrint address.")
     }
     override val address: String get() = base.toString()
     private val client = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(6, TimeUnit.SECONDS)
         .callTimeout(8, TimeUnit.SECONDS).retryOnConnectionFailure(false).build()
+    private val historyClient = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
     // A G-code file can be many megabytes; the status client's short timeouts would cut it off.
     private val uploadClient = client.newBuilder().writeTimeout(120, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).callTimeout(180, TimeUnit.SECONDS).build()
 
@@ -49,10 +54,85 @@ class OctoPrintPrinterService(host: String, private val apiKey: String) : Printe
 
     private fun get(vararg segments: String, query: Map<String, String> = emptyMap()) = send(Request.Builder().url(url(*segments, query = query)).build())
 
+    private data class PrintHistory(
+        val contentHash: String,
+        val succeeded: Long,
+        val failed: Long,
+        val lastDate: Double?,
+        val lastSucceeded: Boolean?,
+    )
+    private data class ObservedPrint(val path: String, val baseline: PrintHistory?)
+    private var observedPrint: ObservedPrint? = null
+    private var completedPrint: String? = null
+
+    private fun localFilePath(file: JSONObject?): String? =
+        file?.takeIf { it.optString("origin") == "local" }?.optString("path")
+            ?.takeIf { path ->
+                path.length in 1..1024 && !path.any { it == '\\' || it.isISOControl() } &&
+                    path.split('/').all { it.isNotBlank() && it != "." && it != ".." }
+            }
+
+    private fun printHistory(path: String): PrintHistory? {
+        val request = Request.Builder().url(url("api", "files", "local", *path.split('/').toTypedArray())).build()
+        val response = try { send(request, historyClient) } catch (_: ApiFailure) { return null }
+        val file = (response.json as? JSONObject)?.takeIf { response.code == 200 && localFilePath(it) == path } ?: return null
+        val hash = file.optString("hash").takeIf { it.isNotBlank() && it != "null" } ?: return null
+        // OctoPrint returns "prints" for recorded G-code history, omitting it before the first run.
+        if (!file.has("prints")) return PrintHistory(hash, 0, 0, null, null)
+        val prints = file.optJSONObject("prints") ?: return null
+        val succeeded = prints.optLong("success", -1).takeIf { it >= 0 } ?: return null
+        val failed = prints.optLong("failure", -1).takeIf { it >= 0 } ?: return null
+        val last = prints.optJSONObject("last") ?: return null
+        val date = last.optDouble("date").takeIf { it.isFinite() && it > 0 } ?: return null
+        val success = last.opt("success") as? Boolean ?: return null
+        return PrintHistory(hash, succeeded, failed, date, success)
+    }
+
+    private fun completionFor(state: String, jobState: String, path: String?): String? {
+        if (state == "printing" || state == "paused") {
+            completedPrint = null
+            if (path == null) observedPrint = null
+            else if (observedPrint?.path != path && (jobState == "Printing" || jobState == "Paused"))
+                observedPrint = ObservedPrint(path, printHistory(path))
+            return null
+        }
+        val previous = observedPrint
+        observedPrint = null
+        if (state != "standby" || jobState != "Operational" || path == null) {
+            completedPrint = null
+            return null
+        }
+        if (completedPrint == path) return path
+        completedPrint = null
+        val baseline = previous?.takeIf { it.path == path }?.baseline ?: return null
+        val latest = printHistory(path) ?: return null
+        if (latest.contentHash == baseline.contentHash && latest.lastSucceeded == true &&
+            latest.succeeded > baseline.succeeded && latest.succeeded - baseline.succeeded == 1L &&
+            latest.failed == baseline.failed && (latest.lastDate ?: 0.0) > (baseline.lastDate ?: 0.0)) {
+            completedPrint = path
+        }
+        return completedPrint
+    }
+
+    @Synchronized
     override fun snapshot(): PrinterSnapshot {
+        try {
+            return readSnapshot()
+        } catch (e: Exception) {
+            observedPrint = null
+            completedPrint = null
+            throw e
+        }
+    }
+
+    private fun readSnapshot(): PrinterSnapshot {
         val printer = get("api", "printer", query = mapOf("exclude" to "sd,history"))
         // 409 = OctoPrint is up but is not connected to a printer.
-        if (printer.code == 409) return PrinterSnapshot(false, "OctoPrint is not connected to a printer")
+        if (printer.code == 409) {
+            observedPrint = null
+            completedPrint = null
+            return PrinterSnapshot(false, "OctoPrint is not connected to a printer")
+        }
         if (printer.code !in 200..299) throw ApiFailure("OctoPrint returned HTTP ${printer.code}.")
         val status = printer.json as? JSONObject ?: throw ApiFailure("OctoPrint sent an unreadable status.")
         val flags = status.optJSONObject("state")?.optJSONObject("flags")
@@ -70,8 +150,11 @@ class OctoPrintPrinterService(host: String, private val apiKey: String) : Printe
         val temps = status.optJSONObject("temperature")
         fun temp(part: String, field: String) = temps?.optJSONObject(part)?.optDouble(field)?.takeIf { it.isFinite() }
         val file = job?.optJSONObject("job")?.optJSONObject("file")
-        val name = file?.optString("display")?.takeIf { it.isNotBlank() && it != "null" } ?: file?.optString("name")?.takeIf { it.isNotBlank() && it != "null" }.orEmpty()
-        return PrinterSnapshot(state != "error", state, name, (completion / 100.0).coerceIn(0.0, 1.0).toFloat(),
+        val path = if (confirmLocalPrintCompletion) localFilePath(file) else null
+        val completed = if (confirmLocalPrintCompletion) completionFor(state, job?.optString("state").orEmpty(), path) else null
+        val name = path ?: file?.optString("display")?.takeIf { it.isNotBlank() && it != "null" }
+            ?: file?.optString("name")?.takeIf { it.isNotBlank() && it != "null" }.orEmpty()
+        return PrinterSnapshot(state != "error", if (completed != null) "complete" else state, completed ?: name, (completion / 100.0).coerceIn(0.0, 1.0).toFloat(),
             temp("tool0", "actual"), temp("tool0", "target"), temp("bed", "actual"), temp("bed", "target"),
             job?.optJSONObject("progress")?.optDouble("printTime")?.takeIf { it.isFinite() }, null, null, "extruder",
             job?.optJSONObject("progress")?.optDouble("printTimeLeft")?.takeIf { it.isFinite() && it >= 0 })

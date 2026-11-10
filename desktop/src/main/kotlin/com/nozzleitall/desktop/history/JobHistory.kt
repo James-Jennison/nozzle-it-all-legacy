@@ -40,6 +40,14 @@ data class JobRecord(
     }
 }
 
+internal fun reportedJobPath(path: String?): String? =
+    path?.takeIf { it.isNotBlank() }?.replace('\\', '/')
+
+internal fun displayJobPath(path: String): String {
+    val clean = path.filterNot(Char::isISOControl)
+    return if (clean.length > 160) "…${clean.takeLast(159)}" else clean
+}
+
 /**
  * Notices when a print starts and when it ends, from the status readings alone, so it works for every printer whatever its adapter.
  * A job counts only if this app saw it running; a printer that already says "finished" when the app starts is not a new result.
@@ -58,10 +66,10 @@ class JobTracker(private val clock: () -> Long = System::currentTimeMillis) {
     fun observe(printerId: String, printerName: String, status: PrinterStatus): JobRecord? {
         val now = clock()
         val state = status.state
-        val job = status.job
+        val job = status.job?.takeIf { reportedJobPath(it.fileName) != null }
         if (state.isActiveJob && job != null) {
             val o = open[printerId]
-            if (o == null || o.fileName != job.fileName) {
+            if (o == null || reportedJobPath(o.fileName) != reportedJobPath(job.fileName)) {
                 // A filename switch is not evidence of completion; retain the previous attempt as unresolved.
                 open[printerId] = Open(job.fileName, startedAt(now, job.elapsedSeconds), job.fraction, job.elapsedSeconds, job.totalLayers)
                 if (o != null) return JobRecord(UUID.randomUUID().toString(), printerId, printerName, o.fileName,
@@ -71,9 +79,10 @@ class JobTracker(private val clock: () -> Long = System::currentTimeMillis) {
         }
         val o = open[printerId] ?: return null
         val outcome = when (state) {
-            PrinterState.FINISHED -> if ((status.completedFileName ?: job?.fileName)?.takeIf { it.isNotBlank() }
-                ?.let { it.substringAfterLast('/').substringAfterLast('\\') != o.fileName.substringAfterLast('/').substringAfterLast('\\') } == true)
-                "unknown" else "finished"
+            PrinterState.FINISHED -> {
+                val completed = reportedJobPath(status.completedFileName) ?: return null
+                if (completed == reportedJobPath(o.fileName)) "finished" else "unknown"
+            }
             PrinterState.CANCELLED -> "cancelled"
             PrinterState.ERROR -> "failed"
             // READY alone does not say whether the print completed or was stopped.

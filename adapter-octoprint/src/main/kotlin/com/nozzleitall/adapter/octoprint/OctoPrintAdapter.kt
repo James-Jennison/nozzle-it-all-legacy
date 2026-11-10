@@ -27,7 +27,7 @@ class OctoPrintAdapter : DeviceAdapter {
     override fun probe(address: String): DiscoveredPrinter? = null
 
     override fun open(config: PrinterConfig): PrinterSession {
-        val service = OctoPrintPrinterService(config.identity.address, config.secret)
+        val service = OctoPrintPrinterService(config.identity.address, config.secret, confirmLocalPrintCompletion = true)
         return TransportSession(config.identity, CAPABILITIES, service, routeFor(hostOf(config.identity.address))) { file, name ->
             PrinterCommand("Send and print $name", "", prusaLinkPrintRequest = PrusaLinkPrintRequest(file, name))
         }

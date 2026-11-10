@@ -3440,7 +3440,7 @@ private fun SendPanel(state: AppState) {
         DirectPrintStart(state, staged, ::stillCurrent, { problem = it }) { remotePath, handoff ->
             state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
                 printerId, staged.name, remotePath.substringAfterLast('/').substringAfterLast('\\'),
-                handoff, done.plateContext))
+                handoff, done.plateContext, remotePath))
         }
         return
     }
@@ -3451,7 +3451,8 @@ private fun SendPanel(state: AppState) {
             (item.inputDigest == null || item.engineBuild == null || item.draftPlateId == null ||
                 sendIdentity.inputDigest == null || sendIdentity.engineBuild == null || sendIdentity.draftPlateId == null))
     fun reusable(item: com.nozzleitall.desktop.queue.QueueItem) =
-        !item.pendingLink && !item.startUncertain && !item.directDraft && isSameQueuedPrint(item, sendIdentity)
+        !item.pendingLink && !item.startUncertain && !item.directDraft &&
+            isSameQueuedPrint(item, sendIdentity) && state.fleet.queuedSourcePresent(item)
     val existing = items.any { conflicts(it) && !reusable(it) }
     val compatible = done.result.output in caps.acceptedOutputs &&
         (caps.uploadAndStart || (caps.uploadJob && caps.startPrint))

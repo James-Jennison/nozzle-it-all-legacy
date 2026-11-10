@@ -30,6 +30,8 @@ class MonitorPrintProgressTest {
         assertTrue(tracker.observe(status(PrinterState.FINISHED, completed = "other/cube.gcode")).isEmpty())
         assertNull(tracker.finished.value)
         labels(0f)
+        assertTrue(tracker.observe(status(PrinterState.FINISHED, job.copy(fraction = 1f))).isEmpty())
+        assertNull(tracker.finished.value)
         assertEquals(listOf("finished"), tracker.observe(status(PrinterState.FINISHED, completed = job.fileName)).map { it.label })
         assertEquals(job.fileName, tracker.finished.value)
         assertTrue(tracker.observe(status(PrinterState.FINISHED, completed = job.fileName)).isEmpty())

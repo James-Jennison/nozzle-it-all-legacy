@@ -23,13 +23,21 @@ class PrintQueueTest {
         val file = gcode(root)
         val queued = queue.add("Explicit queue", file, "cc1")
         val abandoned = queue.add("Unconfirmed review", file, "cc1", directDraft = true)
+        val transferred = queue.add("Uploaded review", file, "cc1", directDraft = true)
+        queue.recordDirectUpload(transferred, "cc1", "uploaded.gcode")
         val started = queue.add("Uncertain review", file, "cc1", pendingLink = true, directDraft = true)
         queue.link(started.id, java.util.UUID.randomUUID().toString(), java.util.UUID.randomUUID().toString())
         val held = queue.markStartUncertain(started.id, "cc1", "review.gcode")
         val reopened = PrintQueue(folder)
+        reopened.discardUntransferredDirectDraft(transferred)
         reopened.discardAbandonedDirectDrafts()
-        assertEquals(listOf(queued, held), reopened.items())
+        assertEquals(listOf(queued, transferred, held), reopened.items())
         assertFalse(File(folder, abandoned.fileName).exists())
+        assertTrue(reopened.problems().any { it.contains("uploaded.gcode") })
+        assertTrue(runCatching { reopened.retarget(transferred.id, "u1", transferred) }.isFailure)
+        reopened.remove(transferred.id, expectedItem = transferred)
+        assertEquals(listOf(queued, held), reopened.items())
+        assertFalse(reopened.problems().any { it.contains("uploaded.gcode") })
     }
 
     @Test fun invalidDraftIdentityLeavesNoUnindexedFile() {

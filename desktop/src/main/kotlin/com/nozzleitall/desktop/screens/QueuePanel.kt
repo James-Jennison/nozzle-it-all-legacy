@@ -114,7 +114,7 @@ internal fun DirectPrintStart(
                 ui?.transferActive != true && ui?.flow?.busy != true) {
                 ui?.flow?.pending = null
                 ui?.reviewStart?.value = null
-                if (item.directDraft) runCatching { state.fleet.dequeue(item.id, expectedItem = item) }
+                if (item.directDraft) runCatching { state.fleet.discardUntransferredDirectDraft(item) }
                     .onFailure { state.prepare.notice = "The local print record needs attention in Queue & history: ${it.message}" }
             }
         }
@@ -214,7 +214,7 @@ private fun QueueRow(
         expectedStart = null
         clearReview()
         if (onHandoff != null && item.directDraft && !item.startUncertain && !item.pendingLink && !ui.transferActive && flow?.busy != true)
-            runCatching { fleet.dequeue(item.id, expectedItem = item) }
+            runCatching { fleet.discardUntransferredDirectDraft(item) }
                 .onFailure { problem = "The local print record could not be removed: ${it.message}" }
     }
     fun requestReview(entry: PrinterEntry) {
@@ -377,7 +377,14 @@ private fun QueueRow(
                             check(candidate.guard?.needsReconcile != true) { "The last printer command needs checking before another transfer." }
                             withContext(Dispatchers.IO) {
                                 val verified = fleet.queuedFile(item)
-                                reviewedConnection.session.upload(verified, remote) { s, t -> uploading = if (t > 0) s.toFloat() / t else null }
+                                val printerId = candidate.config.identity.id
+                                fleet.recordDirectUpload(item, printerId, remote)
+                                val result = reviewedConnection.session.upload(verified, remote) { s, t ->
+                                    uploading = if (t > 0) s.toFloat() / t else null
+                                }
+                                if (result is UploadResult.Uploaded && result.remotePath != remote)
+                                    fleet.recordDirectUpload(item, printerId, result.remotePath)
+                                result
                             }
                         } }
                             catch (e: CancellationException) { throw e }
