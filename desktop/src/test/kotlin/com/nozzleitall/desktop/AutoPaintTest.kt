@@ -21,6 +21,8 @@ class AutoPaintTest {
             "https://paint.example.invalid:8443/v1", "paint-model"))
         assertTrue(server.recipient.contains("paint.example.invalid:8443"))
         assertTrue(server.recipient.contains("paint-model"))
+        assertTrue(server.valid)
+        assertFalse(AutoPaint.requestDisclosure(AutoPaintFormat.Provider.OpenAiCompatible("paint.example.invalid", "paint-model")).valid)
         assertTrue(server.payload.contains("reference images"))
         assertTrue(server.payload.contains("model file and print settings stay"))
         val command = AutoPaint.requestDisclosure(AutoPaintFormat.Provider.Command(AutoPaint.DEFAULT_COMMAND))
@@ -30,7 +32,7 @@ class AutoPaintTest {
 
     @Test fun malformedServerAddressHasAGenericDiagnostic() {
         try { AutoPaint.askServer(Provider.OpenAiCompatible("http://invalid address/v1", "fixture"), "{}", 1); fail("expected failure") }
-        catch (e: AutoPaint.AutoPaintError) { assertEquals("The server address is not valid.",e.message) }
+        catch (e: AutoPaint.AutoPaintError) { assertTrue(e.message.orEmpty().startsWith("Enter an HTTP or HTTPS server address")) }
     }
 
     @Test fun largeServerErrorBodyIsDiscardedInsteadOfReturned() {
@@ -57,7 +59,7 @@ class AutoPaintTest {
         try {
             AutoPaint.askServer(Provider.OpenAiCompatible("http://127.0.0.1:1/v1", "fixture", "not-a-real-credential"), "{}", 1)
             fail("expected HTTPS requirement")
-        } catch (e: AutoPaint.AutoPaintError) { assertEquals("A server using an API key must use HTTPS.", e.message) }
+        } catch (e: AutoPaint.AutoPaintError) { assertTrue(e.message.orEmpty().endsWith("A server using an API key requires HTTPS.")) }
     }
 
     @Test fun serverErrorsNeverExposeTheResponseBody() {
@@ -183,10 +185,10 @@ class AutoPaintTest {
             }
             idle(); assertNotNull(p.aiPrepared)
             withContext(Dispatchers.Main) {
-                p.aiSend(Provider.Command("unexpected-provider"))
+                p.aiSend(requireNotNull(p.aiPrepared), Provider.Command("unexpected-provider"))
                 assertNull(p.toolBusy)
                 assertTrue(p.notice.orEmpty().contains("recipient changed"))
-                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
+                p.aiPrepared?.let { p.aiSend(it, requireNotNull(p.autoPaintSettings.provider)) }
             }
             idle()
             assertNotNull(p.aiPreviewMesh); assertSame(mesh,p.items.single().mesh); assertFalse(p.aiCleanBoundaries)
@@ -224,7 +226,7 @@ class AutoPaintTest {
             val started = File(tmp, "provider-started")
             withContext(Dispatchers.Main) {
                 p.autoPaintSettings = AutoPaint.Settings(command = "touch '${started.absolutePath}'; sleep 1; cat >/dev/null; printf '%s' '$answer'")
-                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
+                p.aiPrepared?.let { p.aiSend(it, requireNotNull(p.autoPaintSettings.provider)) }
             }
             withTimeout(10_000) { while (!started.isFile) delay(20) }
             withContext(Dispatchers.Main) { p.selected = 2 }
@@ -236,7 +238,7 @@ class AutoPaintTest {
                 withContext(Dispatchers.Main) { p.selected = 1; p.aiPrepare("") }; idle()
                 val changedDir = p.aiPrepared!!.dir
                 withContext(Dispatchers.Main) {
-                    p.aiSend(requireNotNull(p.autoPaintSettings.provider))
+                    p.aiPrepared?.let { p.aiSend(it, requireNotNull(p.autoPaintSettings.provider)) }
                     if (changeSlot) p.items[0].slot = 2 else p.items[0].paintSlots.add(3)
                 }
                 idle()
@@ -268,7 +270,7 @@ class AutoPaintTest {
             val first = requireNotNull(p.aiPrepared).dir
             withContext(Dispatchers.Main) {
                 p.setSlotFilament(2, null, "#123ABC")
-                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
+                p.aiPrepared?.let { p.aiSend(it, requireNotNull(p.autoPaintSettings.provider)) }
             }
             idle()
             assertFalse(seen.exists())
@@ -279,7 +281,7 @@ class AutoPaintTest {
             idle()
             val queued = requireNotNull(p.aiPrepared).dir
             withContext(Dispatchers.Main) {
-                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
+                p.aiPrepared?.let { p.aiSend(it, requireNotNull(p.autoPaintSettings.provider)) }
                 p.setSlotFilament(2, null, "#987DEF")
             }
             idle()
@@ -289,7 +291,7 @@ class AutoPaintTest {
             withContext(Dispatchers.Main) { p.aiPrepare("") }
             idle()
             val second = requireNotNull(p.aiPrepared).dir
-            withContext(Dispatchers.Main) { p.aiSend(requireNotNull(p.autoPaintSettings.provider)) }
+            withContext(Dispatchers.Main) { p.aiPrepared?.let { p.aiSend(it, requireNotNull(p.autoPaintSettings.provider)) } }
             idle()
             assertTrue(seen.isFile)
             assertNotNull(p.aiPreviewMesh)
@@ -335,7 +337,7 @@ class AutoPaintTest {
             })).toString()
             withContext(Dispatchers.Main) {
                 p.autoPaintSettings = AutoPaint.Settings(command = "cat >/dev/null; printf '%s' '$reply'")
-                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
+                p.aiPrepared?.let { p.aiSend(it, requireNotNull(p.autoPaintSettings.provider)) }
             }
             idle(); assertNotNull(p.aiAnswer); assertNotNull(p.aiPreviewMesh)
             assertTrue(p.aiAnswer!!.slots.all { it == 0 }); assertSame(mesh,p.items.single().mesh)

@@ -1639,14 +1639,22 @@ class PrepareState(private val app: AppState) {
         }
     }
 
-    fun aiSend(reviewedProvider: com.nozzleitall.printer.ext.AutoPaintFormat.Provider) {
+    fun aiSend(reviewed: AutoPaint.Prepared, reviewedProvider: com.nozzleitall.printer.ext.AutoPaintFormat.Provider) {
         if (toolBusy != null) return
         if (selectedIds != setOfNotNull(aiItemId)) { aiDiscard(); return }
         val prepared = aiPrepared ?: return
+        if (prepared !== reviewed) {
+            notice = "The prepared request changed. Review the new request before sending."
+            return
+        }
         currentAiTarget(prepared) ?: return
         val provider = autoPaintSettings.provider ?: run { notice = "Choose how to ask first: a command, or an OpenAI-compatible server."; return }
         if (provider != reviewedProvider) {
             notice = "The AI recipient changed. Go back and review the request again."
+            return
+        }
+        if (!AutoPaint.requestDisclosure(provider).valid) {
+            notice = "Enter a valid server address before sending."
             return
         }
         val generation = aiGeneration

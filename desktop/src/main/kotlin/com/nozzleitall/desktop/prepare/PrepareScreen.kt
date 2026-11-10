@@ -3202,11 +3202,11 @@ private fun AutoPaintPanel(p: PrepareState, onDone: () -> Unit) {
             NzButton("Show what will be sent", { p.aiPrepare(hint) }, Modifier.fillMaxWidth(), kind = ButtonKind.PRIMARY, enabled = p.toolBusy == null && s.provider != null, testTag = "autopaint-run")
         } else {
             val reviewedProvider = s.provider
+            val disclosure = reviewedProvider?.let(AutoPaint::requestDisclosure)
             if (answer == null) {
-                reviewedProvider?.let { provider ->
-                    val disclosure = AutoPaint.requestDisclosure(provider)
-                    Txt(disclosure.recipient, Nz.type.label)
-                    Txt(disclosure.payload, Nz.type.bodySmall, c.textMuted)
+                disclosure?.let {
+                    Txt(it.recipient, Nz.type.label)
+                    Txt(it.payload, Nz.type.bodySmall, c.textMuted)
                 }
             } else {
                 Txt("Your saved model is unchanged. Orbit the plate to inspect the draft from every side.", Nz.type.bodySmall, c.textMuted)
@@ -3226,11 +3226,12 @@ private fun AutoPaintPanel(p: PrepareState, onDone: () -> Unit) {
             }
             Txt("${prepared.seg.segmentCount} parts", Nz.type.bodySmall, c.textMuted)
             if (answer == null) {
-                val reviewReady = reviewedProvider != null && images.size == prepared.seg.views.size && images.isNotEmpty()
+                val reviewReady = disclosure?.valid == true && images.size == prepared.seg.views.size && images.isNotEmpty()
+                if (disclosure?.valid == false) Banner("Go back and enter a valid server address before sending.", BannerKind.WARNING)
                 if (images.size != prepared.seg.views.size) {
                     Banner("Some reference images could not be displayed. Go back and prepare the views again.", BannerKind.WARNING)
                 }
-                NzButton("Send reviewed request", { reviewedProvider?.let { p.aiSend(it) } }, Modifier.fillMaxWidth(),
+                NzButton("Send reviewed request", { reviewedProvider?.let { p.aiSend(prepared, it) } }, Modifier.fillMaxWidth(),
                     kind = ButtonKind.PRIMARY, enabled = p.toolBusy == null && reviewReady, testTag = "autopaint-send")
                 NzButton("Back", { p.aiDiscard() }, Modifier.fillMaxWidth(), kind = ButtonKind.QUIET, enabled = p.toolBusy == null)
             } else {

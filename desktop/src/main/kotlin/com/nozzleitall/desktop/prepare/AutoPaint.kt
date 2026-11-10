@@ -121,33 +121,39 @@ object AutoPaint {
         return out
     }
 
-    internal data class RequestDisclosure(val recipient: String, val payload: String)
+    internal data class RequestDisclosure(val recipient: String, val payload: String, val valid: Boolean = true)
 
     internal fun requestDisclosure(provider: Provider): RequestDisclosure = when (provider) {
         is Provider.Command -> RequestDisclosure(
-            if (provider.commandLine.trim() == DEFAULT_COMMAND) "Recipient: Claude Code (Anthropic)"
+            if (provider.commandLine.trim() == DEFAULT_COMMAND) "Configured command: Claude Code (normally sends to Anthropic)"
             else "Recipient: your configured command",
-            "The command receives the model name, painting instructions, your hint, region descriptions and filament choices. " +
+            "The command receives a prompt on standard input with the model name, painting instructions, your hint, region descriptions and filament choices. " +
                 "It can access the generated reference images and model geometry in the working folder. " +
                 "Its own settings determine where it sends that data.",
         )
         is Provider.OpenAiCompatible -> {
-            val address = runCatching { URI.create(AutoPaintFormat.chatUrl(provider.baseUrl)) }.getOrNull()
+            val address = serverAddress(provider)
             val host = address?.host?.let { if (address.port == -1) it else "$it:${address.port}" } ?: "unrecognized address"
             RequestDisclosure(
                 "Recipient: $host · Model: ${provider.model}",
-                "This server receives the reference images, model name, painting instructions, your hint, region descriptions " +
-                    "and filament choices. The model file and print settings stay on this computer.",
+                "The configured chat-completions endpoint receives reference images and text with the model name, painting instructions, " +
+                    "your hint, region descriptions and filament choices. The model file and print settings stay on this computer.",
+                valid = address != null,
             )
         }
     }
 
+    private fun serverAddress(provider: Provider.OpenAiCompatible): URI? =
+        runCatching { URI.create(AutoPaintFormat.chatUrl(provider.baseUrl)) }.getOrNull()?.takeIf { uri ->
+            (uri.scheme.equals("https", true) || uri.scheme.equals("http", true) && provider.apiKey.isBlank()) &&
+                uri.host != null && uri.port in -1..65535 &&
+                uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null
+        }
+
     /** POSTs [body] to an OpenAI-compatible chat-completions endpoint and returns the response text. */
     internal fun askServer(p: Provider.OpenAiCompatible, body: String, timeoutSeconds: Long = 300): String {
-        val uri = try { URI.create(AutoPaintFormat.chatUrl(p.baseUrl)) }
-            catch (_: IllegalArgumentException) { throw AutoPaintError("The server address is not valid.") }
-        if (p.apiKey.isNotBlank() && !uri.scheme.equals("https", ignoreCase = true))
-            throw AutoPaintError("A server using an API key must use HTTPS.")
+        val uri = serverAddress(p) ?: throw AutoPaintError(
+            "Enter an HTTP or HTTPS server address without credentials, a query or a fragment. A server using an API key requires HTTPS.")
         val req = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(timeoutSeconds))
             .header("Content-Type", "application/json").apply { if (p.apiKey.isNotBlank()) header("Authorization", "Bearer ${p.apiKey}") }
             .POST(HttpRequest.BodyPublishers.ofString(body)).build()

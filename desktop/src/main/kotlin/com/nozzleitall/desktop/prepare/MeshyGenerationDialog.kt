@@ -154,7 +154,7 @@ internal fun MeshyGenerationDialog(prepare: PrepareState, onDismiss: () -> Unit)
                     }
                 }
                 pending?.let { receipt ->
-                    if (model == null) Txt("Resuming sends the task ID to Meshy (api.meshy.ai) and downloads the generated STL from assets.meshy.ai.", Nz.type.bodySmall)
+                    if (model == null) Txt("If a local copy is unavailable, resume checks the task ID with Meshy (api.meshy.ai) and downloads the generated STL from assets.meshy.ai.", Nz.type.bodySmall)
                     if (model == null && receipt.taskId != null) {
                         Txt("Saved Meshy task " + receipt.taskId, Nz.type.bodySmall)
                         NzButton("Resume saved task", {
