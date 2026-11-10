@@ -232,7 +232,7 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                     val commands = LayerAction.command(action.kind, machine, action.text)
                         ?: throw IllegalArgumentException("${action.kind.label} at layer ${action.layer} is unavailable for this printer profile.")
                     val payload = commands.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                    lines += "layer_action\t${action.z}\t${action.id}\t$payload"
+                    lines += "layer_action\t${action.layer}\t${action.z}\t${action.id}\t$payload"
                 }
             }
             val (bedW, bedD) = bedOf(machineText)
