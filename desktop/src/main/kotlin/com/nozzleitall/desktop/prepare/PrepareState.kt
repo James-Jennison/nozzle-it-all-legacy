@@ -1562,12 +1562,10 @@ class PrepareState(private val app: AppState) {
         val title = if (raw) "Export raw G-code" else "Export sliced file"
         val proposed = "${PrintExport.safeName(name, "Project")}.$extension"
         val generation = sliceGeneration
-        val target = chooseSaveFile(title, proposed, printExportDirectory()) ?: return
-        if (!target.name.endsWith(".$extension", ignoreCase = true)) {
-            notice = "Choose an export filename ending in .$extension."
-            return
-        }
-        runPrintExport(target.absoluteFile.parentFile) {
+        runPrintExport({ chooseSaveFile(title, proposed, printExportDirectory()) }, { it.absoluteFile.parentFile }) { target ->
+            require(target.name.endsWith(".$extension", ignoreCase = true)) {
+                "Choose an export filename ending in .$extension."
+            }
             PrintExport.single(PrintExport.Entry(source, sha, target.name), target) { generation == sliceGeneration }
             "Exported ${target.name}."
         }
@@ -1581,24 +1579,38 @@ class PrepareState(private val app: AppState) {
         }
         val generation = sliceGeneration
         val projectName = name
-        val target = PrintExport.chooseDirectory(printExportDirectory()) ?: return
-        runPrintExport(target) {
+        runPrintExport({ PrintExport.chooseDirectory(printExportDirectory()) }, { it }) { target ->
             val folder = PrintExport.batch(entries, target, projectName) { generation == sliceGeneration }
             "Exported ${entries.size} sliced plates to ${folder.absolutePath}."
         }
     }
 
-    private fun runPrintExport(directory: File, write: () -> String) {
+    private fun runPrintExport(choose: () -> File?, directory: (File) -> File, write: (File) -> String) {
+        if (exportingPrintFile) return
         exportingPrintFile = true
+        val target = try {
+            choose()
+        } catch (error: Exception) {
+            notice = "Couldn't open the export dialog. ${error.message.orEmpty()}"
+            null
+        }
+        if (target == null) {
+            exportingPrintFile = false
+            return
+        }
         app.scope.launch(Dispatchers.Main) {
             try {
-                val message = withContext(Dispatchers.IO) { write() }
-                val remembered = withContext(Dispatchers.IO) { app.fleet.rememberPrintExportDirectory(directory) }
+                val folder = directory(target)
+                val message = withContext(Dispatchers.IO) {
+                    PrintExport.requireOutsideCache(target, folder, app.paths.slices)
+                    write(target)
+                }
+                val remembered = withContext(Dispatchers.IO) { app.fleet.rememberPrintExportDirectory(folder) }
                 notice = if (remembered) message else "$message The last export folder could not be saved."
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                notice = "Couldn't export the prepared file. Choose a writable folder or slice again. ${e.message.orEmpty()}"
+                notice = "Couldn't export the prepared file. ${e.message.orEmpty()}"
             } finally {
                 exportingPrintFile = false
             }

@@ -24,6 +24,10 @@ class PrintExportTest {
             val file = root.resolve("prepared.gcode").apply { writeText("G1 X1") }
             val entry = PrintExport.Entry(file, PrintExport.sha256(file), "1 - First.gcode")
             val target = root.resolve("existing.gcode").apply { writeText("Previously exported") }
+            val cache = root.resolve("slice-cache").apply { mkdir() }
+            assertTrue(runCatching { PrintExport.requireOutsideCache(cache.resolve("other.gcode"), cache, cache) }.isFailure)
+            PrintExport.requireOutsideCache(target, root, cache)
+            cache.delete()
             assertTrue(runCatching { PrintExport.single(entry, target) { false } }.isFailure)
             assertEquals("Previously exported", target.readText())
             file.writeText("G1 X2")

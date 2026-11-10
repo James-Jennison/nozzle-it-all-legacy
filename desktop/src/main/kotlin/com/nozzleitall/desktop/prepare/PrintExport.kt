@@ -31,6 +31,13 @@ internal object PrintExport {
     fun initialDirectory(last: File?, project: File?, home: File): File? =
         listOfNotNull(last, project, home.resolve("Documents"), home).firstOrNull { it.isDirectory && it.canWrite() }
 
+    fun requireOutsideCache(target: File, parent: File, cache: File) {
+        val privatePath = cache.canonicalFile.toPath()
+        require(listOf(target, parent).none { it.canonicalFile.toPath().startsWith(privatePath) }) {
+            "Choose a destination outside the slice cache."
+        }
+    }
+
     fun chooseDirectory(initial: File?): File? {
         val chooser = JFileChooser(initial).apply {
             dialogTitle = "Choose a folder for the sliced plates"
