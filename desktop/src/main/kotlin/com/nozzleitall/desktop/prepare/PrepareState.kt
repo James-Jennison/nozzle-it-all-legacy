@@ -1524,6 +1524,88 @@ class PrepareState(private val app: AppState) {
     @Volatile private var sliceCancelRequested = false
     private var batchSlices: Map<String, SliceState.Done> = emptyMap()
 
+    internal var exportingPrintFile by mutableStateOf(false)
+        private set
+
+    internal fun batchExportEntries(): List<PrintExport.Entry> {
+        if (slice is SliceState.Running) return emptyList()
+        val populated = plateIds.indices.filter { plateItems(it).isNotEmpty() }
+        if (populated.isEmpty() || batchSlices.size != populated.size) return emptyList()
+        return populated.map { index ->
+            val id = plateIds[index]
+            val result = batchSlices[id]?.takeIf { it.plateContext?.plateId == id }?.result ?: return emptyList()
+            val sha = result.printFileSha256 ?: return emptyList()
+            val label = PrintExport.safeName(plateNames[index], "Plate ${index + 1}")
+            PrintExport.Entry(result.printFile, sha, "${index + 1} - $label.${result.output}")
+        }
+    }
+
+    private fun printExportDirectory(): File? {
+        val home = File(System.getProperty("user.home"))
+        val projectFolder = file?.parentFile?.takeUnless {
+            val local = app.paths.data.absoluteFile.normalize().toPath()
+            it.absoluteFile.normalize().toPath().startsWith(local)
+        }
+        val previous = app.fleet.settings.value.lastPrintExportDirectory?.let(::File)
+        return PrintExport.initialDirectory(previous, projectFolder, home)
+    }
+
+    internal fun exportCurrentPrint(raw: Boolean = false) {
+        if (exportingPrintFile) return
+        val result = (slice as? SliceState.Done)?.result ?: return
+        val source = if (raw) result.gcode else result.printFile
+        val sha = (if (raw) result.gcodeSha256 else result.printFileSha256) ?: run {
+            notice = "The prepared file has no verification record. Slice again before exporting."
+            return
+        }
+        val extension = if (raw) "gcode" else result.output
+        val title = if (raw) "Export raw G-code" else "Export sliced file"
+        val proposed = "${PrintExport.safeName(name, "Project")}.$extension"
+        val generation = sliceGeneration
+        val target = chooseSaveFile(title, proposed, printExportDirectory()) ?: return
+        if (!target.name.endsWith(".$extension", ignoreCase = true)) {
+            notice = "Choose an export filename ending in .$extension."
+            return
+        }
+        runPrintExport(target.absoluteFile.parentFile) {
+            PrintExport.single(PrintExport.Entry(source, sha, target.name), target) { generation == sliceGeneration }
+            "Exported ${target.name}."
+        }
+    }
+
+    internal fun exportBatchPrint() {
+        if (exportingPrintFile) return
+        val entries = batchExportEntries().takeIf { it.isNotEmpty() } ?: run {
+            notice = "Slice all populated plates before exporting."
+            return
+        }
+        val generation = sliceGeneration
+        val projectName = name
+        val target = PrintExport.chooseDirectory(printExportDirectory()) ?: return
+        runPrintExport(target) {
+            val folder = PrintExport.batch(entries, target, projectName) { generation == sliceGeneration }
+            "Exported ${entries.size} sliced plates to ${folder.absolutePath}."
+        }
+    }
+
+    private fun runPrintExport(directory: File, write: () -> String) {
+        exportingPrintFile = true
+        app.scope.launch(Dispatchers.Main) {
+            try {
+                val message = withContext(Dispatchers.IO) { write() }
+                val remembered = withContext(Dispatchers.IO) { app.fleet.rememberPrintExportDirectory(directory) }
+                notice = if (remembered) message else "$message The last export folder could not be saved."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notice = "Couldn't export the prepared file. Choose a writable folder or slice again. ${e.message.orEmpty()}"
+            } finally {
+                exportingPrintFile = false
+            }
+        }
+    }
+
+
     private fun invalidateSlice() {
         discardMeshEditPreview()
         sliceGeneration++
@@ -2278,6 +2360,7 @@ class PrepareState(private val app: AppState) {
 
     private fun slicePlates(scope: kotlinx.coroutines.CoroutineScope, plates: List<Int>, batch: Boolean) {
         if (slice is SliceState.Running) return
+        sliceGeneration++
         batchSlices = emptyMap()
         presetSnapshotProblem?.let { slice = SliceState.Failed(it, GuidanceFailureKind.PRESET); return }
         val actionProblem = layerActionProblem ?: "Review the saved layer actions before slicing.".takeIf { !layerActionsReviewed }

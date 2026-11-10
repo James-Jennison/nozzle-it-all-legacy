@@ -136,9 +136,12 @@ fun chooseFiles(title: String, extensions: List<String>, multiple: Boolean = tru
     return d.files?.toList() ?: emptyList()
 }
 
-fun chooseSaveFile(title: String, suggested: String): File? {
-    val d = FileDialog(null as Frame?, title, FileDialog.SAVE); d.file = suggested; d.isVisible = true
-    return d.file?.let { File(d.directory, it) }
+fun chooseSaveFile(title: String, suggested: String, initialDirectory: File? = null): File? {
+    val dialog = FileDialog(null as Frame?, title, FileDialog.SAVE)
+    dialog.file = suggested
+    initialDirectory?.let { dialog.directory = it.absolutePath }
+    dialog.isVisible = true
+    return dialog.file?.let { File(dialog.directory, it) }
 }
 
 private enum class Drawer { PRINTER, FILAMENT, PROCESS, SEND, CUT, MODEL, AI }
@@ -2197,7 +2200,8 @@ private fun SendDrawer(
             kind = ButtonKind.QUIET, testTag = "upload-only")
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NzButton("Export file", { chooseSaveFile("Export sliced file", p.name + "." + s.result.output)?.let { t -> s.result.printFile.copyTo(t, overwrite = true) } }, kind = ButtonKind.QUIET, icon = NzIcon.EXPORT)
+        NzButton("Export file", { p.exportCurrentPrint() }, kind = ButtonKind.QUIET,
+            enabled = !p.exportingPrintFile, icon = NzIcon.EXPORT)
         NzButton("Add to queue", {
             val printer = p.printer()
             val toolMap = if (printer?.capabilities?.value?.multiMaterial == true && s.materials.size > 1) s.materials.map { (it.toolhead ?: (it.slot - 1)) } else emptyList()
