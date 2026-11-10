@@ -81,9 +81,10 @@ data class DesktopSettings(val stockU1Enabled: Boolean = false, val theme: Strin
                            val collapsedSettingGroups: Set<String> = emptySet(),
                            val firstRunComplete: Boolean = false, val slicingSetup: SlicingSetup? = null,
                            val rfidFilamentProfiles: Map<String, String> = emptyMap(),
-                           val externalSpoolProfiles: Map<String, String> = emptyMap()) {
+                           val externalSpoolProfiles: Map<String, String> = emptyMap(),
+                           val printMilestones: Boolean = false) {
     fun toJson() = JSONObject().put("stockU1Enabled", stockU1Enabled).put("theme", theme)
-        .put("notifications", notifications).put("textScale", textScale)
+        .put("notifications", notifications).put("textScale", textScale).put("printMilestones", printMilestones)
         .put("collapsedSettingGroups", JSONArray(collapsedSettingGroups.sorted()))
         .put("firstRunComplete", firstRunComplete)
         .put("rfidFilamentProfiles", JSONObject().also { out ->
@@ -107,7 +108,7 @@ data class DesktopSettings(val stockU1Enabled: Boolean = false, val theme: Strin
             return DesktopSettings(it.optBoolean("stockU1Enabled"), theme,
                 it.optBoolean("notifications", true), scale, collapsed,
                 it.optBoolean("firstRunComplete", false), SlicingSetup.fromJson(it.optJSONObject("slicingSetup")),
-                profiles("rfidFilamentProfiles"), profiles("externalSpoolProfiles"))
+                profiles("rfidFilamentProfiles"), profiles("externalSpoolProfiles"), it.optBoolean("printMilestones"))
         }
         fun load(file: File): DesktopSettings = runCatching { loadExisting(file) }.getOrDefault(DesktopSettings())
         /** A save must fail closed on a damaged existing file instead of replacing it with defaults. */
@@ -144,6 +145,7 @@ object StockHelperLocator {
 /** Everything the UI knows about one saved printer. */
 class PrinterEntry(val config: PrinterConfig) {
     val status = mutableStateOf(PrinterStatus(PrinterState.CONNECTING, routeFor(runCatching { java.net.URI(config.identity.address.let { if ("://" in it) it else "http://$it" }).host ?: "" }.getOrDefault(""))))
+    internal val printProgress = com.nozzleitall.desktop.history.MonitorPrintProgress()
     val capabilities = mutableStateOf<Capabilities?>(null)
     val cameras = mutableStateOf<List<CameraEndpoint>>(emptyList())
     val problem = mutableStateOf<String?>(null)
@@ -233,6 +235,11 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
     }
     fun updateNotifications(enabled: Boolean): Boolean {
         val saved = saveSettings { it.copy(notifications = enabled) }
+        notificationsSaveProblem.value = !saved
+        return saved
+    }
+    fun updatePrintMilestones(enabled: Boolean): Boolean {
+        val saved = saveSettings { it.copy(printMilestones = enabled) }
         notificationsSaveProblem.value = !saved
         return saved
     }
@@ -774,6 +781,10 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
         noteFree(entry, reading)
         val printerId = entry.config.identity.id
         val printerName = entry.config.identity.displayName.ifBlank { entry.config.identity.address }
+        val milestones = entry.printProgress.observe(reading)
+        if (settings.value.printMilestones) milestones.forEach { milestone ->
+            notifier("Print ${milestone.label} · $printerName", milestone.fileName)
+        }
         val observed = tracker.observe(printerId, printerName, reading) ?: run {
             val outcome = when (reading.state) {
                 PrinterState.FINISHED -> "finished"
@@ -785,7 +796,7 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
                 else -> null
             } ?: return
             val active = runCatching { localJobs.activeQueuedAttempt(printerId) }.getOrNull() ?: return
-            val reportedFile = reading.job?.fileName?.takeIf { it.isNotBlank() }
+            val reportedFile = reading.completedFileName ?: reading.job?.fileName?.takeIf { it.isNotBlank() }
             if (reportedFile == null && reading.state != PrinterState.READY) {
                 currentObservationProblem.value = "Printer $printerName reported ${reading.state} without a file name; the queued attempt remains open for review."
                 return
@@ -852,7 +863,7 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
             unpersistedObservations[rec.id] = rec
             currentObservationProblem.value = "Machine observation could not be saved in any local store; keep the app running until storage recovers: ${rec.id}"
         }
-        if (durable && firstObservation && settings.value.notifications) notifier(rec.notificationTitle(), rec.notificationBody())
+        if (durable && firstObservation && rec.outcome in setOf("cancelled", "failed") && settings.value.notifications) notifier(rec.notificationTitle(), rec.notificationBody())
     }
 
     private fun retryUnpersistedObservations() {

@@ -64,7 +64,6 @@ class OctoPrintPrinterService(host: String, private val apiKey: String) : Printe
             // "pausing" is still printing: OctoPrint drains its queue first, and ignores a resume sent before it reports paused.
             flags.optBoolean("paused") && !flags.optBoolean("pausing") -> "paused"
             flags.optBoolean("printing") || flags.optBoolean("pausing") || flags.optBoolean("cancelling") || flags.optBoolean("finishing") || flags.optBoolean("resuming") -> "printing"
-            flags.optBoolean("operational") && completion >= 100.0 -> "complete"
             flags.optBoolean("operational") -> "standby"
             else -> "error"
         }
@@ -74,7 +73,8 @@ class OctoPrintPrinterService(host: String, private val apiKey: String) : Printe
         val name = file?.optString("display")?.takeIf { it.isNotBlank() && it != "null" } ?: file?.optString("name")?.takeIf { it.isNotBlank() && it != "null" }.orEmpty()
         return PrinterSnapshot(state != "error", state, name, (completion / 100.0).coerceIn(0.0, 1.0).toFloat(),
             temp("tool0", "actual"), temp("tool0", "target"), temp("bed", "actual"), temp("bed", "target"),
-            job?.optJSONObject("progress")?.optDouble("printTime")?.takeIf { it.isFinite() }, null, null, "extruder")
+            job?.optJSONObject("progress")?.optDouble("printTime")?.takeIf { it.isFinite() }, null, null, "extruder",
+            job?.optJSONObject("progress")?.optDouble("printTimeLeft")?.takeIf { it.isFinite() && it >= 0 })
     }
 
     override fun catalog(): Catalog {

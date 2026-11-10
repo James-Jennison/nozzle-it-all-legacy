@@ -161,11 +161,11 @@ class JobHistoryTest {
         val entry = PrinterEntry(PrinterConfig(PrinterIdentity("p1", "CC1", "Elegoo CC1", PrinterFamily.KLIPPER, "http://127.0.0.1:1"), "moonraker"))
         fleet.recordEnd(entry, printing("Possum.gcode", 0.5f))
         fleet.recordEnd(entry, idle(PrinterState.FINISHED))
-        assertEquals(1, fleet.history.value.size); assertEquals(listOf("Print finished on CC1" to "Possum.gcode · 10 min"), sent)
+        assertEquals(1, fleet.history.value.size); assertTrue("milestones default to off", sent.isEmpty())
         assertEquals("a restart reads it back", 1, JobHistoryStore(File(paths.data, "history.json")).load().size)
         fleet.settings.value = fleet.settings.value.copy(notifications = false)
         fleet.recordEnd(entry, printing("B.gcode", 0.5f)); fleet.recordEnd(entry, idle(PrinterState.CANCELLED))
-        assertEquals(2, fleet.history.value.size); assertEquals("history is kept even with notifications off", 1, sent.size)
+        assertEquals(2, fleet.history.value.size); assertEquals("history is kept even with notifications off", 0, sent.size)
         fleet.shutdown()
     }
 

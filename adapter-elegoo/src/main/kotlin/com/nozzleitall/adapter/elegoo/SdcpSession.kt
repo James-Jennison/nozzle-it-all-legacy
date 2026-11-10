@@ -139,7 +139,7 @@ class SdcpSession internal constructor(
         readSlots(c)
         val r = Sdcp.parseStatus(message) ?: return PrinterStatus(PrinterState.UNKNOWN, route, message = "The printer's status was not understood.")
         return PrinterStatus(r.state, route, r.job, if (r.bed != null || r.bedTarget != null) Temperature(r.bed, r.bedTarget) else null,
-            Canvas.toolheads(slots, r.nozzle, r.nozzleTarget), r.message ?: printerError, observedAtMillis = synchronized(lock) { statusAtMillis })
+            Canvas.toolheads(slots, r.nozzle, r.nozzleTarget), r.message ?: printerError, observedAtMillis = synchronized(lock) { statusAtMillis }, completedFileName = r.completedFileName)
     }
 
     /** Cmd 324. A printer without CANVAS support (or older firmware) that doesn't answer is asked again only every minute. */

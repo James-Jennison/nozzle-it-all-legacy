@@ -75,7 +75,7 @@ object Sdcp {
 
     /** What a status message says, in the shared vocabulary. */
     data class Reading(val state: PrinterState, val message: String?, val job: JobProgress?, val nozzle: Double?, val nozzleTarget: Double?,
-                       val bed: Double?, val bedTarget: Double?)
+                       val bed: Double?, val bedTarget: Double?, val completedFileName: String? = null)
 
     /** Machine statuses that are neither idle nor printing (elegoo-link cc::sdcp_machine_status_t), in plain words. */
     private val busy = mapOf(2 to "receiving a file", 3 to "running an exposure test", 4 to "running its self-check", 5 to "levelling the bed",
@@ -121,9 +121,14 @@ object Sdcp {
             val pct = num(info, "Progress")
             val fraction = (pct?.let { it / 100.0 } ?: if (layer != null && total != null && total > 0) layer.toDouble() / total else 0.0).coerceIn(0.0, 1.0)
             // elegoo-link treats the Centauri Carbon's ticks as seconds (remaining = TotalTicks - CurrentTicks, in s).
-            JobProgress(info.optString("Filename").substringAfterLast('/'), fraction.toFloat(), num(info, "CurrentTicks"), layer, total)
+            val elapsed = num(info, "CurrentTicks")
+            val remaining = num(info, "TotalTicks")?.takeIf { it > 0 }?.let { end ->
+                elapsed?.let { (end - it).coerceAtLeast(0.0) }
+            }
+            JobProgress(info.optString("Filename"), fraction.toFloat(), elapsed, layer, total, remaining)
         } else null
-        return Reading(state, note, job, num(s, "TempOfNozzle"), num(s, "TempTargetNozzle"), num(s, "TempOfHotbed"), num(s, "TempTargetHotbed"))
+        return Reading(state, note, job, num(s, "TempOfNozzle"), num(s, "TempTargetNozzle"), num(s, "TempOfHotbed"), num(s, "TempTargetHotbed"),
+            info?.optString("Filename")?.takeIf { state == PrinterState.FINISHED && it.isNotBlank() })
     }
 
     /** The mainboard id a message carries, wherever the firmware put it. */

@@ -7,7 +7,7 @@ import org.json.JSONObject
 // Phase 9S: the printer-service abstractions (ApiFailure, snapshots, catalog, PrinterCommand, PrinterService, host
 // policy), split out of Moonraker.kt so :domain does not depend on any transport.
 class ApiFailure(message: String) : IOException(message)
-data class PrinterSnapshot(val ready: Boolean, val state: String, val filename: String = "", val progress: Float = 0f, val nozzle: Double? = null, val nozzleTarget: Double? = null, val bed: Double? = null, val bedTarget: Double? = null, val printDuration: Double? = null, val currentLayer: Int? = null, val totalLayers: Int? = null, val activeExtruder: String = "") {
+data class PrinterSnapshot(val ready: Boolean, val state: String, val filename: String = "", val progress: Float = 0f, val nozzle: Double? = null, val nozzleTarget: Double? = null, val bed: Double? = null, val bedTarget: Double? = null, val printDuration: Double? = null, val currentLayer: Int? = null, val totalLayers: Int? = null, val activeExtruder: String = "", val remainingSeconds: Double? = null) {
     // Moonraker retains the loaded filename after completion; preserve raw telemetry.
     val activeFilename: String get() = if(ready && state in setOf("printing", "paused")) filename else ""
     val activeProgress: Float get() = if(activeFilename.isNotBlank()) progress.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f else 0f

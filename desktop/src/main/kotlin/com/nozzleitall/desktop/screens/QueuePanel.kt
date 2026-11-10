@@ -425,7 +425,9 @@ private fun QueueRow(
                     candidate.guard?.needsReconcile != true &&
                     (item.targetProfileId == null || candidate.config.identity.profileId == null ||
                         item.targetProfileId == candidate.config.identity.profileId)) {
-                    "The queued job or printer changed; review it again."
+                    if (onHandoff != null && candidate.status.value.state == PrinterState.OFFLINE)
+                        "${candidate.config.identity.displayName} is offline. Reconnect and review the print again."
+                    else "The prepared print or printer changed. Review it again."
                 }
                 val remotePath = when (val action = prepared.action) {
                     is PrinterAction.StartJob -> action.remotePath

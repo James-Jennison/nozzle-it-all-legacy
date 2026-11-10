@@ -335,6 +335,7 @@ object BambuSnapshot {
             totalLayers = number(print, "total_layer_num")?.toInt()?.takeIf { it > 0 },
             // One hotend, and the name the rest of this app expects to see here.
             activeExtruder = "extruder",
+            remainingSeconds = number(print, "mc_remaining_time")?.takeIf { it >= 0 }?.times(60),
         )
     }
 }

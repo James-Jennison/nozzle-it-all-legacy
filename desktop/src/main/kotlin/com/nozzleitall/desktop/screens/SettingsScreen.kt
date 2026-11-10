@@ -56,8 +56,10 @@ fun SettingsScreen(state: AppState) {
         }
         Card(Modifier.fillMaxWidth()) {
             Txt("Notifications", Nz.type.title)
-            Toggle("Tell me when a print ends", fleet.settings.value.notifications, { fleet.updateNotifications(it) },
-                "A desktop notification when a print finishes, is stopped or fails, while Nozzle It All is running. Past prints are under each printer's History tab.")
+            Toggle("Print milestones", fleet.settings.value.printMilestones, { fleet.updatePrintMilestones(it) },
+                "Notify when a print starts, reaches 25%, 50%, or 75%, or the printer confirms it finished.")
+            Toggle("Queue and problem notifications", fleet.settings.value.notifications, { fleet.updateNotifications(it) },
+                "Notify when a printer with queued work is free or a print is stopped or fails.")
             if (fleet.notificationsSaveProblem.value) Banner("Notifications could not be saved. The previous choice is still active; check this computer's storage and try again.", BannerKind.DANGER)
         }
         Card(Modifier.fillMaxWidth()) {

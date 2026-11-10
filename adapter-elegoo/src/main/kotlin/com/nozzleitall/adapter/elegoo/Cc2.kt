@@ -86,7 +86,7 @@ object Cc2 {
     }
 
     data class Reading(val state: PrinterState, val message: String?, val job: JobProgress?, val nozzle: Double?, val nozzleTarget: Double?,
-                       val bed: Double?, val bedTarget: Double?)
+                       val bed: Double?, val bedTarget: Double?, val completedFileName: String? = null)
 
     private val busy = mapOf(0 to "starting up", 3 to "loading or unloading filament", 4 to "loading or unloading filament", 5 to "levelling the bed",
         6 to "calibrating the heaters", 7 to "running a resonance test", 8 to "running its self-check", 9 to "updating its firmware", 10 to "homing",
@@ -122,11 +122,12 @@ object Cc2 {
             val ps = result.optJSONObject("print_status") ?: JSONObject()
             // During a download the numbers aren't the print's (elegoo-link zeroes them for the same reason).
             val fraction = if (downloading) 0.0 else ((ms.opt("progress") as? Number)?.toDouble() ?: 0.0) / 100.0
-            JobProgress(ps.optString("filename").substringAfterLast('/'), fraction.coerceIn(0.0, 1.0).toFloat(),
+            JobProgress(ps.optString("filename"), fraction.coerceIn(0.0, 1.0).toFloat(),
                 if (downloading) null else num(ps, "print_duration"), (ps.opt("current_layer") as? Number)?.toInt(), (ps.opt("total_layer") as? Number)?.toInt())
         } else null
         val ex = result.optJSONObject("extruder"); val bed = result.optJSONObject("heater_bed")
-        return Reading(state, note, job, ex?.let { num(it, "temperature") }, ex?.let { num(it, "target") }, bed?.let { num(it, "temperature") }, bed?.let { num(it, "target") })
+        return Reading(state, note, job, ex?.let { num(it, "temperature") }, ex?.let { num(it, "target") }, bed?.let { num(it, "temperature") }, bed?.let { num(it, "target") },
+            result.optJSONObject("print_status")?.optString("filename")?.takeIf { state == PrinterState.FINISHED && it.isNotBlank() })
     }
 
     private fun num(o: JSONObject, k: String): Double? = (o.opt(k) as? Number)?.toDouble()

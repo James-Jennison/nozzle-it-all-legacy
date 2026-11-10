@@ -89,7 +89,8 @@ object U1Protocol {
             else -> stats?.optString("message")?.takeIf { it.isNotBlank() }
         }
         val ext = if (cfg != null) mapOf(Snapmaker.FULL_SPECTRUM to fullSpectrum(heads, true).toExtension()) else emptyMap()
-        return PrinterStatus(state, route, job, bed, heads, message, observedAt, ext)
+        return PrinterStatus(state, route, job, bed, heads, message, observedAt, ext,
+            completedFileName = stats?.optString("filename")?.takeIf { state == PrinterState.FINISHED && it.isNotBlank() })
     }
 
     /** Full Spectrum needs the U1's multi-toolhead filament report and at least two loaded, coloured toolheads. */

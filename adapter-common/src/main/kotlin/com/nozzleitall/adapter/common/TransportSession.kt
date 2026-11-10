@@ -38,9 +38,10 @@ open class TransportSession(
         val s = service.snapshot()
         val state = if (!s.ready) PrinterState.fromRaw(s.state).takeIf { it == PrinterState.ERROR || it == PrinterState.OFFLINE } ?: PrinterState.STARTING
             else PrinterState.fromRaw(s.state)
-        val job = if (state.isActiveJob) JobProgress(s.filename.substringAfterLast('/'), s.activeProgress, s.printDuration, s.currentLayer, s.totalLayers) else null
+        val job = if (state.isActiveJob) JobProgress(s.filename, s.activeProgress, s.printDuration, s.currentLayer, s.totalLayers, s.remainingSeconds) else null
         val heads = if (s.nozzle != null || s.nozzleTarget != null) listOf(Toolhead(0, s.nozzle, s.nozzleTarget, active = true)) else emptyList()
-        PrinterStatus(state, route, job, if (s.bed != null || s.bedTarget != null) Temperature(s.bed, s.bedTarget) else null, heads)
+        PrinterStatus(state, route, job, if (s.bed != null || s.bedTarget != null) Temperature(s.bed, s.bedTarget) else null, heads,
+            completedFileName = s.filename.takeIf { state == PrinterState.FINISHED && it.isNotBlank() })
     } catch (e: ApiFailure) {
         PrinterStatus(PrinterState.ERROR, route, message = e.message)
     } catch (e: Exception) {

@@ -159,6 +159,7 @@ data class JobProgress(
     val elapsedSeconds: Double? = null,
     val currentLayer: Int? = null,
     val totalLayers: Int? = null,
+    val remainingSeconds: Double? = null,
 )
 
 data class Temperature(val current: Double?, val target: Double?)
@@ -179,6 +180,7 @@ data class PrinterStatus(
      * unchanged. Core code never interprets them; vendor-aware screens read them through typed helpers.
      */
     val extensions: Map<String, Any> = emptyMap(),
+    val completedFileName: String? = null,
 )
 
 /**

@@ -82,7 +82,8 @@ class PrusaLinkPrinterService(host: String, password: String) : PrinterService {
         return PrinterSnapshot(ready, displayState, filename,
             (statusJob?.optDouble("progress")?.takeIf { it.isFinite() } ?: 0.0).div(100.0).coerceIn(0.0, 1.0).toFloat(),
             finite("temp_nozzle"), finite("target_nozzle"), finite("temp_bed"), finite("target_bed"),
-            statusJob?.optDouble("time_printing")?.takeIf { it.isFinite() }, null, null, "extruder")
+            statusJob?.optDouble("time_printing")?.takeIf { it.isFinite() }, null, null, "extruder",
+            statusJob?.optDouble("time_remaining")?.takeIf { it.isFinite() && it >= 0 })
     }
     override fun catalog(): Catalog {
         val warnings = mutableListOf<String>()

@@ -64,19 +64,6 @@ fun NoPrinterYet(state: AppState, what: String) = Card(Modifier.fillMaxWidth()) 
 @Composable
 fun MonitorScreen(state: AppState) {
     Column(Modifier.fillMaxSize().padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        val workspacePreview = state.prepare.slice as? com.nozzleitall.desktop.prepare.SliceState.Done
-        PrintWorkflowBar(
-            active = PrintWorkflowStage.MONITOR,
-            hasPreview = workspacePreview?.preview != null,
-            hasPrinter = true,
-            onSelect = { stage -> when (stage) {
-                PrintWorkflowStage.PREPARE -> state.returnToWorkspace(preview = false)
-                PrintWorkflowStage.PREVIEW -> state.returnToWorkspace(preview = true)
-                PrintWorkflowStage.SEND -> state.returnToWorkspace(preview = true, send = true)
-                PrintWorkflowStage.MONITOR -> Unit
-            } },
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-        )
         NzButton("Queue & history", { state.destination = com.nozzleitall.desktop.Destination.JOBS },
             kind = ButtonKind.SECONDARY, testTag = "monitor-queue-history")
         val entry = PrinterHeader(state, com.nozzleitall.desktop.Destination.MONITOR, "Watch a job and control the printer. Every command asks first.") ?: run { NoPrinterYet(state, "live status, cameras and controls"); return@Column }
@@ -158,21 +145,37 @@ internal fun monitorHandoffSuperseded(status: PrinterStatus): Boolean =
 fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flow: ActionFlow) {
     val c = Nz.colors
     val blocked = entry.guard?.needsReconcile == true || flow.busy
+    val reconnecting = status.state in com.nozzleitall.desktop.history.MonitorPrintProgress.reconnectingStates
+    val confirmed = entry.printProgress.finished.value?.takeIf { status.state == PrinterState.FINISHED }
+    val displayState = if (status.state == PrinterState.FINISHED && confirmed == null) PrinterState.READY else status.state
     Card(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Txt(entry.config.identity.displayName, Nz.type.title, modifier = Modifier.weight(1f))
             RouteBadge(status.route)
-            StatusPill(status.state)
+            if (reconnecting && entry.printProgress.active.value != null) Txt("Reconnecting", Nz.type.label, c.textMuted)
+            else StatusPill(displayState)
         }
-        val job = status.job
-        if (job == null) Txt(status.message ?: if (status.state == PrinterState.FINISHED) "The last job finished." else "Nothing is printing.", Nz.type.body, c.textMuted)
+        val job = when {
+            reconnecting -> entry.printProgress.active.value
+            status.state.isActiveJob -> status.job
+            else -> null
+        }
+        if (job == null) Txt(when {
+            confirmed != null -> "$confirmed finished."
+            status.state == PrinterState.FINISHED -> "Completion could not be matched to the tracked print."
+            else -> status.message ?: "Nothing is printing."
+        }, Nz.type.body, c.textMuted)
         else {
-            val left = JobEta.remainingSeconds(job.fraction, job.elapsedSeconds)
+            val reported = job.remainingSeconds?.takeIf { it.isFinite() && it >= 0 }
+            val left = if (reconnecting) null else reported ?: JobEta.remainingSeconds(job.fraction, job.elapsedSeconds)
             Txt(job.fileName, Nz.type.headline)
             ProgressBar(job.fraction, Nz.status.forState(status.state.glossaryId), label = "Print progress ${(job.fraction * 100).toInt()} percent")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Metric("Done", "${(job.fraction * 100).toInt()}%")
-                left?.let { Metric("Time left", formatDuration(it)); Metric("Finishes about", JobEta.finishesAt(System.currentTimeMillis(), it)) }
+                Metric(if (reconnecting) "Last reported" else "Done", "${(job.fraction * 100).toInt()}%")
+                left?.let {
+                    Metric(if (reported != null) "Printer ETA" else "Estimated time left", formatDuration(it))
+                    Metric("Finishes about", JobEta.finishesAt(System.currentTimeMillis(), it))
+                }
                 Metric("Elapsed", formatDuration(job.elapsedSeconds))
                 job.totalLayers?.let { Metric("Layer", "${job.currentLayer ?: 0} of $it") }
             }

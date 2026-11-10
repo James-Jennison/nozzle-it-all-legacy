@@ -71,7 +71,9 @@ class JobTracker(private val clock: () -> Long = System::currentTimeMillis) {
         }
         val o = open[printerId] ?: return null
         val outcome = when (state) {
-            PrinterState.FINISHED -> "finished"
+            PrinterState.FINISHED -> if ((status.completedFileName ?: job?.fileName)?.takeIf { it.isNotBlank() }
+                ?.let { it.substringAfterLast('/').substringAfterLast('\\') != o.fileName.substringAfterLast('/').substringAfterLast('\\') } == true)
+                "unknown" else "finished"
             PrinterState.CANCELLED -> "cancelled"
             PrinterState.ERROR -> "failed"
             // READY alone does not say whether the print completed or was stopped.

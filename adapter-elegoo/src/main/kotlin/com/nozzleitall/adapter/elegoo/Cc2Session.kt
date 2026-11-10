@@ -146,7 +146,7 @@ class Cc2Session internal constructor(
         if (inStatus != null) slots = inStatus else readSlots(client)
         val r = Cc2.parseStatus(json) ?: return PrinterStatus(PrinterState.UNKNOWN, route, message = "The printer's status was not understood.")
         return PrinterStatus(r.state, route, r.job, if (r.bed != null || r.bedTarget != null) Temperature(r.bed, r.bedTarget) else null,
-            Canvas.toolheads(slots, r.nozzle, r.nozzleTarget), r.message, observedAtMillis = at)
+            Canvas.toolheads(slots, r.nozzle, r.nozzleTarget), r.message, observedAtMillis = at, completedFileName = r.completedFileName)
     }
 
     /** Method 2005; asked again only every minute after it goes unanswered twice. */
