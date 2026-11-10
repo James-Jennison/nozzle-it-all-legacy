@@ -100,7 +100,18 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
                 chooseSaveFile("Export project", p.name + ".3mf")?.let { f -> runCatching { ThreeMf.writeAtomically(p.toProject(), f) }.onFailure(::report) }
             },
             MenuAction("Export sliced file…", ctrl(Key.E, "E"), enabled = sliced != null) {
-                sliced?.let { s -> chooseSaveFile("Export sliced file", p.name + ".gcode")?.let { t -> runCatching { s.result.gcode.copyTo(t, overwrite = true) }.onFailure(::report) } }
+                sliced?.let { s ->
+                    chooseSaveFile("Export sliced file", p.name + "." + s.result.output)?.let { target ->
+                        runCatching { s.result.printFile.copyTo(target, overwrite = true) }.onFailure(::report)
+                    }
+                }
+            },
+            MenuAction("Export raw G-code…", enabled = sliced?.result?.bundle != null) {
+                sliced?.result?.takeIf { it.bundle != null }?.let { result ->
+                    chooseSaveFile("Export raw G-code", p.name + ".gcode")?.let { target ->
+                        runCatching { result.gcode.copyTo(target, overwrite = true) }.onFailure(::report)
+                    }
+                }
             },
             null,
             MenuAction("Quit", ctrl(Key.Q, "Q")) { onQuit() },

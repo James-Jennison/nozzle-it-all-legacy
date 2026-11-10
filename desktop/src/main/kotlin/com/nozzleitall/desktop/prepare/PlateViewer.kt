@@ -240,7 +240,8 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
                 hiddenPreviewKinds: Set<Int> = emptySet(), hiddenPreviewTools: Set<Int> = emptySet(),
                 accent: Color = Color(0xFF3E7BFA), onMove: (Int, Float, Float) -> Unit = { _, _, _ -> }, onTurn: (Int, Float) -> Unit = { _, _ -> }, onResize: (Int, Float) -> Unit = { _, _ -> },
                 onSelection: ((Int?, Boolean, Boolean) -> Unit)? = null, onTransformStart: (Int) -> Unit = {}, onTransformEnd: () -> Unit = {},
-                transformTool: TransformTool = TransformTool.MOVE, backgroundColor:Color=Color.Transparent, previewFirstLayer: Int = 0, previewRealistic: Boolean = false) {
+                transformTool: TransformTool = TransformTool.MOVE, backgroundColor:Color=Color.Transparent, previewFirstLayer: Int = 0, previewRealistic: Boolean = false,
+                onContextMenu: ((Offset, Int?) -> Unit)? = null) {
     val keys = if (preview == null) displayKeys(objects) else emptyList()
     val realistic = previewRealistic && preview?.supportsRealisticView == true
     val previewPlan = remember(preview, previewFirstLayer, previewLayer, previewMove, realistic) {
@@ -310,6 +311,7 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
     val frameTiming = remember { ViewportTiming() }
     val paintRef = rememberUpdatedState(paint); val objectsRef = rememberUpdatedState(objects)
     val selectRef = rememberUpdatedState<(Int?, Boolean, Boolean) -> Unit>({ id, ctrl, shift -> onSelection?.invoke(id, ctrl, shift) ?: onSelect(id) })
+    val contextMenuRef = rememberUpdatedState(onContextMenu)
     val moveRef = rememberUpdatedState(onMove); val turnRef = rememberUpdatedState(onTurn); val resizeRef = rememberUpdatedState(onResize)
     val startRef = rememberUpdatedState(onTransformStart); val endRef = rememberUpdatedState(onTransformEnd)
     Box(modifier) {
@@ -324,6 +326,7 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
             var pressedAt = Offset.Zero; var moved = false; var clickId: Int? = null; var primaryPress = false
             var modifierClick = false; var pressCtrl = false; var pressShift = false
             var grabStarted = false
+            var secondaryPress = false
             try { while (true) {
                 val ev = awaitPointerEvent()
                 val ch = ev.changes.firstOrNull() ?: continue
@@ -350,7 +353,20 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
                     if(grabStarted)endRef.value()
                     grab=null;grabObj=null;grabStarted=false;primaryPress=false
                 }
+                if (ch.pressed && prev == null && ev.buttons.isSecondaryPressed && preview == null &&
+                    paintRef.value == null && contextMenuRef.value != null) {
+                    secondaryPress = true
+                    pressedAt = ch.position
+                    moved = false
+                }
                 if (ch.pressed && prev != null && (ch.position - pressedAt).getDistance() > 4f) moved = true
+                if (!ch.pressed && secondaryPress) {
+                    secondaryPress = false
+                    if (!moved && (ch.position - pressedAt).getDistance() <= 4f) {
+                        val target = frame?.let { pickGrab(proj, objectsRef.value, pressedAt, TransformTool.MOVE)?.obj?.id }
+                        contextMenuRef.value?.invoke(pressedAt, target)
+                    }
+                }
                 if (grab != null) {
                     val o = grabObj!!
                     if (!ch.pressed) {

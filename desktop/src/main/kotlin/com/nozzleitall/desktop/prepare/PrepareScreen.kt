@@ -733,19 +733,38 @@ fun PrepareScreen(state: AppState) {
             val density = LocalDensity.current
             var previewFooterHeight by remember { mutableStateOf(0.dp) }
             var previewZWidth by remember { mutableStateOf(0.dp) }
-            if (onPlate.isEmpty() && !p.showPreview) EmptyState(NzIcon.IMPORT, if (p.items.isEmpty()) "Start with a model" else "${p.plateNames.getOrNull(p.currentPlate) ?: "This plate"} is empty",
-                "Add an STL, 3MF or OBJ file, or open a saved project. Nothing leaves this computer.", Modifier.align(Alignment.Center)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        NzButton("Add model", { chooseFiles("Add a model", listOf("stl", "3mf", "obj")).forEach { f -> runCatching { p.importModel(f) }.onFailure { p.notice = it.message } } }, kind = ButtonKind.PRIMARY, icon = NzIcon.IMPORT)
-                        NzButton("Open a project", { state.destination = Destination.PROJECTS }, kind = ButtonKind.SECONDARY, icon = NzIcon.PROJECTS)
-                        NzButton("Set up machine", state::reopenFirstRun, kind = ButtonKind.SECONDARY, icon = NzIcon.TUNE, testTag = "empty-workspace-setup-machine")
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        NzButton("CAD and STEP", { toggleModeling(ModelingTool.CAD) }, kind = ButtonKind.SECONDARY,
-                            enabled = p.toolBusy == null, testTag = "empty-workspace-cad")
-                        NzButton("Meshy 3D", { toggleModeling(ModelingTool.MESHY) }, kind = ButtonKind.SECONDARY,
-                            enabled = p.toolBusy == null, testTag = "empty-workspace-meshy")
+            val plateContextMenu = remember(p.currentPlate, p.showPreview) { ContextMenuState() }
+            var contextObject by remember(p.currentPlate, p.showPreview) { mutableStateOf<PrepItem?>(null) }
+            val bedActions = {
+                buildList {
+                    add(ContextMenuItem("Add model…") {
+                        chooseFiles("Add a model", listOf("stl", "3mf", "obj"))
+                            .takeIf { it.isNotEmpty() }?.let(state::importWorkspaceModels)
+                    })
+                    if (p.plateItems().isNotEmpty()) add(ContextMenuItem("Arrange plate") {
+                        state.requestWorkspaceTool(WorkspaceToolRequest.ARRANGE)
+                    })
+                    add(ContextMenuItem("Fit build plate", camera::fitView))
+                }
+            }
+            LocalContextMenuRepresentation.current.Representation(plateContextMenu) {
+                contextObject?.let { objectContextActions(p, it) } ?: bedActions()
+            }
+            if (onPlate.isEmpty() && !p.showPreview) ContextMenuArea(items = bedActions, modifier = Modifier.matchParentSize()) {
+                EmptyState(NzIcon.IMPORT, if (p.items.isEmpty()) "Start with a model" else "${p.plateNames.getOrNull(p.currentPlate) ?: "This plate"} is empty",
+                    "Add an STL, 3MF or OBJ file, or open a saved project. Nothing leaves this computer.", Modifier.align(Alignment.Center)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            NzButton("Add model", { chooseFiles("Add a model", listOf("stl", "3mf", "obj")).forEach { f -> runCatching { p.importModel(f) }.onFailure { p.notice = it.message } } }, kind = ButtonKind.PRIMARY, icon = NzIcon.IMPORT)
+                            NzButton("Open a project", { state.destination = Destination.PROJECTS }, kind = ButtonKind.SECONDARY, icon = NzIcon.PROJECTS)
+                            NzButton("Set up machine", state::reopenFirstRun, kind = ButtonKind.SECONDARY, icon = NzIcon.TUNE, testTag = "empty-workspace-setup-machine")
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            NzButton("CAD and STEP", { toggleModeling(ModelingTool.CAD) }, kind = ButtonKind.SECONDARY,
+                                enabled = p.toolBusy == null, testTag = "empty-workspace-cad")
+                            NzButton("Meshy 3D", { toggleModeling(ModelingTool.MESHY) }, kind = ButtonKind.SECONDARY,
+                                enabled = p.toolBusy == null, testTag = "empty-workspace-meshy")
+                        }
                     }
                 }
             }
@@ -759,7 +778,12 @@ fun PrepareScreen(state: AppState) {
                 onSelection = { id, ctrl, shift -> focus.clearFocus(); p.selectObject(id, ctrl, shift) }, accent = c.accent,
                 onMove = p::moveSelection, onTurn = p::turnSelection, onResize = p::resizeSelection,
                 onTransformStart = p::beginSelectionTransform, onTransformEnd = p::endSelectionTransform,
-                transformTool = transformTool, backgroundColor = c.surfaceSunken)
+                transformTool = transformTool, backgroundColor = c.surfaceSunken,
+                onContextMenu = { position, id ->
+                    contextObject = p.plateItems().firstOrNull { it.id == id }
+                    plateContextMenu.status = ContextMenuState.Status.Open(
+                        androidx.compose.ui.geometry.Rect(position, androidx.compose.ui.geometry.Size.Zero))
+                })
             if (!compactWorkspace && !p.showPreview && sel != null && !forcedInspectorContext && !objectInspectorOpen) {
                 Column(
                     Modifier.align(Alignment.TopEnd).padding(top = 66.dp, end = 12.dp)
@@ -2467,6 +2491,26 @@ private fun ModelColours(p: PrepareState, item: PrepItem, slots: List<com.nozzle
     }
 }
 
+private fun objectContextActions(p: PrepareState, item: PrepItem): List<ContextMenuItem> {
+    fun selectTarget(): Boolean {
+        if (p.plateItems().none { it === item }) return false
+        p.selectObject(item.id)
+        return true
+    }
+    return listOf(
+        ContextMenuItem("Select ${item.name}") { selectTarget() },
+        ContextMenuItem(if (p.objectVisible(item.id)) "Hide object" else "Show object") {
+            if (p.plateItems().any { it === item }) p.toggleObjectVisibility(item.id)
+        },
+        ContextMenuItem("Duplicate object") {
+            if (p.toolBusy == null && selectTarget()) p.duplicateSelected()
+        },
+        ContextMenuItem("Delete object") {
+            if (p.toolBusy == null && selectTarget()) p.removeSelected()
+        },
+    )
+}
+
 @Composable
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 internal fun StepObjects(state: AppState, showList: Boolean = true, showInspector: Boolean = true) {
@@ -2493,25 +2537,7 @@ internal fun StepObjects(state: AppState, showList: Boolean = true, showInspecto
             onPlate.forEach { item ->
                 val sel = item.id in p.selectedIds
                 Column(Modifier.fillMaxWidth()) {
-                    ContextMenuArea(items = {
-                        fun selectTarget(): Boolean {
-                            if (p.plateItems().none { it === item }) return false
-                            p.selectObject(item.id)
-                            return true
-                        }
-                        listOf(
-                            ContextMenuItem("Select ${item.name}") { selectTarget() },
-                            ContextMenuItem(if (p.objectVisible(item.id)) "Hide object" else "Show object") {
-                                if (p.plateItems().any { it === item }) p.toggleObjectVisibility(item.id)
-                            },
-                            ContextMenuItem("Duplicate object") {
-                                if (p.toolBusy == null && selectTarget()) p.duplicateSelected()
-                            },
-                            ContextMenuItem("Delete object") {
-                                if (p.toolBusy == null && selectTarget()) p.removeSelected()
-                            },
-                        )
-                    }) {
+                    ContextMenuArea(items = { objectContextActions(p, item) }) {
                         Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(6.dp))
                             .background(if (sel) c.accent.copy(alpha = 0.14f) else Color.Transparent),
                             verticalAlignment = Alignment.CenterVertically) {
