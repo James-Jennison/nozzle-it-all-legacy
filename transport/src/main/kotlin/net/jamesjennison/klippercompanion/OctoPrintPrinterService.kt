@@ -63,9 +63,8 @@ class OctoPrintPrinterService(
     )
     private data class ObservedPrint(
         val path: String,
-        val baseline: PrintHistory?,
+        val baseline: PrintHistory,
         val activeAtNanos: Long,
-        val elapsed: Double?,
     )
     private var observedPrint: ObservedPrint? = null
     private var completedPrint: String? = null
@@ -101,13 +100,11 @@ class OctoPrintPrinterService(
             completedPrint = null
             if (path == null || recent?.path != path) observedPrint = null
             if (path != null && jobReportsActive) {
-                val old = recent?.takeIf { it.path == path }
-                val restarted = elapsed != null && old?.elapsed != null && elapsed < old.elapsed
-                // The same file can start another run. A timer reset needs a new history baseline.
-                if (old?.baseline != null && !restarted)
-                    observedPrint = old.copy(activeAtNanos = now, elapsed = elapsed ?: old.elapsed)
-                else if (old == null || restarted || now - old.activeAtNanos >= TimeUnit.SECONDS.toNanos(6))
-                    observedPrint = ObservedPrint(path, printHistory(path), now, elapsed)
+                // Use the most recent confirmed active history. A success already visible during
+                // the next run belongs to an earlier run, even if the elapsed timer is unchanged.
+                observedPrint = if (elapsed == null) null else printHistory(path)?.let { history ->
+                    ObservedPrint(path, history, System.nanoTime())
+                }
             }
             return null
         }

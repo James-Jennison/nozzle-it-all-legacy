@@ -38,7 +38,7 @@ class OctoPrintAdapterTest {
         @Volatile var printing = true
         @Volatile var jobState: String? = null
         @Volatile var jobStatus = 200
-        @Volatile var elapsed = 100
+        @Volatile var elapsed: Int? = 100
         @Volatile var jobPath = "parts/cube.gcode"
         @Volatile var filePath = jobPath
         @Volatile var history = ""","prints":{"success":4,"failure":1,"last":{"date":1000,"success":true}}"""
@@ -118,15 +118,30 @@ class OctoPrintAdapterTest {
         }
     }
 
-    @Test fun anImmediateSameFileRestartCannotClaimThePreviousRunsCompletion() = PrintEvidenceFixture().use { fixture ->
+    @Test fun anImmediateSameFileRestartCannotClaimThePreviousRunsCompletion() {
+        for (restartElapsed in listOf(1, 100, null)) PrintEvidenceFixture().use { fixture ->
+            open(fixture.server).use { session ->
+                assertEquals(PrinterState.PRINTING, session.status().state)
+                fixture.history = ""","prints":{"success":5,"failure":1,"last":{"date":2000,"success":true}}"""
+                fixture.elapsed = restartElapsed
+                assertEquals(PrinterState.PRINTING, session.status().state)
+                fixture.printing = false
+                assertEquals(PrinterState.READY, session.status().state)
+                assertNull(session.status().completedFileName)
+            }
+        }
+    }
+
+    @Test fun aMissingActiveHistoryRecordCanRecoverOnTheNextActivePoll() = PrintEvidenceFixture().use { fixture ->
         open(fixture.server).use { session ->
+            fixture.historyStatus = 503
             assertEquals(PrinterState.PRINTING, session.status().state)
-            fixture.history = ""","prints":{"success":5,"failure":1,"last":{"date":2000,"success":true}}"""
-            fixture.elapsed = 1
+            fixture.historyStatus = 200
             assertEquals(PrinterState.PRINTING, session.status().state)
             fixture.printing = false
-            assertEquals(PrinterState.READY, session.status().state)
-            assertNull(session.status().completedFileName)
+            fixture.history = ""","prints":{"success":5,"failure":1,"last":{"date":2000,"success":true}}"""
+            assertEquals(PrinterState.FINISHED, session.status().state)
+            assertEquals("parts/cube.gcode", session.status().completedFileName)
         }
     }
 
