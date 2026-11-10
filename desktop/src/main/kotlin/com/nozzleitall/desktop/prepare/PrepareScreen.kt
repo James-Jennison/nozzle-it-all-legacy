@@ -622,10 +622,14 @@ fun PrepareScreen(state: AppState) {
                 }
             }
         }
-        if (!p.layerActionsReviewed && p.layerActionProblem == null) {
+        val layerActionProblem = p.layerActionProblem
+        if (layerActionProblem != null) {
+            Banner(layerActionProblem, BannerKind.WARNING,
+                "Manage layer actions" to { reviewSavedLayerActions = true })
+        } else if (!p.layerActionsReviewed) {
             Banner("This project contains saved layer actions. Review them before slicing.", BannerKind.WARNING,
                 "Review layer actions" to { reviewSavedLayerActions = true })
-        } else if (!p.showPreview && p.layerActions.isNotEmpty() && p.layerActionProblem == null) {
+        } else if (!p.showPreview && p.layerActions.isNotEmpty()) {
             NzButton("Manage layer actions", { reviewSavedLayerActions = true }, Modifier.padding(horizontal = 12.dp),
                 kind = ButtonKind.QUIET, testTag = "manage-layer-actions")
         }

@@ -534,14 +534,32 @@ class PrepareState(private val app: AppState) {
     val plateIds = androidx.compose.runtime.mutableStateListOf(UUID.randomUUID().toString())
 
     internal val layerActions = mutableStateMapOf<String, List<LayerAction>>()
-    internal var layerActionsReviewed by mutableStateOf(true)
+    internal data class LayerActionTarget(val printerId: String?, val profileId: String, val nozzle: String?, val machine: String)
+    internal fun layerActionTarget() = LayerActionTarget(printerId, profileId, nozzle, machineJson().toString())
+    internal var reviewedLayerActionTarget by mutableStateOf<LayerActionTarget?>(null)
         private set
-    internal var layerActionProblem by mutableStateOf<String?>(null)
+    internal val layerActionsReviewed: Boolean
+        get() = layerActions.isEmpty() || reviewedLayerActionTarget == layerActionTarget()
+    internal var unreadableLayerActions by mutableStateOf<Map<String, String>>(emptyMap())
         private set
-    internal fun reviewLayerActions() { if (layerActionProblem == null) layerActionsReviewed = true }
-    internal fun restoreLayerActions(actions: Map<String, List<LayerAction>>, reviewed: Boolean) {
+    internal val layerActionProblem: String?
+        get() = "Some saved layer actions could not be read. The original data was preserved."
+            .takeIf { unreadableLayerActions.isNotEmpty() }
+    internal fun reviewLayerActions(target: LayerActionTarget = layerActionTarget()) {
+        if (layerActionProblem == null && target == layerActionTarget()) reviewedLayerActionTarget = target
+    }
+    internal fun restoreLayerActions(actions: Map<String, List<LayerAction>>, target: LayerActionTarget?, unreadable: Map<String, String>) {
         layerActions.clear(); layerActions.putAll(actions)
-        layerActionsReviewed = reviewed
+        reviewedLayerActionTarget = target
+        unreadableLayerActions = unreadable
+    }
+
+    internal fun discardUnreadableLayerActions() {
+        if (unreadableLayerActions.isEmpty()) return
+        editSelection {
+            unreadableLayerActions = emptyMap()
+            changed()
+        }
     }
 
     internal fun setLayerAction(plateId: String, layer: Int, z: Double, kind: LayerAction.Kind, text: String): Boolean {
@@ -557,6 +575,7 @@ class PrepareState(private val app: AppState) {
             if (kind == LayerAction.Kind.CUSTOM) text.trim() else "")
         editSelection {
             layerActions[plateId] = (actions.filterNot { it.layer == layer } + action).sortedBy { it.layer }
+            reviewedLayerActionTarget = layerActionTarget()
             changed()
         }
         return true
@@ -568,7 +587,7 @@ class PrepareState(private val app: AppState) {
         if (remaining.size == old.size) return
         editSelection {
             if (remaining.isEmpty()) layerActions.remove(plateId) else layerActions[plateId] = remaining
-            if (layerActions.isEmpty()) layerActionsReviewed = true
+            if (layerActions.isEmpty()) reviewedLayerActionTarget = null
             changed()
         }
     }
@@ -669,6 +688,7 @@ class PrepareState(private val app: AppState) {
             items.removeAll { it.plate == i }
             plateNames.removeAt(i)
             layerActions.remove(plateIds[i])
+            unreadableLayerActions = unreadableLayerActions - plateIds[i]
             plateIds.removeAt(i)
             items.forEach { if (it.plate > i) it.plate -= 1 }
             currentPlate = (if (currentPlate > i) currentPlate - 1 else currentPlate).coerceAtMost(plateNames.lastIndex)
@@ -1182,7 +1202,7 @@ class PrepareState(private val app: AppState) {
         draftSessionId = UUID.randomUUID()
         manualSlots.clear()
         manualSlots.addAll(defaultMaterialSlots)
-        layerActions.clear(); layerActionsReviewed = true; layerActionProblem = null
+        layerActions.clear(); reviewedLayerActionTarget = null; unreadableLayerActions = emptyMap()
         bedType = null; nozzleFlows.clear(); nozzle = null; processId = null
         presetSnapshot = null; presetSnapshotProblem = null
         machineCache = null
@@ -1247,14 +1267,13 @@ class PrepareState(private val app: AppState) {
         val entries = p.manifest?.plates?.flatMap { it.objects }?.associateBy { it.objectId } ?: emptyMap()
         plateNames.clear(); plateNames.addAll((0 until count).map { i -> names.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "Plate ${i + 1}" })
         plateIds.clear(); plateIds.addAll(openedPlateIds)
-        runCatching {
-            ownPlates.orEmpty().mapIndexed { index, plate -> openedPlateIds[index] to LayerAction.read(plate) }
-                .filter { it.second.isNotEmpty() }.toMap()
-        }.onSuccess {
-            layerActions.putAll(it)
-            layerActionsReviewed = it.isEmpty()
-        }.onFailure {
-            layerActionProblem = "The saved layer actions could not be read. The original data was preserved."
+        ownPlates.orEmpty().forEachIndexed { index, plate ->
+            val id = openedPlateIds[index]
+            runCatching { LayerAction.read(plate) }.onSuccess { actions ->
+                if (actions.isNotEmpty()) layerActions[id] = actions
+            }.onFailure {
+                unreadableLayerActions = unreadableLayerActions + (id to plate.unknown.toString())
+            }
         }
 
         val layoutBed = (if (ownPlates != null) p.manifest?.printer?.profileId?.let { ProfileCatalog.byId(it) }?.let { it.bedW.toDouble() to it.bedD.toDouble() } else p.sourceBed)
@@ -2181,7 +2200,8 @@ class PrepareState(private val app: AppState) {
                     ProjectManifest.ObjectEntry(it.id, it.name, sliceSlot(it.slot), paintSlots = it.paintSlots.map { s -> if (s in unoffered) sliceSlot(it.slot) else s }, settings = it.settings.toMap(), parts = it.parts.toList(), heightRanges = it.ranges.toList(), layerProfile = it.layerProfile.toList(), instanceOf = it.instanceOf) },
                     (base.plates.firstOrNull { old -> (old.id ?: ProjectManifest.legacyPlateId(base.projectId, old.index)) == plateIds[i] }
                         ?.unknown ?: JSONObject()).let { unknown ->
-                        if (layerActionProblem == null) LayerAction.write(unknown, layerActions[plateIds[i]].orEmpty()) else unknown
+                        unreadableLayerActions[plateIds[i]]?.let(::JSONObject)
+                            ?: LayerAction.write(unknown, layerActions[plateIds[i]].orEmpty())
                     },
                     plateIds[i]) },
                 materials = materials(),

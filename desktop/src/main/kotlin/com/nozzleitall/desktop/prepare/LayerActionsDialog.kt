@@ -25,14 +25,24 @@ internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, di
         prepare.layerActions[plateId].orEmpty().firstOrNull { it.layer == position.index + 1 }
     }
     if (cursor == null) {
+        if (prepare.layerActionProblem != null) {
+            ConfirmDialog(
+                "Remove unreadable layer actions?",
+                "This removes only layer actions this version could not read. Undo can restore them before closing the project.",
+                "Remove unreadable actions", destructive = true, onDismiss = dismiss,
+                onConfirm = { prepare.discardUnreadableLayerActions(); dismiss() },
+            )
+            return
+        }
         val reviewed = prepare.layerActions.toMap()
+        val target = prepare.layerActionTarget()
         val needsReview = !prepare.layerActionsReviewed
         ConfirmDialog(
             if (needsReview) "Review saved layer actions" else "Manage layer actions",
             "These actions change printer instructions at a specific height. Remove an action to choose a new layer after slicing again.",
             if (needsReview) "Use saved actions" else "Done", destructive = false,
             onDismiss = dismiss, onConfirm = {
-                if (prepare.layerActions.toMap() == reviewed) prepare.reviewLayerActions()
+                if (prepare.layerActions.toMap() == reviewed) prepare.reviewLayerActions(target)
                 dismiss()
             },
             acknowledgement = "I reviewed these actions and their printer instructions.".takeIf { needsReview },

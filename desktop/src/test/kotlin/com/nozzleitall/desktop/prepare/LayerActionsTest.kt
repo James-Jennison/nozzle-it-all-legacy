@@ -98,11 +98,42 @@ class LayerActionsTest {
                 assertFalse(prepare.layerActionsReviewed)
                 prepare.slice(scope)
                 assertTrue(prepare.slice is SliceState.Failed)
+                val oldTarget = prepare.layerActionTarget()
+                prepare.reviewLayerActions()
+                val oldNozzle = prepare.nozzle
+                prepare.nozzle = "0.6"
+                assertFalse(prepare.layerActionsReviewed)
+                prepare.reviewLayerActions(oldTarget)
+                assertFalse(prepare.layerActionsReviewed)
+                prepare.sliceAll(scope)
+                assertTrue(prepare.slice is SliceState.Failed)
+                prepare.nozzle = oldNozzle
                 prepare.reviewLayerActions()
                 val restored = slice()
                 assertTrue(restored.result.gcode.readText().contains(";NIA_LAYER_ACTION ${edited.id}\nM117 Layer fixture"))
                 prepare.showPlate(1)
                 assertFalse(slice().result.gcode.readText().contains("NIA_LAYER_ACTION"))
+                prepare.showPlate(0)
+                val beforeRecovery = prepare.toProject()
+                val manifest = requireNotNull(beforeRecovery.manifest)
+                val broken = manifest.plates[1].let {
+                    it.copy(unknown = JSONObject(it.unknown.toString()).put("nia_layer_actions", "future data"))
+                }
+                val recoveryFile = root.resolve("unreadable-actions.3mf")
+                recoveryFile.writeBytes(ThreeMf.write(beforeRecovery.copy(manifest = manifest.copy(
+                    plates = listOf(manifest.plates[0], broken),
+                ))))
+                prepare.open(recoveryFile)
+                assertNotNull(prepare.layerActionProblem)
+                assertEquals(edited, prepare.layerActions.getValue(firstPlate).single())
+                assertEquals("future data", prepare.toProject().manifest!!.plates[1].unknown.getString("nia_layer_actions"))
+                prepare.discardUnreadableLayerActions()
+                assertNull(prepare.layerActionProblem)
+                assertFalse(prepare.toProject().manifest!!.plates[1].unknown.has("nia_layer_actions"))
+                prepare.history.undo()
+                assertNotNull(prepare.layerActionProblem)
+                prepare.history.redo()
+                assertNull(prepare.layerActionProblem)
                 prepare.showPlate(0)
                 prepare.removeLayerAction(firstPlate, edited.id)
                 assertFalse(slice().result.gcode.readText().contains("NIA_LAYER_ACTION"))
