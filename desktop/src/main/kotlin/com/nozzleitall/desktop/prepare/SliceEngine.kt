@@ -188,7 +188,20 @@ class SliceEngine(private val binary: File, private val workDir: File) {
          * files unmodified, then guided preset, infill, supports, the multi-material recipe when more than one slot is in use,
          * and explicit overrides last; each object as its own mesh placed by footprint centre relative to the bed centre.
          */
-        fun nativeRequest(req: SliceRequest, job: File, gcode: File): String {
+        private fun layerCommands(req: SliceRequest, actions: List<LayerAction>): Map<String, String> {
+            if (actions.isEmpty()) return emptyMap()
+            val machine = JSONObject(File(req.profileDir, "machine.json").readText())
+            return actions.associate { action ->
+                val commands = LayerAction.command(action.kind, machine, action.text)
+                    ?: throw IllegalArgumentException("${action.kind.label} at layer ${action.layer} is unavailable for this printer profile.")
+                action.id to commands
+            }
+        }
+
+        fun nativeRequest(req: SliceRequest, job: File, gcode: File): String =
+            nativeRequest(req, job, gcode, layerCommands(req, LayerAction.fromSlice(req.project)))
+
+        private fun nativeRequest(req: SliceRequest, job: File, gcode: File, commands: Map<String, String>): String {
             val lines = mutableListOf("out\t${gcode.absolutePath}")
             if (req.bambuBundle) lines += "format\tbambu-bundle"
             val entries = req.project.manifest?.plates?.flatMap { it.objects }?.associateBy { it.objectId } ?: emptyMap()
@@ -225,15 +238,9 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                 lines += "set\t$k\t$v"
             }
             val machineText = File(req.profileDir, "machine.json").readText()
-            val layerActions = LayerAction.fromSlice(req.project)
-            if (layerActions.isNotEmpty()) {
-                val machine = JSONObject(machineText)
-                for (action in layerActions) {
-                    val commands = LayerAction.command(action.kind, machine, action.text)
-                        ?: throw IllegalArgumentException("${action.kind.label} at layer ${action.layer} is unavailable for this printer profile.")
-                    val payload = commands.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                    lines += "layer_action\t${action.layer}\t${action.z}\t${action.id}\t$payload"
-                }
+            for (action in LayerAction.fromSlice(req.project)) {
+                val payload = commands.getValue(action.id).encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                lines += "layer_action\t${action.layer}\t${action.z}\t${action.id}\t$payload"
             }
             val (bedW, bedD) = bedOf(machineText)
             req.project.objects.forEachIndexed { i, o ->
@@ -348,7 +355,9 @@ class SliceEngine(private val binary: File, private val workDir: File) {
         val gcode = File(outputDir, "plate.gcode")
         val bundle = if (req.bambuBundle) File(outputDir, "plate.gcode.3mf") else null
         val request = File(job, "request.txt")
-        val requestText = try { nativeRequest(req, job, gcode) }
+        val actions = LayerAction.fromSlice(req.project)
+        val commands = layerCommands(req, actions)
+        val requestText = try { nativeRequest(req, job, gcode, commands) }
             catch (e: IllegalArgumentException) { return SliceOutcome.Failed(e.message ?: "The slice request is invalid.", "") }
         request.writeText(requestText)
         // These sources follow nativeRequest's precedence. Keep invalid entries in place so indices never shift.
@@ -395,7 +404,7 @@ class SliceEngine(private val binary: File, private val workDir: File) {
         val unchanged = runCatching { hashInputs(listOf(engine)) == engineSha256 &&
             hashInputs(listOf(request) + inputs, job) == inputSha256 }.getOrDefault(false)
         if (!unchanged) return SliceOutcome.Failed("A slicing input changed while the engine was running; review and slice again.", text.takeLast(8000))
-        LayerAction.verifyExport(gcode, LayerAction.fromSlice(req.project))?.let { problem ->
+        LayerAction.verifyExport(gcode, actions, commands)?.let { problem ->
             gcode.delete(); bundle?.delete()
             return SliceOutcome.Failed(problem, text.takeLast(8000))
         }

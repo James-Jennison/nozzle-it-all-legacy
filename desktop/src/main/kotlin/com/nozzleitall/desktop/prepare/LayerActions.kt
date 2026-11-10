@@ -70,14 +70,16 @@ internal data class LayerAction(val id: String, val layer: Int, val z: Double, v
         }
 
         /** The slicer may otherwise put an event on the nearest layer after a geometry or profile edit. */
-        fun verifyExport(file: File, actions: List<LayerAction>): String? {
+        fun verifyExport(file: File, actions: List<LayerAction>, commands: Map<String, String>): String? {
             if (actions.isEmpty()) return null
             val expected = actions.associateBy { it.id }
             val seen = mutableSetOf<String>()
             var layer = 0
             var z: Double? = null
             file.useLines { lines ->
-                for (line in lines) {
+                val input = lines.iterator()
+                while (input.hasNext()) {
+                    val line = input.next()
                     if (line.startsWith(";LAYER_CHANGE") || line.startsWith("; CHANGE_LAYER") || line.startsWith(";LAYER:")) {
                         layer++
                         z = null
@@ -87,6 +89,10 @@ internal data class LayerAction(val id: String, val layer: Int, val z: Double, v
                         val action = expected[id] ?: return "The slice contains an unexpected layer action."
                         if (!seen.add(id) || action.layer != layer || z?.let { abs(it - action.z) <= 0.0001 } != true)
                             return "Layer action at layer ${action.layer} moved. Review its position and slice again."
+                        for (command in commands.getValue(id).lineSequence()) {
+                            if (!input.hasNext() || input.next() != command)
+                                return "The slice instructions for layer ${action.layer} differ from the requested action."
+                        }
                     }
                 }
             }

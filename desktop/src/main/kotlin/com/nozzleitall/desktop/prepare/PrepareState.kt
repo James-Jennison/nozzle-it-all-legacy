@@ -1131,8 +1131,8 @@ class PrepareState(private val app: AppState) {
     /** Each nozzle's flow type ("standard" / "high_flow"); missing entries are standard. */
     val nozzleFlows = mutableStateListOf<String>()
 
-    private var machineCache: Pair<String, JSONObject>? = null
-    fun machineJson(): JSONObject { val key = "$profileId@${nozzle.orEmpty()}@${activeCustomSetup?.hashCode() ?: 0}"
+    private var machineCache: Pair<Triple<String, String?, PresetSnapshot?>, JSONObject>? = null
+    fun machineJson(): JSONObject { val key = Triple("$profileId@${activeCustomSetup?.hashCode() ?: 0}", nozzle, presetSnapshot)
         return machineCache?.takeIf { it.first == key }?.second
             ?: runCatching { JSONObject(File(profileDir(), "machine.json").readText()) }.getOrDefault(JSONObject()).also { machineCache = key to it } }
     fun beds(): PrinterSetup.Beds = PrinterSetup.beds(machineJson())

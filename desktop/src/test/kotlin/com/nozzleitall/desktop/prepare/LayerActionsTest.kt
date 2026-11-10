@@ -28,13 +28,15 @@ class LayerActionsTest {
             val exact = ";LAYER_CHANGE\n;Z:0.25\n;LAYER_CHANGE\n;Z:0.45\n"
             val marker = ";NIA_LAYER_ACTION ${action.id}\nM600\n"
             file.writeText(exact + marker)
-            assertNull(LayerAction.verifyExport(file, listOf(action)))
+            assertNull(LayerAction.verifyExport(file, listOf(action), mapOf(action.id to "M600")))
             file.writeText(exact.replace("0.45", "0.50") + marker)
-            assertTrue(LayerAction.verifyExport(file, listOf(action)).orEmpty().contains("moved"))
+            assertTrue(LayerAction.verifyExport(file, listOf(action), mapOf(action.id to "M600")).orEmpty().contains("moved"))
             file.writeText(exact)
-            assertTrue(LayerAction.verifyExport(file, listOf(action)).orEmpty().contains("did not include"))
+            assertTrue(LayerAction.verifyExport(file, listOf(action), mapOf(action.id to "M600")).orEmpty().contains("did not include"))
+            file.writeText(exact + marker.replace("M600", "M601"))
+            assertTrue(LayerAction.verifyExport(file, listOf(action), mapOf(action.id to "M600")).orEmpty().contains("differ"))
             file.writeText(exact + marker + marker)
-            assertNotNull(LayerAction.verifyExport(file, listOf(action)))
+            assertNotNull(LayerAction.verifyExport(file, listOf(action), mapOf(action.id to "M600")))
         } finally {
             file.delete()
         }
@@ -82,7 +84,7 @@ class LayerActionsTest {
                 assertTrue(prepare.setLayerAction(firstPlate, first.index + 1, first.z.toDouble(), LayerAction.Kind.PAUSE, ""))
                 val original = prepare.layerActions.getValue(firstPlate).single()
                 val paused = slice()
-                assertNull(LayerAction.verifyExport(paused.result.gcode, listOf(original)))
+                assertNull(LayerAction.verifyExport(paused.result.gcode, listOf(original), mapOf(original.id to "M600")))
                 assertTrue(paused.result.gcode.readText().contains(";NIA_LAYER_ACTION ${original.id}\nM600"))
                 val point = cursor(paused)
                 assertTrue(prepare.setLayerAction(firstPlate, point.index + 1, point.z.toDouble(), LayerAction.Kind.CUSTOM, "M117 Layer fixture"))

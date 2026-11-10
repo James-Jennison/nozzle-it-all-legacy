@@ -20,10 +20,6 @@ import java.util.Locale
 internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, dismiss: () -> Unit) {
     val prepare = state.prepare
     val c = Nz.colors
-    val plateId = prepare.plateIds[prepare.currentPlate]
-    val existing = cursor?.let { position ->
-        prepare.layerActions[plateId].orEmpty().firstOrNull { it.layer == position.index + 1 }
-    }
     if (cursor == null) {
         if (prepare.layerActionProblem != null) {
             ConfirmDialog(
@@ -62,6 +58,15 @@ internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, di
         )
         return
     }
+    val plateId = remember(cursor) { prepare.plateIds.getOrNull(prepare.currentPlate) } ?: return
+    val preview = remember(cursor) { prepare.slice }
+    val target = remember(cursor) { prepare.layerActionTarget() }
+    val existing = remember(cursor, plateId) {
+        prepare.layerActions[plateId].orEmpty().firstOrNull { it.layer == cursor.index + 1 }
+    }
+    fun matchesPreview() = prepare.slice === preview && prepare.plateIds.getOrNull(prepare.currentPlate) == plateId &&
+        prepare.layerActionTarget() == target
+    val stillCurrent = matchesPreview()
     var kind by remember(plateId, cursor.index, existing) { mutableStateOf(existing?.kind ?: LayerAction.Kind.PAUSE) }
     var commands by remember(plateId, cursor.index, existing) { mutableStateOf(existing?.text.orEmpty()) }
     val machine = prepare.machineJson()
@@ -72,21 +77,24 @@ internal fun LayerActionsDialog(state: AppState, cursor: PreviewLayerCursor?, di
         "Add one action before printing this layer at Z ${height(cursor.z.toDouble())} mm. Nozzle will slice again and check the resulting instructions.",
         if (existing == null) "Add and slice" else "Update and slice", destructive = false,
         onDismiss = dismiss, onConfirm = {
-            if (prepare.setLayerAction(plateId, cursor.index + 1, cursor.z.toDouble(), kind, commands)) prepare.slice(state.scope)
+            if (matchesPreview() && prepare.setLayerAction(plateId, cursor.index + 1, cursor.z.toDouble(), kind, commands)) prepare.slice(state.scope)
             else prepare.notice = "The selected layer or printer setup changed. Review the action again."
             dismiss()
         },
-        confirmEnabled = code != null,
-        alternativeAction = if (existing == null) null else {
+        confirmEnabled = stillCurrent && code != null,
+        alternativeAction = if (existing == null || !stillCurrent) null else {
             {
                 NzButton("Remove action", {
-                    prepare.removeLayerAction(plateId, existing.id)
-                    prepare.slice(state.scope)
+                    if (matchesPreview()) {
+                        prepare.removeLayerAction(plateId, existing.id)
+                        prepare.slice(state.scope)
+                    }
                     dismiss()
                 }, kind = ButtonKind.SECONDARY)
             }
         },
         extraContent = {
+            if (!stillCurrent) Banner("The preview or printer setup changed. Reopen the layer action from the current preview.", BannerKind.WARNING)
             Txt("Action", Nz.type.label)
             NzSelect("Layer action", types, kind.name) { kind = LayerAction.Kind.valueOf(it) }
             if (kind == LayerAction.Kind.CUSTOM) {
