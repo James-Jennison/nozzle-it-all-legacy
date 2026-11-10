@@ -31,6 +31,7 @@ class SimulatedSendMonitorUiTest {
     private class FakeSession(
         override val capabilities: Capabilities = Capabilities(uploadJob = true, startPrint = true),
         private val bundle: File? = null,
+        private val startOutcome: ActionOutcome = ActionOutcome.Unknown("simulated lost acknowledgement"),
     ) : PrinterSession {
         override val identity = PrinterIdentity("fake", "Simulated printer", "Fixture", PrinterFamily.KLIPPER,
             "http://127.0.0.1:1", profileId = "fixture")
@@ -70,7 +71,7 @@ class SimulatedSendMonitorUiTest {
                 else -> error("Unexpected simulated command")
             }
             starts++
-            return ActionOutcome.Unknown("simulated lost acknowledgement")
+            return startOutcome
         }
         override fun close() {}
     }
@@ -357,11 +358,16 @@ class SimulatedSendMonitorUiTest {
         }
     }
 
-    @Test fun previewStartsInContextAndRecoversLostAcknowledgmentThroughMonitor() {
+    @Test fun previewStartsInContextAndRecoversLostAcknowledgmentThroughMonitor() = previewStart(accepted = false)
+
+    @Test fun previewAcceptedStartOpensMonitorWithoutLeavingAQueuedJob() = previewStart(accepted = true)
+
+    private fun previewStart(accepted: Boolean) {
         val root = Files.createTempDirectory("nia-direct-print").toFile()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val app = AppState(AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure(), scope)
-        val session = FakeSession(Capabilities(uploadAndStart = true, acceptedOutputs = setOf("gcode")))
+        val session = FakeSession(Capabilities(uploadAndStart = true, acceptedOutputs = setOf("gcode")),
+            startOutcome = if (accepted) ActionOutcome.Accepted else ActionOutcome.Unknown("simulated lost acknowledgement"))
         val entry = PrinterEntry(PrinterConfig(session.identity, "fake"))
         try {
             app.finishFirstRun(SlicingSetup("snapmaker_u1", "Snapmaker U1", "0.4", toolheads = 4))
@@ -382,10 +388,10 @@ class SimulatedSendMonitorUiTest {
             app.prepare.showPreview = true
             compose.setContent { NozzleTheme("dark") { App(app) } }
             compose.onNodeWithTag("open-send").performSemanticsAction(SemanticsActions.OnClick)
-            compose.waitUntil(15_000) {
-                compose.onAllNodes(hasTestTag("print-plate-review") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
-            }
             fun review() {
+                compose.waitUntil(15_000) {
+                    compose.onAllNodes(hasTestTag("print-plate-review") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+                }
                 compose.onNodeWithTag("print-plate-review").performSemanticsAction(SemanticsActions.OnClick)
                 awaitText("Continue to Start")
                 compose.onNodeWithText("I checked that this file, printer profile, and loaded materials are compatible.")
@@ -400,13 +406,27 @@ class SimulatedSendMonitorUiTest {
             compose.waitUntil(15_000) { app.fleet.queue.value.isEmpty() }
             assertEquals(0, session.starts)
             review()
+            compose.runOnIdle {
+                val slice = app.prepare.slice as SliceState.Done
+                app.prepare.slice = slice.copy(result = slice.result.copy(warnings = listOf("Fixture re-sliced")))
+            }
+            compose.waitUntil(15_000) { app.fleet.queue.value.isEmpty() }
+            assertEquals(0, session.starts)
+            review()
             compose.onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
             compose.waitUntil(15_000) { app.destination == Destination.MONITOR }
             assertEquals(session.identity.id, app.selectedPrinter)
             assertEquals(1, session.starts)
-            assertTrue(app.fleet.queue.value.single().startUncertain)
-            compose.onNodeWithTag("monitor-queue-history").performSemanticsAction(SemanticsActions.OnClick)
-            awaitText("Confirm it started")
+            if (accepted) {
+                assertEquals(MonitorHandoffState.STARTED, app.monitorHandoff?.state)
+                assertTrue(app.fleet.queue.value.isEmpty())
+            } else {
+                val held = app.fleet.queue.value.single()
+                assertTrue(held.startUncertain)
+                assertEquals(held, PrintQueue(File(root, "data/queue")).items().single())
+                compose.onNodeWithTag("monitor-queue-history").performSemanticsAction(SemanticsActions.OnClick)
+                awaitText("Confirm it started")
+            }
             assertEquals(1, session.starts)
         } finally {
             app.fleet.shutdown()

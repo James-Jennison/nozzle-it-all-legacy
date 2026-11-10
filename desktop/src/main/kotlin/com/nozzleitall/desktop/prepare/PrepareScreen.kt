@@ -3400,6 +3400,7 @@ private fun SendPanel(state: AppState) {
     val caps = entry.capabilities.value ?: run { Txt("Connecting to ${entry.config.identity.displayName}…", Nz.type.bodySmall, c.textMuted); return }
     val done = p.slice as? SliceState.Done ?: return
     var preparedDigest by remember(done) { mutableStateOf<String?>(null) }
+    var bundleProblem by remember(done) { mutableStateOf<String?>(null) }
     var digestChecked by remember(done) { mutableStateOf(false) }
     var stagedId by remember(done, entry) { mutableStateOf<String?>(null) }
     var problem by remember(done, entry) { mutableStateOf<String?>(null) }
@@ -3409,11 +3410,15 @@ private fun SendPanel(state: AppState) {
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (_: Exception) { null }
         }
+        bundleProblem = withContext(Dispatchers.IO) {
+            done.result.bundle?.let { com.nozzleitall.desktop.jobs.bambuLanProblem(it) }
+        }
         digestChecked = true
     }
     val printerId = entry.config.identity.id
     val profileId = entry.config.identity.profileId
     val status = entry.status.value
+    val reviewedTools = status.toolheads.map { it.preflightObservation() }
     val session = entry.session
     val guard = entry.guard
     fun stillCurrent() = p.slice === done && p.printer() === entry && !entry.retired &&
@@ -3449,6 +3454,7 @@ private fun SendPanel(state: AppState) {
     val ready = status.state in PrinterAction.StartJob("x").allowedStates
     Txt("Printer: ${entry.config.identity.displayName}", Nz.type.bodySmall, c.textMuted)
     problem?.let { Banner(it, BannerKind.WARNING) }
+    bundleProblem?.let { Banner(it, BannerKind.DANGER) }
     preflight.forEach { Banner(it.message, if (it.blocks) BannerKind.DANGER else BannerKind.WARNING) }
     if (!compatible) Banner("This printer cannot start the prepared file. Export it or choose a compatible printer.", BannerKind.WARNING)
     if (profileMismatch) Banner("Choose a printer matching ${done.targetProfileId} or slice again.", BannerKind.DANGER)
@@ -3462,6 +3468,7 @@ private fun SendPanel(state: AppState) {
     NzButton("Review and Start", {
         val digest = preparedDigest ?: return@NzButton
         if (!stillCurrent() || entry.session !== session || entry.guard !== guard || entry.capabilities.value != caps ||
+            entry.status.value.toolheads.map { it.preflightObservation() } != reviewedTools ||
             entry.config.identity.profileId != profileId || entry.guard?.needsReconcile == true ||
             entry.status.value.state !in PrinterAction.StartJob("x").allowedStates ||
             preparedMaterialChecks(done.materialPlan, entry.status.value, caps).any { it.blocks } ||
@@ -3479,7 +3486,7 @@ private fun SendPanel(state: AppState) {
         }.onSuccess { stagedId = it.id }
             .onFailure { problem = "Couldn't prepare Start: ${it.message}" }
     }, kind = ButtonKind.PRIMARY, icon = NzIcon.PLAY, testTag = "print-plate-review",
-        enabled = preparedDigest != null && session != null && guard != null && !guard.needsReconcile &&
+        enabled = digestChecked && preparedDigest != null && bundleProblem == null && session != null && guard != null && !guard.needsReconcile &&
             compatible && !profileMismatch && !existing && ready && preflight.none { it.blocks } && p.outOfBounds().isEmpty())
 }
 
@@ -3530,7 +3537,7 @@ private fun UploadOnlyPanel(state: AppState) {
     problem?.let { Banner(it, BannerKind.WARNING) }
     if (commandUnknown) NzButton("Check printer", { state.scope.launch(kotlinx.coroutines.Dispatchers.Main) { flow.reconcile() } }, kind = ButtonKind.SECONDARY)
     if (!readinessReviewed) {
-        Txt("Review before Send", Nz.type.title)
+        Txt("Review upload only", Nz.type.title)
         Txt("Connection: ${entry.config.identity.displayName}", Nz.type.bodySmall, c.textMuted)
         preflight.forEach { Banner(it.message, if (it.blocks) BannerKind.DANGER else BannerKind.WARNING) }
         bundleProblem?.let { Banner(it, BannerKind.DANGER) }
@@ -3546,7 +3553,7 @@ private fun UploadOnlyPanel(state: AppState) {
         outside.forEach { Banner("$it is outside the selected printer's build area. Move it onto the plate before sending.", BannerKind.DANGER) }
         done.result.warnings.forEach { Banner(it, BannerKind.WARNING) }
         val requiresManualCheck = unknownProfile || preflight.any { !it.blocks }
-        NzButton(if (requiresManualCheck) "I checked the printer · Continue" else "Continue to Send",
+        NzButton(if (requiresManualCheck) "I checked the printer · Continue" else "Continue to upload",
             { readinessReviewed = true }, kind = ButtonKind.PRIMARY,
             enabled = outside.isEmpty() && !profileMismatch && !commandUnknown && preflight.none { it.blocks } &&
                 sameConnection() && (done.result.bundle == null || digestChecked && bundleProblem == null) && done.result.output in caps.acceptedOutputs && (caps.uploadJob || caps.uploadAndStart) &&

@@ -40,6 +40,8 @@ class QueueRowUiState {
     val resolutionHold = mutableStateOf<QueueItem?>(null)
     var dispatchedHold: QueueItem? = null
     val reviewStart = mutableStateOf<String?>(null)
+    // A confirmation may outlive the drawer. Keep the predicate from the review that created it
+    // so opening the standalone queue cannot turn a stale workspace confirmation into a valid one.
     internal var reviewContext: (() -> Boolean)? = null
     internal var reviewedConnection: ReviewedQueueConnection? = null
     val legacyRemotePath = mutableStateOf("")
@@ -101,7 +103,21 @@ internal fun DirectPrintStart(
     item: QueueItem,
     stillCurrent: () -> Boolean,
     onHandoff: (String, ActionOutcome) -> Unit,
-) = QueueRow(state, item, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff)
+) {
+    DisposableEffect(item.id) {
+        onDispose {
+            val ui = state.queueRowUi[item.id]
+            val staged = state.fleet.queue.value.firstOrNull { it.id == item.id }
+            if (staged != null && !staged.startUncertain && !staged.pendingLink &&
+                ui?.uploading?.value == null && ui?.flow?.busy != true) {
+                ui?.flow?.pending = null
+                runCatching { state.fleet.dequeue(staged.id) }
+                    .onFailure { state.prepare.notice = "The local print record needs attention in Queue & history: ${it.message}" }
+            }
+        }
+    }
+    QueueRow(state, item, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff)
+}
 
 @Composable
 private fun QueueRow(
@@ -187,7 +203,7 @@ private fun QueueRow(
         reviewStart = null
         expectedStart = null
         clearReview()
-        if (onHandoff != null && stillCurrent())
+        if (onHandoff != null)
             runCatching { fleet.dequeue(item.id) }
                 .onFailure { problem = "The local print record could not be removed: ${it.message}" }
     }
@@ -311,8 +327,9 @@ private fun QueueRow(
                         fleet.queue.value.none { it == item } || !candidate.isFree() || !candidate.canTakeJobs(item) ||
                         candidate.guard?.needsReconcile == true ||
                         item.pendingLink || item.startUncertain || item.sha256 == null || profileMismatch || materialConflict) {
-                        problem = "The queued job or printer changed. Review it again."
-                        clearReview()
+                        dismissReview()
+                        problem = if (onHandoff == null) "The queued job or printer changed. Review it again."
+                            else "The prepared print or printer changed. Review it again."
                         return@ConfirmDialog
                     }
                     problem = null
@@ -365,8 +382,7 @@ private fun QueueRow(
                                         item.targetProfileId != candidate.config.identity.profileId) ||
                                     runCatching { fleet.queuedFile(item) }.isFailure) {
                                     problem = "The queued job or printer changed during transfer. Review it again before Start."
-                                    expectedStart = null
-                                    clearReview()
+                                    dismissReview()
                                     return@launch
                                 }
                                 val action = PrinterAction.StartJob(r.remotePath, item.toolheadMap)
