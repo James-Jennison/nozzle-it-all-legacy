@@ -182,7 +182,13 @@ class AutoPaintTest {
                 p.aiPrepare("")
             }
             idle(); assertNotNull(p.aiPrepared)
-            withContext(Dispatchers.Main) { p.aiSend(requireNotNull(p.autoPaintSettings.provider)) }; idle()
+            withContext(Dispatchers.Main) {
+                p.aiSend(Provider.Command("unexpected-provider"))
+                assertNull(p.toolBusy)
+                assertTrue(p.notice.orEmpty().contains("recipient changed"))
+                p.aiSend(requireNotNull(p.autoPaintSettings.provider))
+            }
+            idle()
             assertNotNull(p.aiPreviewMesh); assertSame(mesh,p.items.single().mesh); assertFalse(p.aiCleanBoundaries)
             assertFalse(p.history.canUndo)
             // Deliberate fault injection in paint decoding; restore it immediately after the failed background rebuild.

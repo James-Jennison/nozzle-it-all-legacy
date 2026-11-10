@@ -1686,26 +1686,6 @@ class PrepareState(private val app: AppState) {
         aiSourceSlots = emptyList(); aiCleanedFaces = 0; aiShowOriginal = false; aiCleanBoundaries = false
     }
 
-    fun autoPaintSelected(hint: String) {
-        val item = items.firstOrNull { it.id == selected } ?: return
-        val provider = autoPaintSettings.provider ?: run { notice = "Choose how to ask first: a command, or an OpenAI-compatible server."; return }
-        if (provider != reviewedProvider) {
-            notice = "The AI recipient changed. Go back and review the request again."
-            return
-        }
-        val slots = allSlots()
-        if (slots.size < 2) { notice = "AI auto-paint needs at least two filaments to choose between."; return }
-        val filaments = slots.map { (id, label) -> com.nozzleitall.printer.ext.AutoPaintFormat.Filament(id, label, slotHex(id) ?: "#808080") }
-        runTool("AI auto-paint") {
-            val mesh = withContext(Dispatchers.IO) { AutoPaint.paint(item.mesh, item.name, filaments, hint, provider, plateWork()) }
-            val painted = withMesh(item, mesh)
-            val top = filaments.maxOf { it.index }
-            painted.paintSlots.clear(); painted.paintSlots.addAll(1..top)   // paint state N prints in slot N
-            replace(item, painted); selected = painted.id
-            changed()
-        }
-    }
-
     // --- Paint tools (PaintOps): Orca's support, seam, colour and fuzzy-skin painting, run on the engine's TriangleSelector.
     /** The kind being painted on the selected object, or null when painting is off. */
     var paintKind by mutableStateOf<PaintOps.Kind?>(null)
