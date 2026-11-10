@@ -263,12 +263,15 @@ class SimulatedSendMonitorUiTest {
             compose.onNodeWithText("I checked this printer's current and recent jobs and confirmed this print started.").performSemanticsAction(SemanticsActions.OnClick)
             confirm()
             compose.waitUntil(15_000) { app.fleet.queue.value.isEmpty() }
+            val jobs = LocalJobStore(File(paths.data, "jobs.sqlite"))
             compose.runOnIdle {
                 app.fleet.recordEnd(entry, session.reading)
                 app.fleet.recordEnd(entry, session.reading.copy(state = PrinterState.FINISHED, observedAtMillis = 1003))
+                assertNotNull(jobs.activeQueuedAttempt(session.identity.id))
+                app.fleet.recordEnd(entry, session.reading.copy(state = PrinterState.FINISHED, observedAtMillis = 1004,
+                    completedFileName = held.startRemotePath))
             }
             assertEquals(1, session.starts)
-            val jobs = LocalJobStore(File(paths.data, "jobs.sqlite"))
             assertEquals(1, jobs.attempts(requireNotNull(row.jobId)).size)
             assertNull(jobs.activeQueuedAttempt(session.identity.id))
         } finally {
