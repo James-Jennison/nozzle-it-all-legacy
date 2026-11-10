@@ -326,7 +326,7 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
             var pressedAt = Offset.Zero; var moved = false; var clickId: Int? = null; var primaryPress = false
             var modifierClick = false; var pressCtrl = false; var pressShift = false
             var grabStarted = false
-            var secondaryPress = false
+            var contextPress: Offset? = null
             try { while (true) {
                 val ev = awaitPointerEvent()
                 val ch = ev.changes.firstOrNull() ?: continue
@@ -353,20 +353,22 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
                     if(grabStarted)endRef.value()
                     grab=null;grabObj=null;grabStarted=false;primaryPress=false
                 }
-                if (ch.pressed && prev == null && ev.buttons.isSecondaryPressed && preview == null &&
-                    paintRef.value == null && contextMenuRef.value != null) {
-                    secondaryPress = true
-                    pressedAt = ch.position
-                    moved = false
+                if (ch.pressed && prev == null && ev.buttons.isSecondaryPressed &&
+                    !ev.buttons.isPrimaryPressed && !ev.buttons.isTertiaryPressed &&
+                    preview == null && paintRef.value == null && contextMenuRef.value != null) {
+                    contextPress = ch.position
                 }
-                if (ch.pressed && prev != null && (ch.position - pressedAt).getDistance() > 4f) moved = true
-                if (!ch.pressed && secondaryPress) {
-                    secondaryPress = false
-                    if (!moved && (ch.position - pressedAt).getDistance() <= 4f) {
-                        val target = frame?.let { pickGrab(proj, objectsRef.value, pressedAt, TransformTool.MOVE)?.obj?.id }
-                        contextMenuRef.value?.invoke(pressedAt, target)
+                contextPress?.let { origin ->
+                    if (ev.buttons.isPrimaryPressed || ev.buttons.isTertiaryPressed ||
+                        (ch.position - origin).getDistance() > 4f) {
+                        contextPress = null
+                    } else if (!ch.pressed) {
+                        contextPress = null
+                        val target = frame?.let { pickGrab(proj, objectsRef.value, origin, TransformTool.MOVE)?.obj?.id }
+                        contextMenuRef.value?.invoke(origin, target)
                     }
                 }
+                if (ch.pressed && prev != null && (ch.position - pressedAt).getDistance() > 4f) moved = true
                 if (grab != null) {
                     val o = grabObj!!
                     if (!ch.pressed) {
