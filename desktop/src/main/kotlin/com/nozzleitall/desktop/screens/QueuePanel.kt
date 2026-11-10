@@ -107,16 +107,21 @@ internal fun DirectPrintStart(
     DisposableEffect(item.id) {
         onDispose {
             val ui = state.queueRowUi[item.id]
-            val staged = state.fleet.queue.value.firstOrNull { it.id == item.id }
-            if (staged != null && !staged.startUncertain && !staged.pendingLink &&
+            if (state.fleet.queue.value.any { it == item } && !item.startUncertain && !item.pendingLink &&
                 ui?.uploading?.value == null && ui?.flow?.busy != true) {
                 ui?.flow?.pending = null
-                runCatching { state.fleet.dequeue(staged.id) }
+                runCatching { state.fleet.dequeue(item.id, expectedItem = item) }
                     .onFailure { state.prepare.notice = "The local print record needs attention in Queue & history: ${it.message}" }
             }
         }
     }
-    QueueRow(state, item, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff)
+    val current = state.fleet.queue.value.firstOrNull { it.id == item.id } ?: return
+    if (current != item && !current.startUncertain) {
+        Banner("This prepared print changed. Review it in Queue & history.", BannerKind.WARNING)
+        NzButton("Open queue", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.SECONDARY)
+        return
+    }
+    QueueRow(state, current, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff)
 }
 
 @Composable
@@ -203,8 +208,8 @@ private fun QueueRow(
         reviewStart = null
         expectedStart = null
         clearReview()
-        if (onHandoff != null)
-            runCatching { fleet.dequeue(item.id) }
+        if (onHandoff != null && !item.startUncertain && !item.pendingLink && uploading == null && flow?.busy != true)
+            runCatching { fleet.dequeue(item.id, expectedItem = item) }
                 .onFailure { problem = "The local print record could not be removed: ${it.message}" }
     }
     fun requestReview(entry: PrinterEntry) {
@@ -256,8 +261,11 @@ private fun QueueRow(
             }
             if (item.pendingLink) Txt("Local queue records are being recovered; Start is unavailable.", Nz.type.bodySmall, c.textMuted)
             if (item.startUncertain) {
-                NzButton("Confirm it started", { resolutionHold = item; resolveStart = "choose" }, kind = ButtonKind.QUIET)
-                NzButton("Confirm it did not start", { resolutionHold = item; resolveStart = "not-started" }, kind = ButtonKind.QUIET)
+                val canResolve = flow?.busy != true && previousFlow?.busy != true
+                NzButton("Confirm it started", { resolutionHold = item; resolveStart = "choose" },
+                    kind = ButtonKind.QUIET, enabled = canResolve)
+                NzButton("Confirm it did not start", { resolutionHold = item; resolveStart = "not-started" },
+                    kind = ButtonKind.QUIET, enabled = canResolve)
             }
             if (candidate?.guard?.needsReconcile == true) {
                 Txt("The last printer command has an unknown outcome. Check the printer before starting another job.", Nz.type.bodySmall, c.danger)

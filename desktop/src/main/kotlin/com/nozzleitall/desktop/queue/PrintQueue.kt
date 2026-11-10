@@ -227,8 +227,9 @@ class PrintQueue(private val dir: File, private val clock: () -> Long = System::
         } finally { tmp.delete() }
     }
 
-    fun remove(id: String, confirmedStarted: Boolean = false) = withQueueLock {
+    fun remove(id: String, confirmedStarted: Boolean = false, expectedItem: QueueItem? = null) = withQueueLock {
         val item = list.firstOrNull { it.id == id } ?: return@withQueueLock
+        check(expectedItem == null || item == expectedItem) { "The queued job changed; review it before removing it." }
         check(!item.pendingLink) { "Recover this queued job before removing it." }
         check(!item.startUncertain || confirmedStarted) { "Inspect the printer and resolve the uncertain Start before removing this queued job." }
         save(list - item)

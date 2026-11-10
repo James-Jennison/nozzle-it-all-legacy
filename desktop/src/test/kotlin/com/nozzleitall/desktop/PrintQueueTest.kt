@@ -326,6 +326,8 @@ class PrintQueueTest {
         val reviewed = first.link(item.id, java.util.UUID.randomUUID().toString(), java.util.UUID.randomUUID().toString())
         val second = PrintQueue(folder)
         second.retarget(item.id, "p")
+        assertThrows(IllegalStateException::class.java) { first.remove(item.id, expectedItem = reviewed) }
+        assertEquals("p", first.items().single().printerId)
         assertThrows(IllegalStateException::class.java) { first.verifiedFile(item.id, expectedItem = reviewed) }
         assertThrows(IllegalStateException::class.java) {
             first.markStartUncertain(item.id, "p", "reviewed.gcode", expectedItem = reviewed)

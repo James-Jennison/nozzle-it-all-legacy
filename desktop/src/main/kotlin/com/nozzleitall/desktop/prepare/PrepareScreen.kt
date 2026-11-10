@@ -3402,7 +3402,7 @@ private fun SendPanel(state: AppState) {
     var preparedDigest by remember(done) { mutableStateOf<String?>(null) }
     var bundleProblem by remember(done) { mutableStateOf<String?>(null) }
     var digestChecked by remember(done) { mutableStateOf(false) }
-    var stagedId by remember(done, entry) { mutableStateOf<String?>(null) }
+    var stagedItem by remember(done, entry) { mutableStateOf<com.nozzleitall.desktop.queue.QueueItem?>(null) }
     var problem by remember(done, entry) { mutableStateOf<String?>(null) }
     LaunchedEffect(done) {
         preparedDigest = withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -3430,7 +3430,7 @@ private fun SendPanel(state: AppState) {
         if (done.savedProjectId == null) done.plateContext?.draftQueueId
             ?: p.plateIds.getOrNull(p.currentPlate)?.let(p::draftQueuePlateId) else null)
     val items = state.fleet.queue.value
-    val staged = items.firstOrNull { it.id == stagedId }
+    val staged = stagedItem?.takeIf { expected -> items.any { it.id == expected.id } }
     if (staged != null) {
         DirectPrintStart(state, staged, ::stillCurrent) { remotePath, outcome ->
             state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
@@ -3483,7 +3483,7 @@ private fun SendPanel(state: AppState) {
                 done.savedProjectId, done.savedProjectRevision, done.savedPlateId, done.targetProfileId,
                 done.result.engineSha256, done.result.inputSha256, expectedSha256 = digest,
                 draftPlateId = sendIdentity.draftPlateId, materialPlan = done.materialPlan)
-        }.onSuccess { stagedId = it.id }
+        }.onSuccess { stagedItem = it }
             .onFailure { problem = "Couldn't prepare Start: ${it.message}" }
     }, kind = ButtonKind.PRIMARY, icon = NzIcon.PLAY, testTag = "print-plate-review",
         enabled = digestChecked && preparedDigest != null && bundleProblem == null && session != null && guard != null && !guard.needsReconcile &&
@@ -3547,7 +3547,7 @@ private fun UploadOnlyPanel(state: AppState) {
             com.nozzleitall.desktop.screens.AssociatePrinterProfile(state, entry, done.targetProfileId)
         }
         if (commandUnknown) Banner("The last printer command has an unknown outcome. Check the printer before sending another file.", BannerKind.DANGER)
-        if (done.result.output !in caps.acceptedOutputs || (!caps.uploadJob && !caps.uploadAndStart))
+        if (done.result.output !in caps.acceptedOutputs || !caps.uploadJob)
             Banner("This connection cannot receive the prepared file format. Export the file and use a supported printer path.", BannerKind.DANGER)
         if (status.state !in PrinterAction.StartJob("x").allowedStates) Banner("The printer is ${status.state.label.lowercase()}; wait until it is ready before sending another job.", BannerKind.WARNING)
         outside.forEach { Banner("$it is outside the selected printer's build area. Move it onto the plate before sending.", BannerKind.DANGER) }
@@ -3556,7 +3556,7 @@ private fun UploadOnlyPanel(state: AppState) {
         NzButton(if (requiresManualCheck) "I checked the printer · Continue" else "Continue to upload",
             { readinessReviewed = true }, kind = ButtonKind.PRIMARY,
             enabled = outside.isEmpty() && !profileMismatch && !commandUnknown && preflight.none { it.blocks } &&
-                sameConnection() && (done.result.bundle == null || digestChecked && bundleProblem == null) && done.result.output in caps.acceptedOutputs && (caps.uploadJob || caps.uploadAndStart) &&
+                sameConnection() && (done.result.bundle == null || digestChecked && bundleProblem == null) && done.result.output in caps.acceptedOutputs && caps.uploadJob &&
                 status.state in PrinterAction.StartJob("x").allowedStates, testTag = "send-readiness")
         return
     }

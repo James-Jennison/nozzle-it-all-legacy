@@ -470,9 +470,9 @@ class Fleet(private val paths: AppPaths, private val scope: CoroutineScope, priv
             "A started queued job still needs queue cleanup: ${it.message}" }
         refreshQueue()
     }
-    fun dequeue(id: String) = synchronized(this) {
+    fun dequeue(id: String, expectedItem: com.nozzleitall.desktop.queue.QueueItem? = null) = synchronized(this) {
         check(id !in queuedTransfers) { "Wait for the queued file transfer to finish before removing it." }
-        queueStore.remove(id); refreshQueue()
+        queueStore.remove(id, expectedItem = expectedItem); refreshQueue()
     }
     fun moveInQueue(id: String, by: Int) = synchronized(this) {
         check(id !in queuedTransfers) { "Wait for the queued file transfer to finish before reordering it." }
