@@ -93,7 +93,10 @@ class ProjectLibraryImportTest {
             plateNames = listOf("Front", "Back"))
         val source = File(root, "multi.3mf").apply { writeBytes(ThreeMf.write(foreign)) }
         val sourceBytes = source.readBytes()
-        val imported = ThreeMf.read(library(root).import(source, "test"))
+        val library = library(root)
+        val review = assertThrows(IllegalStateException::class.java) { library.import(source, "test") }
+        assertTrue(review.message.orEmpty().contains("needs conversion review"))
+        val imported = ThreeMf.read(library.importReviewed(source, "test", ThreeMf.read(source)))
         assertEquals(listOf("Front", "Back"), imported.manifest!!.plates.map { it.name })
         assertEquals(2, imported.manifest!!.plates.mapNotNull { it.id }.toSet().size)
         assertEquals(listOf(listOf(1), listOf(2)), imported.manifest!!.plates.map { plate -> plate.objects.map { it.objectId } })
