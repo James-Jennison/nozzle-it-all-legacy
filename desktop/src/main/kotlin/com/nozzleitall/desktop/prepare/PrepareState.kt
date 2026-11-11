@@ -2281,6 +2281,9 @@ class PrepareState(private val app: AppState) {
     /** Creates Orca-engine text as a new object, or applies it to the selected object's horizontal top surface. */
     internal fun addCad(recipe: CadRecipe) = addCadMesh("CAD model") { ModelingOps.cadMesh(recipe, plateWork()) }
 
+    internal fun addStarterModel(model: StarterModel) =
+        addCadMesh(model.label) { ModelingOps.cadMesh(model.recipe, plateWork()) }
+
     internal fun importStep(source: File) = addCadMesh(source.nameWithoutExtension) { ModelingOps.stepMesh(source, plateWork()) }
 
     private fun addCadMesh(objectName: String, create: () -> Mesh) {

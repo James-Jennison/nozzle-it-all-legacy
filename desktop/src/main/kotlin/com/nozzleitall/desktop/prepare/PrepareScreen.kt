@@ -773,6 +773,9 @@ fun PrepareScreen(state: AppState) {
             val bedActions = {
                 buildList {
                     add(ContextMenuItem("Add model…", state::chooseWorkspaceModels))
+                    if (p.toolBusy == null) StarterModel.entries.forEach { model ->
+                        add(ContextMenuItem("Add ${model.label}") { p.addStarterModel(model) })
+                    }
                     if (p.plateItems().isNotEmpty()) add(ContextMenuItem("Arrange plate") {
                         state.requestWorkspaceTool(WorkspaceToolRequest.ARRANGE)
                     })

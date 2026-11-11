@@ -99,6 +99,22 @@ class ModelingOpsTest {
         } finally { work.deleteRecursively() }
     }
 
+    @Test fun starterModelsAreClosedAndUseTheirDeclaredDimensions() {
+        engineReady()
+        val work = Files.createTempDirectory("modeling-starters").toFile()
+        try {
+            for (model in com.nozzleitall.desktop.prepare.StarterModel.entries) {
+                val mesh = ModelingOps.cadMesh(model.recipe, work)
+                val bounds = mesh.bounds()
+                assertTrue(model.label, mesh.triangleCount >= 12)
+                assertEquals(model.label, model.recipe.widthMm.toFloat(), bounds[3] - bounds[0], 0.1f)
+                assertEquals(model.label, model.recipe.depthMm.toFloat(), bounds[5] - bounds[2], 0.001f)
+                val item = com.nozzleitall.desktop.prepare.PrepItem(1, model.label, mesh, 50f, 50f)
+                assertEquals(model.label, 0, item.openEdges)
+            }
+        } finally { work.deleteRecursively() }
+    }
+
     @Test fun measureRepairLayAndBooleanUseRealEngine() {
         engineReady()
         val work = Files.createTempDirectory("modeling-fixture").toFile()

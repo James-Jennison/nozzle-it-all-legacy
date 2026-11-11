@@ -49,3 +49,10 @@ internal data class CadRecipe(
         }
     }
 }
+
+/** Local starter geometry using the same checked CAD engine as editable recipes. */
+internal enum class StarterModel(val label: String, val recipe: CadRecipe) {
+    CUBE("20 mm cube", CadRecipe(depthMm = 20.0)),
+    CYLINDER("20 mm cylinder", CadRecipe(circular = true, depthMm = 20.0)),
+    WASHER("Washer", CadRecipe(circular = true, depthMm = 3.0, holeMm = 8.0)),
+}

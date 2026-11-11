@@ -161,7 +161,12 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             null,
             MenuAction("Previous plate", enabled = p.currentPlate > 0) { p.showPlate(p.currentPlate - 1) },
             MenuAction("Next plate", enabled = p.currentPlate < p.plateNames.lastIndex) { p.showPlate(p.currentPlate + 1) },
-        )),
+            null,
+        ) + com.nozzleitall.desktop.prepare.StarterModel.entries.map { model ->
+            MenuAction("Add ${model.label}", enabled = state.destination == Destination.PREPARE && p.toolBusy == null) {
+                p.addStarterModel(model)
+            }
+        }),
         AppMenu("Calibration", Key.C, net.jamesjennison.klippercompanion.CalibrationKind.entries.map { k ->
             MenuAction(k.label) { guarded { p.startCalibration(net.jamesjennison.klippercompanion.CalibrationSpec(k)); state.destination = Destination.PREPARE } }
         }),
