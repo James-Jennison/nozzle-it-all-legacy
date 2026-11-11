@@ -333,26 +333,33 @@ fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive
         val cancelFocus = remember { FocusRequester() }
         var acknowledged by remember(title, body, acknowledgement) { mutableStateOf(false) }
         val detailScroll = rememberScrollState()
-        Column(Modifier.fillMaxSize().background(c.surface).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        val acknowledgementControl: @Composable () -> Unit = {
+            acknowledgement?.let { label ->
+                Row(Modifier.fillMaxWidth().toggleable(value = acknowledged, role = Role.Checkbox) { acknowledged = it }
+                    .padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.size(22.dp).border(1.dp, if (acknowledged) c.accent else c.line, RoundedCornerShape(4.dp))
+                        .background(if (acknowledged) c.accent.copy(alpha = 0.14f) else Color.Transparent), contentAlignment = Alignment.Center) {
+                        if (acknowledged) Icon(NzIcon.CHECK, c.accent, 18.dp)
+                    }
+                    Txt(label, Nz.type.bodySmall, c.text)
+                }
+            }
+        }
+        Column(Modifier.fillMaxSize().background(c.surface).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(if (reviewSize == null) 14.dp else 10.dp)) {
             Txt(title, Nz.type.title)
             Column(Modifier.weight(1f).verticalScroll(detailScroll), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Txt(body, Nz.type.body, c.text)
                 detail?.let { Txt(it, Nz.type.bodySmall, c.textMuted) }
                 extraContent?.invoke()
-                acknowledgement?.let { label ->
-                    Row(Modifier.fillMaxWidth().toggleable(value = acknowledged, role = Role.Checkbox) { acknowledged = it }
-                        .padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Box(Modifier.size(22.dp).border(1.dp, if (acknowledged) c.accent else c.line, RoundedCornerShape(4.dp))
-                            .background(if (acknowledged) c.accent.copy(alpha = 0.14f) else Color.Transparent), contentAlignment = Alignment.Center) {
-                            if (acknowledged) Icon(NzIcon.CHECK, c.accent, 18.dp)
-                        }
-                        Txt(label, Nz.type.bodySmall, c.text)
-                    }
-                }
+                if (reviewSize == null) acknowledgementControl()
             }
-            if (reviewSize != null && detailScroll.maxValue > detailScroll.value)
-                Txt("Scroll to read the rest of the review", Nz.type.bodySmall, c.textMuted)
+            if (reviewSize != null) {
+                if (detailScroll.maxValue > detailScroll.value)
+                    Txt("Scroll to read the rest of the review", Nz.type.bodySmall, c.textMuted)
+                if (acknowledgement != null) acknowledgementControl()
+            }
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.focusRequester(cancelFocus).focusable()) { NzButton(cancelLabel, onDismiss, kind = ButtonKind.SECONDARY) }
