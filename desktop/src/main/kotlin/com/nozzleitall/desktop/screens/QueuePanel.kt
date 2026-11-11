@@ -38,6 +38,7 @@ class QueueRowUiState {
     var transferActive by mutableStateOf(false)
     val problem = mutableStateOf<String?>(null)
     val expectedStart = mutableStateOf<PrinterAction?>(null)
+    internal var approvedDirectStart by mutableStateOf<PreparedAction?>(null)
     val resolveStart = mutableStateOf<String?>(null)
     val resolutionHold = mutableStateOf<QueueItem?>(null)
     var dispatchedHold: QueueItem? = null
@@ -115,6 +116,7 @@ internal fun DirectPrintStart(
                 ui?.transferActive != true && ui?.flow?.busy != true) {
                 ui?.flow?.pending = null
                 ui?.reviewStart?.value = null
+                ui?.approvedDirectStart = null
                 if (item.directDraft) runCatching { state.fleet.discardUntransferredDirectDraft(item) }
                     .onFailure { state.prepare.notice = "The local print record needs attention in Queue & history: ${it.message}" }
             }
@@ -178,6 +180,7 @@ private fun QueueRow(
     fun clearReview() {
         ui.reviewContext = null
         ui.reviewedConnection = null
+        ui.approvedDirectStart = null
         pinnedPrinterId = null
     }
     LaunchedEffect(candidate, previousEntry) {
@@ -373,6 +376,7 @@ private fun QueueRow(
                         val action = PrinterAction.UploadAndStart(file.absolutePath, remote)
                         flow.request(action)
                         expectedStart = action.takeIf { flow.pending?.action == action }
+                        if (direct && expectedStart != null) ui.approvedDirectStart = flow.pending
                         if (expectedStart == null) { problem = flow.message?.first ?: "Start could not be prepared. Review the printer before retrying."; clearReview() }
                     }
                     else scope.launch(Dispatchers.Main) {
@@ -422,6 +426,7 @@ private fun QueueRow(
                                 val action = PrinterAction.StartJob(r.remotePath, item.toolheadMap)
                                 flow.request(action)
                                 expectedStart = action.takeIf { flow.pending?.action == action }
+                                if (direct && expectedStart != null) ui.approvedDirectStart = flow.pending
                                 if (expectedStart == null) { problem = flow.message?.first ?: "Start could not be prepared. Review the printer before retrying."; clearReview() }
                             }
                             is UploadResult.Interrupted -> { problem = "The transfer was interrupted: ${r.reason} The printer file may be incomplete; inspect it before retrying."; expectedStart = null; clearReview() }
@@ -434,7 +439,9 @@ private fun QueueRow(
         problem?.let { Banner(it, BannerKind.WARNING) }
         if (candidate != null && flow != null) ActionFlowUi(flow, candidate, onDismiss = ::dismissReview,
             beforeExecute = { prepared ->
-                check(prepared.action == expectedStart) { "The queued Start changed; review it again." }
+                check(prepared.action == expectedStart && (onHandoff == null || prepared === ui.approvedDirectStart)) {
+                    "The queued Start changed; review it again."
+                }
                 check(ui.reviewContext?.invoke() == true && fleet.printers[candidate.config.identity.id] === candidate && ui.reviewedConnection?.isCurrent(candidate) == true &&
                     fleet.queue.value.any { it == item } && candidate.isFree() && candidate.canTakeJobs(item) &&
                     candidate.guard?.needsReconcile != true &&
@@ -447,6 +454,7 @@ private fun QueueRow(
                         else -> "The prepared print or printer changed. Review it again."
                     }
                 }
+                fleet.queuedFile(item)
                 val remotePath = when (val action = prepared.action) {
                     is PrinterAction.StartJob -> action.remotePath
                     is PrinterAction.UploadAndStart -> action.remoteName
@@ -489,7 +497,7 @@ private fun QueueRow(
                 if (expectedStart is PrinterAction.UploadAndStart)
                     fleet.withQueuedTransfer(item.id, candidate.config.identity.id) { execute() }
                 else execute()
-            }, executionScope = state.scope, reviewedStart = expectedStart.takeIf { onHandoff != null })
+            }, executionScope = state.scope, reviewedStart = ui.approvedDirectStart)
         val reviewedHold = resolutionHold
         if (resolveStart == "choose" && reviewedHold != null) {
             val printerId = reviewedHold.startPrinterId

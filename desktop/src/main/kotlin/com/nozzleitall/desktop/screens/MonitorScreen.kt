@@ -115,6 +115,14 @@ fun MonitorScreen(state: AppState) {
         entry.problem.value?.let { Banner(it, BannerKind.WARNING) }
         val cameraAvailable = entry.cameras.value.isNotEmpty()
         val jobContext = state.monitorJobContext?.takeIf { it.printerId == entry.config.identity.id }
+        val reportedActivePath = reportedJobPath(status.job?.fileName)
+        LaunchedEffect(jobContext, status.state, reportedActivePath) {
+            if (jobContext != null && (status.state in setOf(PrinterState.FINISHED, PrinterState.CANCELLED, PrinterState.ERROR) ||
+                (status.state.isActiveJob && reportedActivePath != null &&
+                    reportedActivePath != reportedJobPath(jobContext.remotePath)))) {
+                state.clearMonitorJobContext(jobContext)
+            }
+        }
         if (cameraAvailable) {
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 if (maxWidth >= 900.dp) {
