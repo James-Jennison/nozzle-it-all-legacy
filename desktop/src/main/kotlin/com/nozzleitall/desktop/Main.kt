@@ -29,6 +29,8 @@ import com.nozzleitall.desktop.prepare.ProfileCatalog
 import com.nozzleitall.desktop.prepare.WorkspaceMachineReview
 import com.nozzleitall.desktop.prepare.WorkspaceSliceAction
 import com.nozzleitall.desktop.prepare.chooseFiles
+import com.nozzleitall.desktop.prepare.digestPreparedFile
+import com.nozzleitall.project.ThreeMf
 import com.nozzleitall.desktop.projects.ProjectLibrary
 import com.nozzleitall.desktop.projects.ProjectsScreen
 import com.nozzleitall.desktop.screens.*
@@ -39,7 +41,11 @@ import java.awt.EventQueue
 import java.awt.Toolkit
 import java.awt.event.WindowEvent
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
@@ -301,10 +307,38 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         if (files.isNotEmpty()) importWorkspaceModels(files)
     }
 
-    internal fun openWorkspaceProject(file: File) {
-        runCatching { prepare.open(file) }
-            .onSuccess { returnToWorkspace(preview = false) }
-            .onFailure { prepare.notice = it.message ?: "The project could not be opened." }
+    private var projectOpenJob: Job? = null
+    internal var openingWorkspaceProject by mutableStateOf<String?>(null)
+        private set
+
+    internal fun openWorkspaceProject(
+        file: File,
+        onOpened: () -> Unit = {},
+        onFailure: (String) -> Unit = { prepare.notice = it },
+    ) {
+        projectOpenJob?.cancel()
+        val editor = prepare.editorGeneration
+        val sourceDestination = destination
+        openingWorkspaceProject = file.name
+        projectOpenJob = scope.launch(Dispatchers.Main) {
+            try {
+                val (project, digest) = withContext(Dispatchers.IO) {
+                    val parsed = ThreeMf.read(file)
+                    parsed to if (parsed.manifest == null) digestPreparedFile(file) else null
+                }
+                if (prepare.editorGeneration != editor || destination != sourceDestination) return@launch
+                prepare.openProject(file, project, digest)
+                returnToWorkspace(preview = false)
+                onOpened()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (prepare.editorGeneration == editor && destination == sourceDestination)
+                    onFailure(e.message ?: "The project could not be opened.")
+            } finally {
+                if (projectOpenJob === coroutineContext[Job]) openingWorkspaceProject = null
+            }
+        }
     }
 
     internal fun importWorkspaceModels(files: List<File>) {
@@ -497,8 +531,9 @@ private fun runApp(open: List<File>) = application {
     LaunchedEffect(Unit) {
         if (open.isEmpty()) return@LaunchedEffect
         val (projects, models) = open.partition { it.extension.equals("3mf", true) && open.size == 1 }
-        runCatching { projects.firstOrNull()?.let(state.prepare::open); models.forEach(state.prepare::importModel) }.onFailure { state.prepare.notice = it.message }
-        state.destination = Destination.PREPARE
+        val project = projects.firstOrNull()
+        if (project != null) state.openWorkspaceProject(project)
+        else state.importWorkspaceModels(models)
     }
     val shutdown = remember {
         DesktopShutdown(
