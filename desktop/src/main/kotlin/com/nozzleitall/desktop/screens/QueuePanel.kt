@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpSize
 import com.nozzleitall.desktop.AppState
 import com.nozzleitall.desktop.MonitorHandoffState
 import com.nozzleitall.desktop.PrinterEntry
@@ -317,7 +318,7 @@ private fun QueueRow(
             val direct = onHandoff != null
             val reviewBody = buildList {
                 add(item.name)
-                plate?.let { add("${it.plateName} · ${it.machine} · ${it.nozzles} · ${it.bed}") }
+                plate?.let { add("${it.plateName} · ${it.nozzles} · ${it.bed}") }
                 add("Printer: ${candidate.config.identity.displayName}")
                 val tools = item.materialPlan?.tools.orEmpty().joinToString { tool ->
                     "T${tool.index + 1} ${tool.type ?: "material unknown"}"
@@ -327,7 +328,7 @@ private fun QueueRow(
                 if (item.sourceJobId != null && item.toolheadMap.isEmpty() && candidate.capabilities.value?.multiMaterial != false)
                     add("The reprint has no recorded toolhead mapping. Check the loaded materials.")
                 if (item.engineBuild == null || item.inputDigest == null)
-                    add("Slicer input details are missing. Check printer and material compatibility.")
+                    add("Check compatibility. Slicer input details are missing.")
                 if (item.targetProfileId == null) add("The file has no recorded target printer profile.")
                 if (unknownPrinterProfile) add("The printer profile could not be verified. Check that it matches the file.")
                 materialChecks.forEach { add(it.message) }
@@ -335,6 +336,7 @@ private fun QueueRow(
             ConfirmDialog(title = if (direct) "Start printing?" else "Review ${item.name} for ${candidate.config.identity.displayName}",
                 body = reviewBody,
                 confirmLabel = if (direct) "Start printing" else "Continue to Start", destructive = false,
+                reviewSize = if (direct) DpSize(560.dp, if (Nz.textScale >= 1.5f) 520.dp else 420.dp) else null,
                 detail = if (direct) "Check the build plate is clear. Nozzle will recheck the printer before starting."
                     else "Continuing may transfer the file to the printer. A separate Start confirmation follows.",
                 acknowledgement = if (item.engineBuild == null || item.inputDigest == null || item.targetProfileId == null || unknownPrinterProfile ||

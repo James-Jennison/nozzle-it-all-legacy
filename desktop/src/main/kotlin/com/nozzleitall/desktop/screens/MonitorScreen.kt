@@ -196,8 +196,8 @@ fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flo
         status.state == PrinterState.FINISHED && reportedJobPath(it) == reportedCompletion
     }
     Card(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Txt(entry.config.identity.displayName, Nz.type.title, modifier = Modifier.weight(1f))
+        Txt(entry.config.identity.displayName, Nz.type.title, maxLines = 2)
+        FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             RouteBadge(status.route)
             if (reconnecting && entry.printProgress.active.value != null) Txt("Reconnecting", Nz.type.label, c.textMuted)
             else if (status.state == PrinterState.FINISHED && (reportedCompletion == null || unrelatedCompletion))
@@ -274,7 +274,9 @@ fun CameraPanel(entry: PrinterEntry) {
             Txt(camera?.name?.replaceFirstChar { it.uppercase() } ?: "Camera", Nz.type.title, modifier = Modifier.weight(1f))
             if (live) Pill("Live", c.accent)
         }
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).background(c.surfaceSunken), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().height((maxWidth * (9f / 16f)).coerceAtMost(320.dp))
+            .clip(RoundedCornerShape(12.dp)).background(c.surfaceSunken), contentAlignment = Alignment.Center) {
             when {
                 camera == null -> Txt(if (entry.capabilities.value?.camera == false) "Nozzle It All can't show this printer's camera." else "No camera found on this printer.", Nz.type.body, c.textMuted)
                 image != null -> {
@@ -287,6 +289,7 @@ fun CameraPanel(entry: PrinterEntry) {
                 }
                 else -> Txt(problem ?: "Connecting to the camera…", Nz.type.body, c.textMuted)
             }
+        }
         }
         when {
             image != null && problem != null -> Txt("$problem Reconnecting…", Nz.type.bodySmall, c.textMuted)
