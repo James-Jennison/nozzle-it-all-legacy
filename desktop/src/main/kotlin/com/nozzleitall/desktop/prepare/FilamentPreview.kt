@@ -13,55 +13,28 @@ import org.jetbrains.skia.ImageInfo
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.SamplingMode
 
-/** Draw recorded extrusion widths and layer heights with per-pixel depth so interior paths
- * cannot overwrite nearer paths. The selected range and move limit come from [plan].
- */
+/** Immutable inputs captured on Main for the viewport worker. */
+internal data class FilamentFrameScene(
+    val preview: GcodePreview,
+    val plan: PreviewRenderPlan,
+    val palette: List<Color>,
+    val hiddenTools: Set<Int>,
+)
+
+/** Draw recorded extrusion widths and layer heights with per-pixel depth. */
 internal fun DrawScope.drawFilamentPreview(
-    projector: Projector,
-    preview: GcodePreview,
-    plan: PreviewRenderPlan,
-    palette: List<Color>,
-    fallback: Color,
-    hiddenTools: Set<Int>,
-    cache: FilamentPreviewFrame,
+    projector: Projector, scene: FilamentFrameScene, fallback: Color, depth: DepthSurfaceCache, check: () -> Unit,
 ) {
-    val image = cache.image(projector, preview, plan, palette, fallback, hiddenTools)
-    val source = Rect.makeWH(image.width.toFloat(), image.height.toFloat())
-    drawIntoCanvas { it.nativeCanvas.drawImageRect(image, source, Rect.makeWH(size.width, size.height), SamplingMode.LINEAR, null, true) }
-}
-
-/** Reuses the last raster when only UI outside the toolpath changes. */
-internal class FilamentPreviewFrame : AutoCloseable {
-    private data class Key(
-        val camera: CameraPose, val width: Float, val height: Float, val centreX: Float, val centreY: Float,
-        val plan: PreviewRenderPlan, val palette: List<Color>, val fallback: Color, val hiddenTools: Set<Int>,
-    )
-    private val depth = DepthSurfaceCache(useTiles = false)
-    private var key: Key? = null
-    private var image: Image? = null
-
-    fun image(projector: Projector, preview: GcodePreview, plan: PreviewRenderPlan,
-              palette: List<Color>, fallback: Color, hiddenTools: Set<Int>): Image {
-        val next = Key(projector.cam, projector.w, projector.h, projector.cx, projector.cy, plan, palette, fallback, hiddenTools)
-        image?.takeIf { key == next }?.let { return it }
-        val sample = 2f
-        val supersampled = Projector(projector.w * sample, projector.h * sample,
-            projector.cam.copy(pan = projector.cam.pan * sample), projector.cx, projector.cy)
-        val surface = depth.frame(supersampled.w, supersampled.h)
-        rasterFilamentPreview(supersampled, preview, plan, palette, fallback, hiddenTools, surface)
-        val info = ImageInfo(surface.width, surface.height, ColorType.BGRA_8888, ColorAlphaType.PREMUL)
-        return Image.makeRaster(info, surface.pixels, surface.width * 4).also {
-            image?.close()
-            image = it
-            key = next
-        }
-    }
-
-    override fun close() {
-        image?.close()
-        image = null
-        key = null
-        depth.release()
+    val sample = 2f
+    val supersampled = Projector(projector.w * sample, projector.h * sample,
+        projector.cam.copy(pan = projector.cam.pan * sample), projector.cx, projector.cy)
+    val surface = depth.frame(supersampled.w, supersampled.h)
+    rasterFilamentPreview(supersampled, scene.preview, scene.plan, scene.palette, fallback, scene.hiddenTools, surface, check)
+    check()
+    val info = ImageInfo(surface.width, surface.height, ColorType.BGRA_8888, ColorAlphaType.PREMUL)
+    Image.makeRaster(info, surface.pixels, surface.width * 4).use { image ->
+        val source = Rect.makeWH(image.width.toFloat(), image.height.toFloat())
+        drawIntoCanvas { it.nativeCanvas.drawImageRect(image, source, Rect.makeWH(size.width, size.height), SamplingMode.LINEAR, null, true) }
     }
 }
 
@@ -73,6 +46,7 @@ internal fun rasterFilamentPreview(
     fallback: Color,
     hiddenTools: Set<Int>,
     surface: DepthSurface,
+    check: () -> Unit = {},
 ) {
     val vertices = FloatArray(18)
     val triangle = FloatArray(9)
@@ -91,10 +65,12 @@ internal fun rasterFilamentPreview(
         surface.triangle(triangle, 0, colours, 0, projector.eye)
     }
     for (layerPlan in plan.layers) {
+        check()
         val layer = preview.layers[layerPlan.layer]
         val height = preview.layerHeight(layerPlan.layer).coerceIn(0f, 2f)
         val edgeZ = layer.z - height * 0.75f
-        for (index in layerPlan.segments) {
+        for ((offset, index) in layerPlan.segments.withIndex()) {
+            if (offset and 1023 == 0) check()
             val tool = layer.tools[index].toInt()
             if (tool in hiddenTools) continue
             val at = index * 4

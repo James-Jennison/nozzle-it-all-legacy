@@ -16,7 +16,8 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.coroutineContext
 
 /** Captured immutable-by-ownership scene; no Compose state is read by the renderer. */
-internal data class FrameScene(val prepared:List<Pair<PlateObject,DisplayMesh>>,val bedW:Float,val bedD:Float,val bed:Color,val line:Color,val background:Color=Color.Transparent)
+internal data class FrameScene(val prepared:List<Pair<PlateObject,DisplayMesh>>,val bedW:Float,val bedD:Float,val bed:Color,val line:Color,val background:Color=Color.Transparent,
+    val filament: FilamentFrameScene? = null)
 internal data class FrameRequest(val scene:FrameScene,val camera:CameraPose,val width:Int,val height:Int,val retry:Int=0) {
     fun sameSource(other:FrameRequest) = scene==other.scene && width==other.width && height==other.height
     fun projector() = Projector(width.toFloat(),height.toFloat(),camera,scene.bedW/2,scene.bedD/2)
@@ -123,12 +124,14 @@ internal class FrameRasterizer(private val useGraphics:Boolean=true,private val 
     private var graphicsChecked=false
     fun render(request:FrameRequest,check:()->Unit):Image {
         check();require(request.width>0 && request.height>0)
-        if(!graphicsChecked) {
+        if(request.scene.filament == null && !graphicsChecked) {
             graphicsChecked=true
             if(useGraphics && System.getenv("NOZZLE_VIEWPORT_RENDERER")!="software")graphics=GraphicsViewport.createOrNull()
             if(System.getenv("NOZZLE_VIEWPORT_TIMING")=="1")println("NIA_GRAPHICS backend=${if(graphics!=null)"gles3" else "cpu"} renderer=${graphics?.renderer ?: "software"}")
         }
-        val accelerated=try { graphics?.let { if(compositeBed)it.composite(request,check) else it.render(request,check) } }
+        val accelerated=try {
+            if (request.scene.filament == null) graphics?.let { if(compositeBed)it.composite(request,check) else it.render(request,check) } else null
+        }
         catch(e:ObsoleteFrame) { throw e }
         catch(e:CancellationException) { throw e }
         catch(_:IllegalStateException) { graphics?.close();graphics=null;null }
@@ -143,8 +146,9 @@ internal class FrameRasterizer(private val useGraphics:Boolean=true,private val 
         val scene=request.scene;val proj=request.projector()
         CanvasDrawScope().draw(Density(1f),LayoutDirection.Ltr,target.canvas.asComposeCanvas(),Size(width.toFloat(),height.toFloat())) {
             drawBed(proj,scene.bedW,scene.bedD,scene.bed,scene.line)
-            scene.prepared.forEach { (o,d)->check();rasterShadow(proj,o,d,depth.shadows,check) }
-            if(scene.prepared.isNotEmpty()) {
+            if (scene.filament != null) drawFilamentPreview(proj, scene.filament, scene.line, depth, check)
+            else if(scene.prepared.isNotEmpty()) {
+                scene.prepared.forEach { (o,d)->check();rasterShadow(proj,o,d,depth.shadows,check) }
                 val surface=depth.frame(size.width,size.height)
                 surface.objectScratch.retain(scene.prepared)
                 scene.prepared.forEach { (o,d)->check();rasterObject(proj,o,d,surface,check) }

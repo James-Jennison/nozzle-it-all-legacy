@@ -252,8 +252,8 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
                 preferStructural = filamentBeads)
         }
     }
-    val filamentDepth = remember(preview, filamentBeads) { if (filamentBeads) FilamentPreviewFrame() else null }
-    DisposableEffect(filamentDepth) { onDispose { filamentDepth?.close() } }
+    val filamentScene = if (filamentBeads && preview != null && previewPlan != null)
+        FilamentFrameScene(preview, previewPlan, toolColors.toList(), hiddenPreviewTools.toSet()) else null
     var completed by remember { mutableStateOf<PreparedDisplays?>(null) }
     var failedKeys by remember { mutableStateOf<List<DisplayKey>?>(null) }
     var retry by remember { mutableStateOf(0) }
@@ -287,15 +287,15 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
             old?.close()
         },failed={ renderFailed=it.request },dispose=rasterizer::close) }
     DisposableEffect(pump) { onDispose { pump.close();rendered?.close();rendered=null } }
-    val request=FrameRequest(FrameScene(prepared,bedW,bedD,bedColor,lineColor,backgroundColor),camera.snapshot(),dimensions.width,dimensions.height,renderRetry)
+    val request=FrameRequest(FrameScene(prepared,bedW,bedD,bedColor,lineColor,backgroundColor,filamentScene),camera.snapshot(),dimensions.width,dimensions.height,renderRetry)
     SideEffect {
         if(rendered?.ticket?.request?.sameSource(request)==false) {
             rendered?.close();rendered=null
         }
-        if(preview==null && dimensions.width>0 && dimensions.height>0)pump.offer(request)
+        if((preview==null || filamentScene != null) && dimensions.width>0 && dimensions.height>0)pump.offer(request)
         else { pump.invalidate();rendered?.close();rendered=null }
     }
-    val shown=rendered?.takeIf { preview==null && it.ticket.request.sameSource(request) }
+    val shown=rendered?.takeIf { (preview==null || filamentScene != null) && it.ticket.request.sameSource(request) }
     val requestRef=rememberUpdatedState(request)
     val motionProbe=remember { System.getenv("NOZZLE_VIEWPORT_TIMING")=="1" && System.getenv("NOZZLE_VIEWPORT_MOTION_PROBE")=="1" }
     LaunchedEffect(motionProbe,completed,dimensions,preview!=null) {
@@ -428,12 +428,11 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
         val timingStart=frameTiming.start()
         // Publication closes the former image on Main. Always fetch current
         // state here: a pending recomposition may still hold an older draw lambda.
-        val frame=rendered?.takeIf { preview==null && it.ticket.request.sameSource(request) && it.ticket.request.width==size.width.toInt() && it.ticket.request.height==size.height.toInt() }
+        val frame=rendered?.takeIf { (preview==null || filamentScene != null) && it.ticket.request.sameSource(request) && it.ticket.request.width==size.width.toInt() && it.ticket.request.height==size.height.toInt() }
         val proj = frame?.ticket?.request?.projector() ?: Projector(size.width,size.height,camera,bedW/2,bedD/2)
-        if(preview!=null || frame==null)drawBed(proj,bedW,bedD,bedColor,lineColor)
-        if (preview != null && previewPlan != null) {
-            if (filamentDepth != null) drawFilamentPreview(proj, preview, previewPlan, toolColors, lineColor, hiddenPreviewTools, filamentDepth)
-            else drawPreview(proj, preview, previewPlan, toolColors, lineColor, previewView, hiddenPreviewKinds, hiddenPreviewTools, realistic)
+        if (frame == null) drawBed(proj, bedW, bedD, bedColor, lineColor)
+        if (preview != null && previewPlan != null && (filamentScene == null || renderFailed == request)) {
+            drawPreview(proj, preview, previewPlan, toolColors, lineColor, previewView, hiddenPreviewKinds, hiddenPreviewTools, realistic)
         }
         else if(frame!=null) {
             drawIntoCanvas { it.nativeCanvas.drawImage(frame.image,0f,0f) }
