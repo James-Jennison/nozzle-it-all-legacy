@@ -215,6 +215,29 @@ class MenusTest {
         assertEquals(1, quitCount)
     }
 
+    @Test fun backgroundProjectOpenDiscardsStaleResultsWithoutReplacingEdits() = kotlinx.coroutines.runBlocking {
+        val a = app()
+        val source = File(a.paths.config, "Foreign.3mf")
+        ThreeMf.writeAtomically(Project3mf(listOf(ModelObject(1, "cube", cube))), source)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            a.openWorkspaceProject(source)
+            assertEquals(source.name, a.openingWorkspaceProject)
+            a.prepare.addPlate()
+            kotlinx.coroutines.withTimeout(5000) {
+                while (a.openingWorkspaceProject != null) kotlinx.coroutines.delay(10)
+            }
+            assertNull(a.prepare.file)
+            assertEquals(2, a.prepare.plateNames.size)
+
+            a.openWorkspaceProject(source)
+            kotlinx.coroutines.withTimeout(5000) {
+                while (a.openingWorkspaceProject != null) kotlinx.coroutines.delay(10)
+            }
+            assertEquals(source, a.prepare.file)
+            assertEquals(1, a.prepare.items.size)
+        }
+    }
+
     @Test fun savingEditedExternalProjectLeavesItsSourceIntact() {
         val a = app()
         val external = File(a.paths.config, "Foreign.3mf")

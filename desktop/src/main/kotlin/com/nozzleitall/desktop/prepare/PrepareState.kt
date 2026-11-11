@@ -1227,25 +1227,15 @@ class PrepareState(private val app: AppState) {
 
     fun open(f: File) = openProject(f, ThreeMf.read(f))
 
-    internal fun openProject(f: File, p: Project3mf) {
+    internal fun openProject(
+        f: File, p: Project3mf, foreignDigest: String? = if (p.manifest == null) digestPreparedFile(f) else null,
+    ) {
         // Plates: Nozzle's own from the manifest, another slicer's from its plate list. Objects are stored where that
         // slicer puts its plates side by side (Plates.origin), so each is brought back onto its own plate.
         val ownPlates = p.manifest?.plates?.sortedBy { it.index }?.takeIf { it.isNotEmpty() }
         val plateOf: (ModelObject) -> Int = if (ownPlates != null) { o -> ownPlates.indexOfFirst { pl -> pl.objects.any { it.objectId == o.id } }.coerceAtLeast(0) } else { o -> o.plate ?: 0 }
         val names = ownPlates?.map { it.name } ?: p.plateNames
         val count = maxOf(names.size, (p.objects.maxOfOrNull(plateOf) ?: 0) + 1, 1)
-        val foreignDigest = if (p.manifest == null) {
-            val digest = MessageDigest.getInstance("SHA-256")
-            f.inputStream().buffered().use { input ->
-                val bytes = ByteArray(64 * 1024)
-                while (true) {
-                    val read = input.read(bytes)
-                    if (read < 0) break
-                    digest.update(bytes, 0, read)
-                }
-            }
-            digest.digest().joinToString("") { "%02x".format(it) }
-        } else null
         val openedPlateIds = (0 until count).map { i ->
             ownPlates?.getOrNull(i)?.id
                 ?: p.manifest?.let { ProjectManifest.legacyPlateId(it.projectId, ownPlates?.getOrNull(i)?.index ?: i + 1) }

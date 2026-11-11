@@ -275,9 +275,7 @@ fun ProjectsScreen(state: AppState) {
                 }
                 if (state.destination == Destination.PROJECTS && selectedRecovery?.part == candidate.part &&
                     state.prepare.editorGeneration == editorGeneration) {
-                    runCatching { state.prepare.open(copy) }
-                        .onSuccess { state.destination = Destination.PREPARE }
-                        .onFailure { notice = "Recovery copy was saved, but could not be opened: ${it.message}" to null }
+                    state.openWorkspaceProject(copy, onFailure = { notice = "Recovery copy was saved, but could not be opened: $it" to null })
                 } else notice = "Recovery copy was saved. Your current work stayed open; find the copy in Projects." to null
                 refresh++
             } catch (e: CancellationException) { throw e }
@@ -439,9 +437,7 @@ fun ProjectsScreen(state: AppState) {
                                 }
                                 selectedRecovery = null; refresh++
                                 if (state.destination == Destination.PROJECTS) {
-                                    runCatching { state.prepare.open(restored) }
-                                        .onSuccess { state.destination = Destination.PREPARE }
-                                        .onFailure { notice = "Recovery was saved, but could not be opened: ${it.message}" to null }
+                                    state.openWorkspaceProject(restored, onFailure = { notice = "Recovery was saved, but could not be opened: $it" to null })
                                 } else notice = "Recovery was saved. Open it from Projects when ready." to null
                             } catch (e: CancellationException) { throw e }
                             catch (e: Exception) { recoveryProblem = "Recovery was not applied: ${e.message}" }
@@ -480,9 +476,7 @@ fun ProjectsScreen(state: AppState) {
                             try {
                                 val file = withContext(Dispatchers.IO) { state.library.openSessionDraftAsCopy(draft.file) }
                                 refresh++
-                                runCatching { state.prepare.open(file) }
-                                    .onSuccess { state.destination = Destination.PREPARE }
-                                    .onFailure { notice = "Draft copy was saved, but could not be opened: ${it.message}" to null }
+                                state.openWorkspaceProject(file, onFailure = { notice = "Draft copy was saved, but could not be opened: $it" to null })
                             } catch (e: CancellationException) { throw e }
                             catch (e: Exception) { notice = "Draft copy could not be opened: ${e.message}" to null }
                         }
@@ -512,9 +506,7 @@ fun ProjectsScreen(state: AppState) {
                 val selected = visibleProjects.firstOrNull { it.file == selectedProjectFile } ?: visibleProjects.first()
                 val openProject: (ProjectSummary) -> Unit = { project ->
                     state.guardProjectReplacement {
-                        runCatching { state.prepare.open(project.file) }
-                            .onSuccess { state.destination = Destination.PREPARE }
-                            .onFailure { notice = "Couldn't open ${project.name}: ${it.message}" to null }
+                        state.openWorkspaceProject(project.file, onFailure = { notice = "Couldn't open ${project.name}: $it" to null })
                     }
                 }
                 val trashProject: (ProjectSummary) -> Unit = { project ->

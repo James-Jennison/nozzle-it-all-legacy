@@ -625,6 +625,7 @@ fun PrepareScreen(state: AppState) {
                 }
             }
         }
+        state.openingWorkspaceProject?.let { Txt("Opening $it…", Nz.type.bodySmall, c.textMuted, Modifier.padding(horizontal = 12.dp)) }
         val layerActionProblem = p.layerActionProblem
         if (layerActionProblem != null) {
             Banner(layerActionProblem, BannerKind.WARNING,

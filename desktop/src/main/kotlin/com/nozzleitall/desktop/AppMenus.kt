@@ -86,7 +86,7 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Save as…", ctrl(Key.S, "S", shift = true), enabled = p.items.isNotEmpty()) {
                 chooseSaveFile("Save project as", p.name + ".3mf")?.let { f -> runCatching { p.saveAs(f) }.onFailure(::report) }
             },
-            MenuAction("Reload from disk", enabled = p.file != null) { p.file?.let { f -> guarded { runCatching { p.open(f) }.onFailure(::report) } } },
+            MenuAction("Reload from disk", enabled = p.file != null) { p.file?.let { f -> guarded { state.openWorkspaceProject(f) } } },
             MenuAction("Export 3MF…", enabled = p.items.isNotEmpty()) {
                 chooseSaveFile("Export project", p.name + ".3mf")?.let { f -> runCatching { ThreeMf.writeAtomically(p.toProject(), f) }.onFailure(::report) }
             },
