@@ -151,6 +151,10 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
             MenuAction("Duplicate plate", enabled = p.toolBusy == null, commandId = "duplicate-plate") { p.duplicateCurrentPlate() },
             MenuAction("Move plate left", enabled = p.toolBusy == null && p.currentPlate > 0, commandId = "plate-left") { p.moveCurrentPlate(-1) },
             MenuAction("Move plate right", enabled = p.toolBusy == null && p.currentPlate < p.plateNames.lastIndex, commandId = "plate-right") { p.moveCurrentPlate(1) },
+            MenuAction(if (p.plateLocked(p.currentPlate)) "Unlock this plate" else "Lock this plate",
+                enabled = p.toolBusy == null, commandId = "toggle-plate-lock") {
+                p.plateIds.getOrNull(p.currentPlate)?.let(p::togglePlateLock)
+            },
             MenuAction("Delete this plate", enabled = p.plateNames.size > 1, commandId = "delete-plate") {
                 state.requestPlateEdit(PlateEditKind.DELETE_PLATE)
             },

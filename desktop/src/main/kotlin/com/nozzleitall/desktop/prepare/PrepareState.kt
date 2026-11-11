@@ -606,6 +606,39 @@ class PrepareState(private val app: AppState) {
         UUID.nameUUIDFromBytes("$draftSessionId:$plateId".toByteArray(Charsets.UTF_8)).toString()
     var currentPlate by mutableStateOf(0)
     var showPlateOverview by mutableStateOf(false)
+    internal var overviewSelection by mutableStateOf<Set<Int>>(emptySet())
+        private set
+    internal var lockedPlateIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    internal fun setOverviewSelected(objectId: Int, selected: Boolean) {
+        if (selected && items.none { it.id == objectId }) return
+        overviewSelection = if (selected) overviewSelection + objectId else overviewSelection - objectId
+    }
+
+    internal fun clearOverviewSelection() { overviewSelection = emptySet() }
+
+    internal fun plateLocked(index: Int): Boolean = plateIds.getOrNull(index) in lockedPlateIds
+
+    internal fun togglePlateLock(plateId: String) {
+        if (toolBusy != null || plateId !in plateIds) return
+        editSelection {
+            lockedPlateIds = if (plateId in lockedPlateIds) lockedPlateIds - plateId else lockedPlateIds + plateId
+            changed()
+        }
+    }
+
+    internal fun restorePlateLocks(locks: Set<String>) {
+        lockedPlateIds = locks
+        pruneOverviewSelection()
+    }
+
+    private fun pruneOverviewSelection() {
+        if (overviewSelection.isNotEmpty()) overviewSelection = items.mapNotNullTo(mutableSetOf()) {
+            it.id.takeIf(overviewSelection::contains)
+        }
+    }
+
     fun plateItems(plate: Int = currentPlate): List<PrepItem> = items.filter { it.plate == plate }
 
     /** Shows plate [i]; a slice result belongs to the plate it was made for. */
@@ -680,7 +713,12 @@ class PrepareState(private val app: AppState) {
 
     internal fun clearPlateObjects(plate: Int?) {
         if (plate != null && plate !in plateIds.indices) return
-        if (items.none { plate == null || it.plate == plate }) return
+        val targets = items.filter { plate == null || it.plate == plate }
+        if (targets.isEmpty()) return
+        if (targets.any { plateLocked(it.plate) }) {
+            notice = "Unlock the affected plates before clearing their objects."
+            return
+        }
         editSelection {
             items.removeAll { plate == null || it.plate == plate }
             if (plate == null || plate == currentPlate) deselect()
@@ -691,6 +729,10 @@ class PrepareState(private val app: AppState) {
     /** Inline removal is for empty plates. The scope-confirmed action also allows a populated plate. */
     fun removePlate(i: Int, allowPopulated: Boolean = false) {
         if (i !in plateIds.indices || plateNames.size <= 1 || (!allowPopulated && plateItems(i).isNotEmpty())) return
+        if (plateLocked(i)) {
+            notice = "Unlock this plate before removing it."
+            return
+        }
         editSelection {
             if (i == currentPlate) deselect()
             items.removeAll { it.plate == i }
@@ -704,8 +746,16 @@ class PrepareState(private val app: AppState) {
         }
     }
     fun moveToPlate(item: PrepItem, plate: Int) {
-        if (plate !in plateNames.indices || plate == item.plate) return
-        item.plate = plate; selected = null; changed()
+        if (plate !in plateNames.indices || plate == item.plate || items.none { it === item }) return
+        if (plateLocked(item.plate) || plateLocked(plate)) {
+            notice = "Unlock the source and destination plates before moving objects."
+            return
+        }
+        editSelection {
+            item.plate = plate
+            selected = null
+            changed()
+        }
     }
 
     fun printer(): PrinterEntry? = printerId?.let { app.fleet.printers[it] }
@@ -1220,6 +1270,8 @@ class PrepareState(private val app: AppState) {
         items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap(); conversionLosses = emptyList()
         plateNames.clear(); plateNames += "Plate 1"; plateIds.clear(); plateIds += UUID.randomUUID().toString(); currentPlate = 0
         showPlateOverview = false
+        clearOverviewSelection()
+        lockedPlateIds = emptySet()
         nextId = 1; calibration = null
         installedSetup = null
         profileId = ProfileCatalog.DEFAULT_ID
@@ -1275,6 +1327,9 @@ class PrepareState(private val app: AppState) {
         val entries = p.manifest?.plates?.flatMap { it.objects }?.associateBy { it.objectId } ?: emptyMap()
         plateNames.clear(); plateNames.addAll((0 until count).map { i -> names.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "Plate ${i + 1}" })
         plateIds.clear(); plateIds.addAll(openedPlateIds)
+        lockedPlateIds = ownPlates.orEmpty().mapIndexedNotNull { index, plate ->
+            openedPlateIds[index].takeIf { plate.unknown.opt("nia_plate_locked") == true }
+        }.toSet()
         ownPlates.orEmpty().forEachIndexed { index, plate ->
             val id = openedPlateIds[index]
             runCatching { LayerAction.read(plate) }.onSuccess { actions ->
@@ -1465,7 +1520,10 @@ class PrepareState(private val app: AppState) {
         history.beginEdit()
         try { items.removeAll { it.id in selectedIds }; deselect(); changed() } finally { history.endEdit() }
     }
-    fun changed() { syncInstances(); dirty = true; invalidateSlice(); refreshRules() }
+    fun changed() {
+        pruneOverviewSelection()
+        syncInstances(); dirty = true; invalidateSlice(); refreshRules()
+    }
 
     private var selectionTransform: SelectionTransforms? = null
     fun editSelection(action: () -> Unit) {
@@ -1685,6 +1743,10 @@ class PrepareState(private val app: AppState) {
     fun arrange() { if (plateItems().isNotEmpty()) runTool("Arrange") { arrangeNow() } }
 
     private suspend fun arrangeNow() {
+            if (plateLocked(currentPlate)) {
+                notice = "Unlock this plate before using Arrange."
+                return
+            }
             val snapshot = plateItems()
             val (bw, bd) = bed
             val dir = profileDir()
@@ -2326,7 +2388,9 @@ class PrepareState(private val app: AppState) {
                     ProjectManifest.ObjectEntry(it.id, it.name, sliceSlot(it.slot), paintSlots = it.paintSlots.map { s -> if (s in unoffered) sliceSlot(it.slot) else s }, settings = it.settings.toMap(), parts = it.parts.toList(), heightRanges = it.ranges.toList(), layerProfile = it.layerProfile.toList(), instanceOf = it.instanceOf) },
                     (base.plates.firstOrNull { old -> (old.id ?: ProjectManifest.legacyPlateId(base.projectId, old.index)) == plateIds[i] }
                         ?.unknown ?: JSONObject()).let { unknown ->
-                        LayerAction.write(unknown, layerActions[plateIds[i]].orEmpty(), unreadableLayerActions[plateIds[i]])
+                        LayerAction.write(unknown, layerActions[plateIds[i]].orEmpty(), unreadableLayerActions[plateIds[i]]).apply {
+                            if (plateLocked(i)) put("nia_plate_locked", true) else remove("nia_plate_locked")
+                        }
                     },
                     plateIds[i]) },
                 materials = materials(),

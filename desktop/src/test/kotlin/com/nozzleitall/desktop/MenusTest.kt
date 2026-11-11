@@ -128,6 +128,48 @@ class MenusTest {
         assertEquals(listOf(1, 2), p.plateItems().map { it.id })
     }
 
+    @Test fun overviewSelectsAcrossPlatesAndLocksSurviveUndoAndSave() {
+        val a = app()
+        val p = a.prepare
+        p.items += PrepItem(1, "first", cube, 50f, 60f)
+        p.addPlate()
+        p.items += PrepItem(2, "second", cube, 90f, 60f, plate = 1)
+        p.history.reset()
+
+        p.setOverviewSelected(1, true)
+        p.setOverviewSelected(2, true)
+        assertEquals(setOf(1, 2), p.overviewSelection)
+        p.showPlate(0)
+        assertNull(p.selected)
+        assertEquals(setOf(1, 2), p.overviewSelection)
+        val locked = p.plateIds[0]
+        a.item("Plate", "Lock this plate").run()
+        assertTrue(p.plateLocked(0))
+        p.moveToPlate(p.items.first(), 1)
+        p.moveToPlate(p.items.last(), 0)
+        p.clearPlateObjects(null)
+        assertEquals(listOf(0, 1), p.items.map { it.plate })
+        p.history.undo()
+        assertFalse(p.plateLocked(0))
+        p.history.redo()
+        assertTrue(p.plateLocked(0))
+        p.moveCurrentPlate(1)
+        assertEquals(locked, p.plateIds[1])
+        assertTrue(p.plateLocked(1))
+
+        val saved = p.save()
+        p.open(saved)
+        assertTrue(p.overviewSelection.isEmpty())
+        assertEquals(locked, p.plateIds[1])
+        assertTrue(p.plateLocked(1))
+        p.showPlate(1)
+        a.item("Plate", "Unlock this plate").run()
+        p.moveToPlate(p.plateItems(1).single(), 0)
+        assertEquals(2, p.plateItems(0).size)
+        p.history.undo()
+        assertEquals(1, p.plateItems(0).size)
+    }
+
     @Test fun commandShortcutPersistsRejectsConflictsAndRestoresDefault() {
         val a = app()
         val file = File(a.paths.config, "test-shortcuts.json")

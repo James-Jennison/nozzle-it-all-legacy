@@ -25,7 +25,7 @@ class PlateHistory(private val p: PrepareState) {
                            val mixes: List<com.nozzleitall.printer.ext.MixedFilamentFormat.Row>,
                            val mixSettings: Map<String, String>, val mixSublayers: Boolean,
                            val layerActions: Map<String, List<LayerAction>>, val reviewedLayerActionTarget: PrepareState.LayerActionTarget?,
-                           val unreadableLayerActions: Map<String, String>)
+                           val unreadableLayerActions: Map<String, String>, val lockedPlateIds: Set<String>)
 
     private val undoStack = ArrayDeque<Snapshot>()
     private val redoStack = ArrayDeque<Snapshot>()
@@ -48,7 +48,7 @@ class PlateHistory(private val p: PrepareState) {
         p.items.map { i -> ItemRecord(i.id, i.name, i.mesh, i.x, i.y, i.rotZ, i.scale, i.slot, i.paintSlots.toList(), i.sources, i.settings.toMap(), i.plate, i.sx, i.sy, i.sz,
             i.parts.toList(), i.ranges.toList(), i.layerProfile.toList(), i.ownFilament, i.instanceOf) },
         p.overrides.toMap(), p.plateNames.toList(), p.plateIds.toList(), p.currentPlate, p.selected, p.nextItemId, p.selectedIds.toSet(),
-        p.mixed.toList(), p.mixedSettings, p.mixSublayers, p.layerActions.toMap(), p.reviewedLayerActionTarget, p.unreadableLayerActions)
+        p.mixed.toList(), p.mixedSettings, p.mixSublayers, p.layerActions.toMap(), p.reviewedLayerActionTarget, p.unreadableLayerActions, p.lockedPlateIds)
 
     /** The plate as it is now is the first step's starting point: a new or opened project has nothing to undo. */
     fun reset() { undoStack.clear(); redoStack.clear(); current = capture(); lastRecorded = 0L; editing = false; editRecorded = false; sync() }
@@ -79,6 +79,7 @@ class PlateHistory(private val p: PrepareState) {
                     it.ownFilament = r.ownFilament; it.instanceOf = r.instanceOf
                 }
             }, s.overrides, s.plateNames, s.plateIds, s.currentPlate, s.selected, s.nextId, s.selectedIds)
+            p.restorePlateLocks(s.lockedPlateIds)
             current = s; lastRecorded = 0L
         } finally { restoring = false }
         sync()

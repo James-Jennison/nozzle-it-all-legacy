@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.*
@@ -991,27 +992,53 @@ fun PrepareScreen(state: AppState) {
                         NzButton("Close", { p.showPlateOverview = false }, kind = ButtonKind.QUIET)
                     }
                     Txt("Choose a plate to prepare or slice. Print results are for saved revision ${projectRevision ?: "not recorded"}; machine completion and physical acceptance are tracked separately.", Nz.type.bodySmall, c.textMuted)
-                    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        val count = p.overviewSelection.size
+                        Txt(if (count == 0) "Select objects across plates" else "$count selected",
+                            Nz.type.bodySmall, c.textMuted, modifier = Modifier.weight(1f))
+                        if (count > 0) NzButton("Clear selection", p::clearOverviewSelection, kind = ButtonKind.QUIET)
+                    }
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         p.plateNames.forEachIndexed { i, plateName ->
-                            val plateId = p.plateIds.getOrNull(i)
-                            val queued = state.fleet.queue.value.count { it.projectId == projectId && it.projectRevision == projectRevision && it.plateId == plateId && plateId != null }
-                            val progress = plateId?.let { printProgress?.get(it) }
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Column(Modifier.weight(1f)) {
-                                    Txt(plateName, Nz.type.label)
-                                    Txt("${p.plateItems(i).size} object(s) · ${if (queued > 0) "$queued queued" else if (i == p.currentPlate && p.slice is SliceState.Done) "sliced in this workspace" else "No job queued"}", Nz.type.bodySmall, c.textMuted)
-                                    Txt(when {
-                                        progress?.physicallyAccepted == true -> "Physical result accepted"
-                                        progress?.machineCompleted == true -> "Machine completed; no accepted physical result"
-                                        projectId == null || projectRevision == null -> "No linked print record"
-                                        progressProblem -> "Print records unavailable"
-                                        printProgress == null -> "Checking print records…"
-                                        else -> "No machine completion recorded"
-                                    }, Nz.type.bodySmall, c.textMuted)
+                            val plateId = p.plateIds[i]
+                            val objects = p.plateItems(i)
+                            item(key = "plate:$plateId") {
+                                val queued = state.fleet.queue.value.count {
+                                    it.projectId == projectId && it.projectRevision == projectRevision && it.plateId == plateId
                                 }
-                                NzButton("Open plate", { p.showPlate(i) }, kind = ButtonKind.SECONDARY,
-                                    testTag = "overview-plate-$i")
+                                val progress = printProgress?.get(plateId)
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Column(Modifier.weight(1f)) {
+                                        Txt(plateName, Nz.type.label)
+                                        Txt("${objects.size} object(s) · ${if (queued > 0) "$queued queued" else if (i == p.currentPlate && p.slice is SliceState.Done) "sliced in this workspace" else "No job queued"}", Nz.type.bodySmall, c.textMuted)
+                                        Txt(when {
+                                            progress?.physicallyAccepted == true -> "Physical result accepted"
+                                            progress?.machineCompleted == true -> "Machine completed; no accepted physical result"
+                                            projectId == null || projectRevision == null -> "No linked print record"
+                                            progressProblem -> "Print records unavailable"
+                                            printProgress == null -> "Checking print records…"
+                                            else -> "No machine completion recorded"
+                                        }, Nz.type.bodySmall, c.textMuted)
+                                    }
+                                    NzButton(if (p.plateLocked(i)) "Unlock" else "Lock", { p.togglePlateLock(plateId) },
+                                        kind = ButtonKind.QUIET, enabled = p.toolBusy == null, testTag = "overview-lock-$i")
+                                    NzButton("Open plate", { p.showPlate(i) }, kind = ButtonKind.SECONDARY,
+                                        testTag = "overview-plate-$i")
+                                }
+                            }
+                            itemsIndexed(objects, key = { _, objectRow -> "object:${objectRow.id}" }) { _, objectRow ->
+                                val selected = objectRow.id in p.overviewSelection
+                                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp))
+                                    .toggleable(selected, role = Role.Checkbox) { p.setOverviewSelected(objectRow.id, it) }
+                                    .padding(start = 12.dp, top = 5.dp, bottom = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Box(Modifier.size(18.dp).border(1.dp, if (selected) c.accent else c.line, RoundedCornerShape(4.dp)),
+                                        contentAlignment = Alignment.Center) {
+                                        if (selected) Icon(NzIcon.CHECK, c.accent, 14.dp)
+                                    }
+                                    Txt(objectRow.name, Nz.type.bodySmall)
+                                }
                             }
                         }
                     }
