@@ -637,7 +637,8 @@ class PrepareState(private val app: AppState) {
         if (toolBusy != null || plateId !in plateIds) return
         editSelection {
             lockedPlateIds = if (plateId in lockedPlateIds) lockedPlateIds - plateId else lockedPlateIds + plateId
-            changed()
+            dirty = true
+            history.recordChange()
         }
     }
 
@@ -684,6 +685,7 @@ class PrepareState(private val app: AppState) {
 
     fun addPlate() { plateNames += "Plate ${plateNames.size + 1}"; plateIds += UUID.randomUUID().toString(); currentPlate = plateNames.lastIndex; selected = null; changed() }
     fun renamePlate(i: Int, name: String) { if (i in plateNames.indices) { plateNames[i] = name; changed() } }
+    /** A duplicate is a new, unlocked plate. The source layout stays intact. */
     fun duplicateCurrentPlate() {
         if (toolBusy != null) return
         val source = currentPlate
@@ -781,9 +783,19 @@ class PrepareState(private val app: AppState) {
     }
 
     internal fun moveOverviewSelectionTo(plateId: String) {
+        if (toolBusy != null || overviewSelection.isEmpty()) return
         val target = plateIds.indexOf(plateId)
-        if (target < 0 || toolBusy != null || overviewSelection.isEmpty()) return
-        val moving = items.filter { it.id in overviewSelection && it.plate != target }
+        if (target < 0) {
+            notice = "The destination plate was removed. Choose another plate."
+            return
+        }
+        val selectedObjects = items.filter { it.id in overviewSelection }
+        if (selectedObjects.size != overviewSelection.size) {
+            pruneOverviewSelection()
+            notice = "The selected objects changed. Review the selection before moving it."
+            return
+        }
+        val moving = selectedObjects.filter { it.plate != target }
         if (moving.isEmpty()) return
         if (plateLocked(target) || moving.any { plateLocked(it.plate) }) {
             notice = "Unlock all affected plates before moving the selection."
@@ -1370,9 +1382,13 @@ class PrepareState(private val app: AppState) {
         val entries = p.manifest?.plates?.flatMap { it.objects }?.associateBy { it.objectId } ?: emptyMap()
         plateNames.clear(); plateNames.addAll((0 until count).map { i -> names.getOrNull(i)?.takeIf { it.isNotBlank() } ?: "Plate ${i + 1}" })
         plateIds.clear(); plateIds.addAll(openedPlateIds)
-        lockedPlateIds = ownPlates.orEmpty().mapIndexedNotNull { index, plate ->
-            openedPlateIds[index].takeIf { plate.unknown.opt("nia_plate_locked") == true }
-        }.toSet()
+        lockedPlateIds = p.manifest?.let { saved ->
+            saved.plates.mapNotNull { plate ->
+                if (plate.unknown.opt("nia_plate_locked") == true)
+                    plate.id ?: ProjectManifest.legacyPlateId(saved.projectId, plate.index)
+                else null
+            }.toSet()
+        }.orEmpty()
         ownPlates.orEmpty().forEachIndexed { index, plate ->
             val id = openedPlateIds[index]
             runCatching { LayerAction.read(plate) }.onSuccess { actions ->
@@ -1783,13 +1799,15 @@ class PrepareState(private val app: AppState) {
      * Orca's Arrange (engine: ModelArrange/Arrange with the printer's clearances and the print's brim/skirt spacing).
      * Objects that don't fit stay where they are and are named.
      */
-    fun arrange() { if (plateItems().isNotEmpty()) runTool("Arrange") { arrangeNow() } }
+    fun arrange() {
+        if (plateLocked(currentPlate)) {
+            notice = "Unlock this plate before using Arrange."
+            return
+        }
+        if (plateItems().isNotEmpty()) runTool("Arrange") { arrangeNow() }
+    }
 
     private suspend fun arrangeNow() {
-            if (plateLocked(currentPlate)) {
-                notice = "Unlock this plate before using Arrange."
-                return
-            }
             val snapshot = plateItems()
             val (bw, bd) = bed
             val dir = profileDir()

@@ -1009,10 +1009,12 @@ fun PrepareScreen(state: AppState) {
                         }
                         com.nozzleitall.desktop.settings.DenseSelect("Move selected objects", destinations, "Move to plate",
                             Modifier.width(210.dp), enabled = destinations.isNotEmpty() && p.toolBusy == null, onSelect = p::moveOverviewSelectionTo)
+                        if (p.lockedPlateIds.isNotEmpty())
+                            Txt("Unlock a plate to move objects into or out of it.", Nz.type.bodySmall, c.textMuted)
                     }
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         p.plateNames.forEachIndexed { i, plateName ->
-                            val plateId = p.plateIds[i]
+                            val plateId = p.plateIds.getOrNull(i) ?: return@forEachIndexed
                             val objects = p.plateItems(i)
                             item(key = "plate:$plateId") {
                                 val queued = state.fleet.queue.value.count {

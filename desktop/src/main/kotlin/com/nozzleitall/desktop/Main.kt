@@ -201,6 +201,12 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         val name = prepare.plateNames.getOrNull(plate) ?: return
         val count = prepare.plateItems(plate).size
         val objects = if (kind == PlateEditKind.CLEAR_ALL) prepare.items.size else count
+        val locked = if (kind == PlateEditKind.CLEAR_ALL) prepare.items.any { prepare.plateLocked(it.plate) }
+            else prepare.plateLocked(plate)
+        if (locked) {
+            prepare.notice = "Unlock the affected plates before editing their layout."
+            return
+        }
         if (kind == PlateEditKind.DELETE_PLATE && prepare.plateIds.size <= 1) return
         if (kind != PlateEditKind.DELETE_PLATE && objects == 0) return
         val description = when (kind) {

@@ -198,6 +198,50 @@ class MenusTest {
         assertEquals(listOf(2, 2), p.items.map { it.plate })
     }
 
+    @Test fun layoutLockRejectsPlateActionsButAllowsEditingAnObjectAndCopyingThePlate() {
+        val a = app()
+        val p = a.prepare
+        p.items += PrepItem(1, "cube", cube, 40f, 60f)
+        p.addPlate()
+        p.showPlate(0)
+        p.history.reset()
+
+        p.togglePlateLock(p.plateIds.first())
+        p.history.undo()
+        assertFalse(p.plateLocked(0))
+        p.history.redo()
+        assertTrue(p.plateLocked(0))
+        p.arrange()
+        assertNull(p.toolBusy)
+        assertTrue(p.notice.orEmpty().contains("Unlock"))
+        a.requestPlateEdit(PlateEditKind.DELETE_PLATE)
+        assertNull(a.pendingPlateEdit)
+        assertEquals(2, p.plateIds.size)
+
+        p.duplicateCurrentPlate()
+        assertTrue(p.plateLocked(0))
+        assertFalse(p.plateLocked(p.currentPlate))
+        assertEquals(1, p.plateItems().size)
+        p.showPlate(0)
+        p.selectObject(1)
+        p.removeSelected()
+        assertTrue(p.plateItems(0).isEmpty())
+        assertTrue(p.plateLocked(0))
+    }
+
+    @Test fun staleOverviewDestinationCannotMoveTheSelection() {
+        val p = app().prepare
+        p.items += PrepItem(1, "cube", cube, 40f, 60f)
+        p.addPlate()
+        val destination = p.plateIds.last()
+        p.setOverviewSelected(1, true)
+        p.removePlate(1)
+        p.moveOverviewSelectionTo(destination)
+        assertEquals(0, p.items.single().plate)
+        assertEquals(setOf(1), p.overviewSelection)
+        assertTrue(p.notice.orEmpty().contains("destination plate was removed"))
+    }
+
     @Test fun commandShortcutPersistsRejectsConflictsAndRestoresDefault() {
         val a = app()
         val file = File(a.paths.config, "test-shortcuts.json")
