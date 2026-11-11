@@ -250,6 +250,10 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
             previewRenderPlan(it, previewLayer, budget, moveLimit = previewMove, firstLayer = previewFirstLayer)
         }
     }
+    val filamentDepth = remember(preview, previewView, realistic) {
+        if (!realistic && previewView == PreviewView.TOOL && preview?.supportsRealisticView == true)
+            DepthSurfaceCache(useTiles = false) else null
+    }
     var completed by remember { mutableStateOf<PreparedDisplays?>(null) }
     var failedKeys by remember { mutableStateOf<List<DisplayKey>?>(null) }
     var retry by remember { mutableStateOf(0) }
@@ -427,7 +431,10 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
         val frame=rendered?.takeIf { preview==null && it.ticket.request.sameSource(request) && it.ticket.request.width==size.width.toInt() && it.ticket.request.height==size.height.toInt() }
         val proj = frame?.ticket?.request?.projector() ?: Projector(size.width,size.height,camera,bedW/2,bedD/2)
         if(preview!=null || frame==null)drawBed(proj,bedW,bedD,bedColor,lineColor)
-        if (preview != null && previewPlan != null) drawPreview(proj, preview, previewPlan, toolColors, lineColor, previewView, hiddenPreviewKinds, hiddenPreviewTools, realistic)
+        if (preview != null && previewPlan != null) {
+            if (filamentDepth != null) drawFilamentPreview(proj, preview, previewPlan, toolColors, lineColor, hiddenPreviewTools, filamentDepth)
+            else drawPreview(proj, preview, previewPlan, toolColors, lineColor, previewView, hiddenPreviewKinds, hiddenPreviewTools, realistic)
+        }
         else if(frame!=null) {
             drawIntoCanvas { it.nativeCanvas.drawImage(frame.image,0f,0f) }
             prepared.forEach { (o, d) -> if (o.parts.isNotEmpty()) drawParts(proj, o, d) }

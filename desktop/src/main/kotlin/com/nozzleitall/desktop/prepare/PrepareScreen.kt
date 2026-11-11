@@ -1213,7 +1213,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
     var showDetails by remember { mutableStateOf(true) }
     val warnings = previewWarningMessages(preview)
     val expanded = overlayHeight == null || showDetails
-    val showsTimeBreakdown = view == PreviewView.LINE_TYPE || view == PreviewView.TOOL
+    val showsTimeBreakdown = view == PreviewView.LINE_TYPE
     val narrowLegend = overlayWidth != null && overlayWidth < 270.dp
     val stackedRows = overlayWidth != null && (Nz.textScale >= 1.5f || overlayWidth < 300.dp)
     val baseLegendWidth = if (Nz.textScale >= 1.5f) 390.dp else 300.dp
@@ -1276,7 +1276,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
         Box(detailSize.fillMaxWidth()) {
             val scrollable = if (overlayHeight == null) Modifier else Modifier.padding(end = 8.dp).verticalScroll(scroll)
             Column(scrollable.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val usage = if (showsTimeBreakdown) preview.usage else null
+                val usage = if (showsTimeBreakdown || view == PreviewView.TOOL) preview.usage else null
                 if (showsTimeBreakdown && !stackedRows) Row(
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -1334,13 +1334,31 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                             if (k in p.previewHiddenKinds) p.previewHiddenKinds.remove(k) else p.previewHiddenKinds.add(k)
                         }()
                     }
-                    PreviewView.TOOL -> preview.toolsUsed.forEach { t ->
-                        val slot = slots.getOrNull(t)
-                        val profileName = slot?.filamentProfile?.let { id -> p.filamentLibrary().firstOrNull { it.id == id }?.name }
-                        entry(parseHex(slot?.colorHex) ?: c.accent, "${t + 1} · " + (profileName ?: slot?.type ?: "Filament"),
-                            requireNotNull(usage).byTool.getValue(t), t !in p.previewHiddenTools) {
-                            if (t in p.previewHiddenTools) p.previewHiddenTools.remove(t) else p.previewHiddenTools.add(t)
-                        }()
+                    PreviewView.TOOL -> {
+                        Txt("Estimated filament usage for the plate", Nz.type.bodySmall, c.textMuted)
+                        preview.toolsUsed.forEach { t ->
+                            val slot = slots.getOrNull(t)
+                            val profileName = slot?.filamentProfile?.let { id -> p.filamentLibrary().firstOrNull { it.id == id }?.name }
+                            val label = "${t + 1} · " + (profileName ?: slot?.type ?: "Filament")
+                            val visible = t !in p.previewHiddenTools
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(parseHex(slot?.colorHex) ?: c.accent))
+                                Column(Modifier.weight(1f)) {
+                                    Txt(label, Nz.type.bodySmall, maxLines = 2)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        val length = stats.filamentMetres.getOrNull(t)?.let { "%.2f m".format(it) } ?: "unavailable"
+                                        val mass = stats.filamentGrams.getOrNull(t)?.let { "%.2f g".format(it) } ?: "unavailable"
+                                        Txt("Length $length", Nz.type.bodySmall, c.textMuted)
+                                        Txt("Mass $mass", Nz.type.bodySmall, c.textMuted)
+                                    }
+                                    usage?.byTool?.get(t)?.let { Txt(formatDuration(it.seconds, includeSeconds = true), Nz.type.bodySmall, c.textMuted) }
+                                }
+                                Txt(if (visible) "●" else "○", Nz.type.label, if (visible) c.accent else c.textMuted,
+                                    modifier = Modifier.clip(CircleShape).clickable(onClickLabel = if (visible) "Hide $label" else "Show $label") {
+                                        if (visible) p.previewHiddenTools.add(t) else p.previewHiddenTools.remove(t)
+                                    }.padding(3.dp))
+                            }
+                        }
                     }
                     else -> {
                         val (lo, hi) = preview.valueRange(view)

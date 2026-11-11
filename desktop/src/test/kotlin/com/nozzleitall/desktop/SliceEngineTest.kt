@@ -21,6 +21,23 @@ class SliceEngineTest {
         assertEquals(0, SliceEngine.parseStats(gcode("T0", "T0")).toolChanges)
     }
 
+    @Test fun filamentUsageUsesSlicerReportedSlotsWithoutShiftingInvalidValues() {
+        val stats = SliceEngine.parseStats(gcode(
+            "G1 X240 Y120 F9000",
+            "; filament used [mm] = 988.16, 561.90, 13601.64, 3186.65",
+            "; filament used [g] = 2.95, 1.78, 40.57, 9.50",
+            "; total filament used [g] = 54.80",
+        ))
+        assertEquals(listOf(0.98816, 0.5619, 13.60164, 3.18665), stats.filamentMetres)
+        assertEquals(listOf(2.95, 1.78, 40.57, 9.5), stats.filamentGrams)
+        assertEquals(54.8, requireNotNull(stats.grams), 0.00001)
+        val missing = SliceEngine.parseStats(gcode("; filament used [mm] = 1000, bad, 0, 3000", "; filament used [g] = NaN, -2, 0, 9"))
+        assertEquals(listOf(1.0, null, 0.0, 3.0), missing.filamentMetres)
+        assertEquals(listOf(null, null, 0.0, 9.0), missing.filamentGrams)
+        assertEquals(null, missing.metres)
+        assertEquals(null, missing.grams)
+    }
+
     @Test fun multiToolRecipeMatchesTheSharedFixture() {
         val fixture = JSONObject(File(root, "schemas/fixtures/multitool.json").readText())
         val input = fixture.getJSONObject("input")

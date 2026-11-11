@@ -114,8 +114,10 @@ class PreviewWorkspaceUiTest {
             writeText("M83\n;LAYER_CHANGE\n;Z:0.2\nG1 Z0.2\nG1 X10 E1 F600\n")
         }
         try {
-            val result = SliceOutcome.Done(gcode, SliceStats(1, 45.0, 0.5, 0.2, 0), emptyList())
+            val result = SliceOutcome.Done(gcode, SliceStats(1, 45.0, 0.5, 0.2, 0,
+                filamentMetres = listOf(0.2), filamentGrams = listOf(null)), emptyList())
             app.prepare.slice = SliceState.Done(result, GcodePreview.parse(gcode))
+            app.prepare.previewView = PreviewView.TOOL
             app.prepare.showPreview = true
             compose.setContent {
                 NozzleTheme("dark", textScale = 1.5f) {
@@ -125,6 +127,9 @@ class PreviewWorkspaceUiTest {
             val action = compose.onNodeWithTag("preview-layer-action").assertIsDisplayed()
             val selector = compose.onNodeWithTag("preview-view-selector").assertIsDisplayed()
             assertTrue(action.fetchSemanticsNode().boundsInRoot.right <= selector.fetchSemanticsNode().boundsInRoot.left)
+            compose.onNodeWithText("Length 0.20 m").assertIsDisplayed()
+            compose.onNodeWithText("Mass unavailable").assertIsDisplayed()
+            compose.onNodeWithText("Path").assertDoesNotExist()
             action.performClick()
             compose.onNodeWithText("Layer 1 action").assertIsDisplayed()
         } finally {

@@ -38,7 +38,10 @@ data class SliceRequest(
     val layerActionMachine: String? = null,
 )
 
-data class SliceStats(val layers: Int?, val seconds: Double?, val grams: Double?, val metres: Double?, val toolChanges: Int)
+data class SliceStats(
+    val layers: Int?, val seconds: Double?, val grams: Double?, val metres: Double?, val toolChanges: Int,
+    val filamentMetres: List<Double?> = emptyList(), val filamentGrams: List<Double?> = emptyList(),
+)
 sealed class SliceOutcome {
     data class Done(val gcode: File, val stats: SliceStats, val warnings: List<String>,
                     val engineSha256: String? = null, val inputSha256: String? = null,
@@ -304,11 +307,18 @@ class SliceEngine(private val binary: File, private val workDir: File) {
         }
 
         fun parseStats(gcode: File): SliceStats {
-            var layers: Int? = null; var seconds: Double? = null; var grams: Double? = null; var mm: Double? = null; var tools = 0
+            var layers: Int? = null; var seconds: Double? = null; var grams: Double? = null; var tools = 0
+            var filamentMm = emptyList<Double?>()
+            var filamentGrams = emptyList<Double?>()
+            fun amounts(line: String) = line.substringAfter('=').split(',').map {
+                it.trim().toDoubleOrNull()?.takeIf { amount -> amount.isFinite() && amount >= 0.0 }
+            }
+            fun total(values: List<Double?>) =
+                values.takeIf { it.isNotEmpty() && it.none { amount -> amount == null } }
+                    ?.filterNotNull()?.sum()?.takeIf(Double::isFinite)
             // A change is a switch to a different tool. The first selection, and start G-code re-selecting the current tool,
             // aren't (same rule as the Web App's gcodeStats in web/src/project/slicing.ts).
             var tool: Int? = null
-            var bambuGrams = false
             // "T1", or with parameters as Prusa's XL writes it ("T1 S1 L0 D0"); comments after ';' are ignored.
             val select = Regex("^T(\\d{1,2})(?:\\s+[A-Z][^;]*)?\\s*(?:;.*)?$")
             gcode.useLines { lines -> lines.forEach { l ->
@@ -316,16 +326,16 @@ class SliceEngine(private val binary: File, private val workDir: File) {
                     l.startsWith("; total layer number:") -> layers = l.substringAfter(':').trim().toIntOrNull()
                     l.startsWith("; total filament used [g] =") -> grams = l.substringAfter('=').trim().toDoubleOrNull()
                     // Bambu's G-code layout writes per-filament weights without a total (and its time in the header block).
-                    l.startsWith("; filament used [g] =") -> if (grams == null || bambuGrams) { bambuGrams = true
-                        grams = l.substringAfter('=').split(',').mapNotNull { it.trim().toDoubleOrNull() }.sum() }
+                    l.startsWith("; filament used [g] =") -> filamentGrams = amounts(l)
                     l.startsWith("; model printing time:") && l.contains("total estimated time:") ->
                         if (seconds == null) seconds = parseDuration(l.substringAfter("total estimated time:").trim())
-                    l.startsWith("; filament used [mm] =") -> mm = l.substringAfter('=').split(',').mapNotNull { it.trim().toDoubleOrNull() }.sum()
+                    l.startsWith("; filament used [mm] =") -> filamentMm = amounts(l)
                     l.startsWith("; estimated printing time (normal mode) =") -> seconds = parseDuration(l.substringAfter('=').trim())
                     l.startsWith("T") -> select.find(l)?.let { m -> val t = m.groupValues[1].toInt(); if (tool != null && t != tool) tools++; tool = t }
                 }
             } }
-            return SliceStats(layers, seconds, grams, mm?.div(1000), tools)
+            return SliceStats(layers, seconds, grams ?: total(filamentGrams), total(filamentMm)?.div(1000), tools,
+                filamentMm.map { it?.div(1000) }, filamentGrams)
         }
 
         fun parseDuration(s: String): Double? {
