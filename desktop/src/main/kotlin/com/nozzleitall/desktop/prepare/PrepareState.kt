@@ -232,6 +232,13 @@ class PrepareState(private val app: AppState) {
         set(v) { dirtyFlag = v; editorGeneration++; if (v) history.recordChange() }
     val history = PlateHistory(this)
     var conversionLosses by mutableStateOf<List<String>>(emptyList())
+    internal var unreviewedForeignLayerSettings by mutableStateOf<List<String>>(emptyList())
+        private set
+    internal fun acknowledgeForeignLayerSettings() {
+        unreviewedForeignLayerSettings = emptyList()
+        if (slice is SliceState.Failed) invalidateSlice()
+    }
+
         private set
     var passthrough: Map<String, ByteArray> = emptyMap()
     var metadata: Map<String, String> = emptyMap()
@@ -1220,6 +1227,7 @@ class PrepareState(private val app: AppState) {
         items.clear(); hiddenObjectIds.clear(); selectedPart = -1; selected = null; file = null; manifest = null; name = "Untitled project"; dirty = false; passthrough = emptyMap(); metadata = emptyMap(); conversionLosses = emptyList()
         plateNames.clear(); plateNames += "Plate 1"; plateIds.clear(); plateIds += UUID.randomUUID().toString(); currentPlate = 0
         showPlateOverview = false
+        unreviewedForeignLayerSettings = emptyList()
         nextId = 1; calibration = null
         installedSetup = null
         profileId = ProfileCatalog.DEFAULT_ID
@@ -1263,6 +1271,7 @@ class PrepareState(private val app: AppState) {
         presetSnapshot = openedPreset.getOrNull()
         presetSnapshotProblem = openedPreset.exceptionOrNull()?.let { "The saved preset snapshot cannot be read: ${it.message}. Review this project before slicing." }
         passthrough = p.passthrough; metadata = p.metadata; conversionLosses = p.conversionLosses
+        unreviewedForeignLayerSettings = p.foreignLayerSettings
         // Resolve the machine before interpreting a saved Process identity. Older
         // projects used "process:standard", which is a guided-quality alias rather
         // than an id in a printer library; library-backed machines must fall back to
@@ -1341,7 +1350,7 @@ class PrepareState(private val app: AppState) {
         }
         val readerProblem = "A reader tag was assigned to more than one slot. Review those spool mappings."
             .takeIf { conflictingReaderTags.isNotEmpty() }
-        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem, importedProcess?.notice, p.foreignSettingsNotice, layerActionProblem,
+        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem, importedProcess?.notice, p.foreignPresetNotice, layerActionProblem,
             "Review the saved layer actions before slicing.".takeIf { !layerActionsReviewed }).joinToString(" ").ifBlank { null }
         dirty = false
         history.reset()
@@ -2355,6 +2364,7 @@ class PrepareState(private val app: AppState) {
         val target = if (source == null || saveCopy) app.library.saveNew(project, name)
             else source.also { app.library.save(project, it) }
         file = target; manifest = project.manifest; dirty = false; conversionLosses = emptyList()
+        unreviewedForeignLayerSettings = emptyList()
         return target
     }
 
@@ -2404,6 +2414,10 @@ class PrepareState(private val app: AppState) {
         sliceGeneration++
         batchSlices = emptyMap()
         presetSnapshotProblem?.let { slice = SliceState.Failed(it, GuidanceFailureKind.PRESET); return }
+        if (unreviewedForeignLayerSettings.isNotEmpty()) {
+            slice = SliceState.Failed("Acknowledge the omitted source layer settings before slicing.", GuidanceFailureKind.INPUTS)
+            return
+        }
         val actionProblem = layerActionProblem ?: "Review the saved layer actions before slicing.".takeIf { !layerActionsReviewed }
         actionProblem?.let { slice = SliceState.Failed(it, GuidanceFailureKind.INPUTS); return }
         val bin = SliceEngine.locateEngine() ?: run {

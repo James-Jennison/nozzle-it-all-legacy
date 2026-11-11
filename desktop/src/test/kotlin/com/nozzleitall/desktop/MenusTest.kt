@@ -5,6 +5,7 @@ import com.nozzleitall.project.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import com.nozzleitall.desktop.prepare.SliceState
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -269,8 +270,16 @@ class MenusTest {
         assertTrue(migration.message.orEmpty().contains("needs conversion review"))
         assertTrue(a.library.dir.listFiles().orEmpty().none { it.extension == "3mf" })
         a.prepare.open(source)
-        assertTrue(a.prepare.notice.orEmpty().contains("layer commands"))
+        assertTrue("Layer commands" in a.prepare.unreviewedForeignLayerSettings)
         assertTrue(a.prepare.layerActions.isEmpty())
+        a.prepare.slice(a.scope)
+        assertTrue((a.prepare.slice as SliceState.Failed).message.contains("Acknowledge"))
+        a.prepare.sliceAll(a.scope)
+        assertTrue((a.prepare.slice as SliceState.Failed).message.contains("Acknowledge"))
+        a.prepare.acknowledgeForeignLayerSettings()
+        assertTrue(a.prepare.unreviewedForeignLayerSettings.isEmpty())
+        a.prepare.open(source)
+        assertTrue(a.prepare.unreviewedForeignLayerSettings.isNotEmpty())
 
         a.item("File", "Save").run()
         assertTrue(a.conversionReview!!.losses.single().contains(commandPath))

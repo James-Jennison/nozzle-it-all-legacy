@@ -625,6 +625,11 @@ fun PrepareScreen(state: AppState) {
                 }
             }
         }
+        if (p.unreviewedForeignLayerSettings.isNotEmpty()) {
+            val omitted = p.unreviewedForeignLayerSettings.joinToString { it.lowercase() }
+            Banner("This slice will omit $omitted from the source file.", BannerKind.WARNING,
+                "Continue without source layer settings" to p::acknowledgeForeignLayerSettings)
+        }
         val layerActionProblem = p.layerActionProblem
         if (layerActionProblem != null) {
             Banner(layerActionProblem, BannerKind.WARNING,

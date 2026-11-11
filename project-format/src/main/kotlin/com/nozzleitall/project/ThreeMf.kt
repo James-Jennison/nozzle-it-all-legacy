@@ -106,8 +106,10 @@ data class Project3mf(
     /** The bed the file was laid out on (its printable_area), for placing another slicer's plates. */
     val sourceBed: Pair<Double, Double>? = null,
     val conversionLosses: List<String> = emptyList(),
-    /** A warning shown before slicing when foreign layer data or preset dependencies were found. */
-    val foreignSettingsNotice: String? = null,
+    /** Foreign layer settings that NIA cannot apply to its own slices. */
+    val foreignLayerSettings: List<String> = emptyList(),
+    /** Explanation of foreign preset payloads retained for reference. */
+    val foreignPresetNotice: String? = null,
 )
 
 /** Resource limits for reading untrusted archives. */
@@ -311,6 +313,8 @@ object ThreeMf {
         }
         val sourceLinks = rootLinks(entries[ROOT_RELS])
         val covers = coverLinks(sourceLinks, passthrough)
+        val presetNotice = foreignPresetNotice(entries)
+        val layerSettings = entries.keys.mapNotNull { foreignLayerParts[it.lowercase()] }.distinct()
         val losses = buildList {
             // model_settings.config is regenerated from parsed fields; report that separately for foreign projects.
             val omittedParts = entries.keys.filter {
@@ -332,30 +336,22 @@ object ThreeMf {
             if (!fromNozzle && manifest == null && "Metadata/model_settings.config" in entries) {
                 add("The source slicer's model settings are rewritten using the supported object, material and plate settings.")
             }
+            if (manifest == null && presetNotice != null) add(presetNotice)
         }
         val carried = if (covers.isEmpty()) passthrough else passthrough +
             (ROOT_RELS to writeRootLinks(covers))
         return Project3mf(objects, metadata, manifest, carried, problem, sourceFilaments(entries),
-            parts.plateNames, sourceBed(entries), losses, foreignSettingsNotice(entries, manifest == null))
+            parts.plateNames, sourceBed(entries), losses, layerSettings, presetNotice)
     }
 
-    private fun foreignSettingsNotice(entries: Map<String, ByteArray>, foreignProject: Boolean): String? =
-        buildList {
-            val layers = entries.keys.mapNotNull { foreignLayerParts[it.lowercase()] }.distinct()
-            if (layers.isNotEmpty()) {
-                add("This project contains settings NIA does not apply: ${layers.joinToString { it.lowercase() }}. Review the project before slicing.")
-            }
-            if (foreignProject) {
-                val source = when {
-                    "Metadata/Slic3r_PE.config" in entries -> "PrusaSlicer"
-                    entries.keys.any { it.startsWith("Cura/") && it.endsWith(".inst.cfg") } -> "Cura"
-                    else -> null
-                }
-                if (source != null) {
-                    add("$source preset data was retained in the archive. NIA does not apply those presets or resolve their dependencies. Review the printer, filament and Process before slicing.")
-                }
-            }
-        }.joinToString(" ").ifEmpty { null }
+    private fun foreignPresetNotice(entries: Map<String, ByteArray>): String? {
+        val source = when {
+            "Metadata/Slic3r_PE.config" in entries -> "PrusaSlicer"
+            entries.keys.any { it.startsWith("Cura/") && it.endsWith(".inst.cfg") } -> "Cura"
+            else -> return null
+        }
+        return "$source preset files are retained for reference. NIA does not apply them or resolve their dependencies. Review the printer, filament and Process before slicing."
+    }
 
     /**
      * Writes a canonical 3MF: every object inline in 3D/3dmodel.model, one build item per object with its placement,
