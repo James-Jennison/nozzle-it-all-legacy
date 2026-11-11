@@ -318,10 +318,11 @@ fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit, descrip
 fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit,
                   detail: String? = null, acknowledgement: String? = null, cancelLabel: String = "Cancel",
                   extraContent: (@Composable () -> Unit)? = null, confirmEnabled: Boolean = true,
-                  alternativeAction: (@Composable () -> Unit)? = null) {
+                  alternativeAction: (@Composable () -> Unit)? = null,
+                  reviewSize: androidx.compose.ui.unit.DpSize? = null) {
     DialogWindow(onCloseRequest = onDismiss, title = title,
-        state = rememberDialogState(width = 460.dp,
-            height = when {
+        state = rememberDialogState(width = reviewSize?.width ?: 460.dp,
+            height = reviewSize?.height ?: when {
                 extraContent != null -> 490.dp
                 acknowledgement != null -> 390.dp
                 alternativeAction != null && Nz.textScale >= 1.75f -> 340.dp
@@ -331,9 +332,10 @@ fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive
         val c = Nz.colors
         val cancelFocus = remember { FocusRequester() }
         var acknowledged by remember(title, body, acknowledgement) { mutableStateOf(false) }
+        val detailScroll = rememberScrollState()
         Column(Modifier.fillMaxSize().background(c.surface).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Txt(title, Nz.type.title)
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f).verticalScroll(detailScroll), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Txt(body, Nz.type.body, c.text)
                 detail?.let { Txt(it, Nz.type.bodySmall, c.textMuted) }
                 extraContent?.invoke()
@@ -349,6 +351,8 @@ fun ConfirmDialog(title: String, body: String, confirmLabel: String, destructive
                     }
                 }
             }
+            if (reviewSize != null && detailScroll.maxValue > detailScroll.value)
+                Txt("Scroll to read the rest of the review", Nz.type.bodySmall, c.textMuted)
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.focusRequester(cancelFocus).focusable()) { NzButton(cancelLabel, onDismiss, kind = ButtonKind.SECONDARY) }
