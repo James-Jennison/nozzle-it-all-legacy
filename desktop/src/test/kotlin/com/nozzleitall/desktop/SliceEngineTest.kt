@@ -28,7 +28,11 @@ class SliceEngineTest {
             "; filament used [g] = 2.95, 1.78, 40.57, 9.50",
             "; total filament used [g] = 54.80",
         ))
-        assertEquals(listOf(0.98816, 0.5619, 13.60164, 3.18665), stats.filamentMetres)
+        val expectedMetres = listOf(0.98816, 0.5619, 13.60164, 3.18665)
+        assertEquals(expectedMetres.size, stats.filamentMetres.size)
+        expectedMetres.forEachIndexed { index, expected ->
+            assertEquals(expected, requireNotNull(stats.filamentMetres[index]), 0.000001)
+        }
         assertEquals(listOf(2.95, 1.78, 40.57, 9.5), stats.filamentGrams)
         assertEquals(54.8, requireNotNull(stats.grams), 0.00001)
         val missing = SliceEngine.parseStats(gcode("; filament used [mm] = 1000, bad, 0, 3000", "; filament used [g] = NaN, -2, 0, 9"))
