@@ -38,6 +38,7 @@ class QueueRowUiState {
     var transferActive by mutableStateOf(false)
     val problem = mutableStateOf<String?>(null)
     val expectedStart = mutableStateOf<PrinterAction?>(null)
+    internal var approvedDirectStart by mutableStateOf<PreparedAction?>(null)
     val resolveStart = mutableStateOf<String?>(null)
     val resolutionHold = mutableStateOf<QueueItem?>(null)
     var dispatchedHold: QueueItem? = null
@@ -104,6 +105,7 @@ internal fun DirectPrintStart(
     state: AppState,
     item: QueueItem,
     stillCurrent: () -> Boolean,
+    plate: com.nozzleitall.desktop.prepare.SlicedPlateContext?,
     onReviewProblem: (String) -> Unit,
     onHandoff: (String, MonitorHandoffState) -> Unit,
 ) {
@@ -114,6 +116,7 @@ internal fun DirectPrintStart(
                 ui?.transferActive != true && ui?.flow?.busy != true) {
                 ui?.flow?.pending = null
                 ui?.reviewStart?.value = null
+                ui?.approvedDirectStart = null
                 if (item.directDraft) runCatching { state.fleet.discardUntransferredDirectDraft(item) }
                     .onFailure { state.prepare.notice = "The local print record needs attention in Queue & history: ${it.message}" }
             }
@@ -125,7 +128,7 @@ internal fun DirectPrintStart(
         NzButton("Open queue", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.SECONDARY)
         return
     }
-    QueueRow(state, current, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff, onReviewProblem = onReviewProblem)
+    QueueRow(state, current, first = true, last = true, stillCurrent = stillCurrent, onHandoff = onHandoff, onReviewProblem = onReviewProblem, plate = plate)
 }
 
 @Composable
@@ -134,6 +137,7 @@ private fun QueueRow(
     stillCurrent: () -> Boolean = { true },
     onHandoff: ((String, MonitorHandoffState) -> Unit)? = null,
     onReviewProblem: ((String) -> Unit)? = null,
+    plate: com.nozzleitall.desktop.prepare.SlicedPlateContext? = null,
 ) {
     val c = Nz.colors
     val fleet = state.fleet
@@ -176,6 +180,7 @@ private fun QueueRow(
     fun clearReview() {
         ui.reviewContext = null
         ui.reviewedConnection = null
+        ui.approvedDirectStart = null
         pinnedPrinterId = null
     }
     LaunchedEffect(candidate, previousEntry) {
@@ -309,23 +314,29 @@ private fun QueueRow(
             item.sourceJobId?.let { Txt("Reprint of job: $it", Nz.type.bodySmall, c.textMuted) }
         }
         if (reviewStart != null && candidate != null && flow != null) {
-            val reviewBody = buildString {
-                append("Prepared file: ${item.name}. Printer: ${candidate.config.identity.displayName}. ")
-                append("Prepared for profile: ${item.targetProfileId ?: "not recorded"}. Printer reports: ${candidate.config.identity.profileId ?: "unknown"}. ")
-                append("Toolhead assignments: ${item.toolheadMap.takeIf { it.isNotEmpty() }?.joinToString() ?: "not recorded"}. ")
+            val direct = onHandoff != null
+            val reviewBody = buildList {
+                add(item.name)
+                plate?.let { add("${it.plateName} · ${it.machine} · ${it.nozzles} · ${it.bed}") }
+                add("Printer: ${candidate.config.identity.displayName}")
+                val tools = item.materialPlan?.tools.orEmpty().joinToString { tool ->
+                    "T${tool.index + 1} ${tool.type ?: "material unknown"}"
+                }
+                if (tools.isNotEmpty()) add("Materials: $tools")
+                else if (item.toolheadMap.isNotEmpty()) add("Toolhead assignments: ${item.toolheadMap.joinToString()}")
                 if (item.sourceJobId != null && item.toolheadMap.isEmpty() && candidate.capabilities.value?.multiMaterial != false)
-                    append("This reprint has no retained toolhead mapping; verify each material and toolhead on the printer before Start. ")
+                    add("The reprint has no recorded toolhead mapping. Check the loaded materials.")
                 if (item.engineBuild == null || item.inputDigest == null)
-                    append("The file's slicer inputs or engine are not recorded, so printer compatibility and material use cannot be verified here. ")
-                if (item.targetProfileId == null) append("The prepared file has no recorded target printer profile. ")
-                if (unknownPrinterProfile) append("The printer did not report a profile; confirm that it matches the prepared file. ")
-                materialChecks.forEach { append(it.message).append(' ') }
-                append("Check the plate and loaded materials before Start.")
-            }
-            ConfirmDialog(title = "Review ${item.name} for ${candidate.config.identity.displayName}",
+                    add("Slicer input details are missing. Check printer and material compatibility.")
+                if (item.targetProfileId == null) add("The file has no recorded target printer profile.")
+                if (unknownPrinterProfile) add("The printer profile could not be verified. Check that it matches the file.")
+                materialChecks.forEach { add(it.message) }
+            }.joinToString("\n")
+            ConfirmDialog(title = if (direct) "Start printing?" else "Review ${item.name} for ${candidate.config.identity.displayName}",
                 body = reviewBody,
-                confirmLabel = "Continue to Start", destructive = false,
-                detail = "Continuing may transfer the file to the printer. A separate Start confirmation follows.",
+                confirmLabel = if (direct) "Start printing" else "Continue to Start", destructive = false,
+                detail = if (direct) "Check the build plate is clear. Nozzle will recheck the printer before starting."
+                    else "Continuing may transfer the file to the printer. A separate Start confirmation follows.",
                 acknowledgement = if (item.engineBuild == null || item.inputDigest == null || item.targetProfileId == null || unknownPrinterProfile ||
                     materialChecks.any { !it.blocks } ||
                     (item.sourceJobId != null && item.toolheadMap.isEmpty() && candidate.capabilities.value?.multiMaterial != false))
@@ -365,6 +376,7 @@ private fun QueueRow(
                         val action = PrinterAction.UploadAndStart(file.absolutePath, remote)
                         flow.request(action)
                         expectedStart = action.takeIf { flow.pending?.action == action }
+                        if (direct && expectedStart != null) ui.approvedDirectStart = flow.pending
                         if (expectedStart == null) { problem = flow.message?.first ?: "Start could not be prepared. Review the printer before retrying."; clearReview() }
                     }
                     else scope.launch(Dispatchers.Main) {
@@ -414,19 +426,22 @@ private fun QueueRow(
                                 val action = PrinterAction.StartJob(r.remotePath, item.toolheadMap)
                                 flow.request(action)
                                 expectedStart = action.takeIf { flow.pending?.action == action }
+                                if (direct && expectedStart != null) ui.approvedDirectStart = flow.pending
                                 if (expectedStart == null) { problem = flow.message?.first ?: "Start could not be prepared. Review the printer before retrying."; clearReview() }
                             }
                             is UploadResult.Interrupted -> { problem = "The transfer was interrupted: ${r.reason} The printer file may be incomplete; inspect it before retrying."; expectedStart = null; clearReview() }
                             is UploadResult.Failed -> { problem = r.reason; expectedStart = null; clearReview() }
                         }
                     }
-                }, onDismiss = ::dismissReview, cancelLabel = "Cancel")
+                }, onDismiss = ::dismissReview, cancelLabel = if (direct) "Don't start" else "Cancel")
         }
         uploading?.let { ProgressBar(it, label = "Sending to printer") }
         problem?.let { Banner(it, BannerKind.WARNING) }
         if (candidate != null && flow != null) ActionFlowUi(flow, candidate, onDismiss = ::dismissReview,
             beforeExecute = { prepared ->
-                check(prepared.action == expectedStart) { "The queued Start changed; review it again." }
+                check(prepared.action == expectedStart && (onHandoff == null || prepared === ui.approvedDirectStart)) {
+                    "The queued Start changed; review it again."
+                }
                 check(ui.reviewContext?.invoke() == true && fleet.printers[candidate.config.identity.id] === candidate && ui.reviewedConnection?.isCurrent(candidate) == true &&
                     fleet.queue.value.any { it == item } && candidate.isFree() && candidate.canTakeJobs(item) &&
                     candidate.guard?.needsReconcile != true &&
@@ -439,6 +454,7 @@ private fun QueueRow(
                         else -> "The prepared print or printer changed. Review it again."
                     }
                 }
+                fleet.queuedFile(item)
                 val remotePath = when (val action = prepared.action) {
                     is PrinterAction.StartJob -> action.remotePath
                     is PrinterAction.UploadAndStart -> action.remoteName
@@ -481,7 +497,7 @@ private fun QueueRow(
                 if (expectedStart is PrinterAction.UploadAndStart)
                     fleet.withQueuedTransfer(item.id, candidate.config.identity.id) { execute() }
                 else execute()
-            }, executionScope = state.scope)
+            }, executionScope = state.scope, reviewedStart = ui.approvedDirectStart)
         val reviewedHold = resolutionHold
         if (resolveStart == "choose" && reviewedHold != null) {
             val printerId = reviewedHold.startPrinterId

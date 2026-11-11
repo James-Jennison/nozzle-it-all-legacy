@@ -32,6 +32,7 @@ class SimulatedSendMonitorUiTest {
         override val capabilities: Capabilities = Capabilities(uploadJob = true, startPrint = true),
         private val bundle: File? = null,
         private val startOutcome: ActionOutcome = ActionOutcome.Unknown("simulated lost acknowledgement"),
+        private val interruptFirstUpload: Boolean = true,
     ) : PrinterSession {
         override val identity = PrinterIdentity("fake", "Simulated printer", "Fixture", PrinterFamily.KLIPPER,
             "http://127.0.0.1:1", profileId = "fixture")
@@ -53,7 +54,7 @@ class SimulatedSendMonitorUiTest {
             remoteNames += remoteName
             uploads++
             beforeUploadReturn?.invoke()
-            return if (uploads == 1) UploadResult.Interrupted("simulated disconnect")
+            return if (interruptFirstUpload && uploads == 1) UploadResult.Interrupted("simulated disconnect")
                 else UploadResult.Uploaded("remote/$remoteName")
         }
         override fun perform(action: PrinterAction): ActionOutcome {
@@ -369,8 +370,12 @@ class SimulatedSendMonitorUiTest {
         val root = Files.createTempDirectory("nia-direct-print").toFile()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val app = AppState(AppPaths(File(root, "config"), File(root, "data"), File(root, "cache")).ensure(), scope)
-        val session = FakeSession(Capabilities(uploadAndStart = true, acceptedOutputs = setOf("gcode")),
-            startOutcome = if (accepted) ActionOutcome.Accepted else ActionOutcome.Unknown("simulated lost acknowledgement"))
+        val session = FakeSession(
+            if (accepted) Capabilities(uploadJob = true, startPrint = true, acceptedOutputs = setOf("gcode"))
+            else Capabilities(uploadAndStart = true, acceptedOutputs = setOf("gcode")),
+            startOutcome = if (accepted) ActionOutcome.Accepted else ActionOutcome.Unknown("simulated lost acknowledgement"),
+            interruptFirstUpload = false,
+        )
         val entry = PrinterEntry(PrinterConfig(session.identity, "fake"))
         try {
             app.finishFirstRun(SlicingSetup("snapmaker_u1", "Snapmaker U1", "0.4", toolheads = 4))
@@ -385,9 +390,14 @@ class SimulatedSendMonitorUiTest {
             val source = File(root, "fixture.gcode").apply { writeText("G28\n") }
             val preview = GcodePreview(listOf(GcodePreview.Layer(0.2f, floatArrayOf(0f, 0f, 1f, 1f),
                 byteArrayOf(0), floatArrayOf())), truncated = false)
+            app.prepare.name = "Fixture project"
+            val plate = com.nozzleitall.desktop.prepare.SlicedPlateContext(
+                app.prepare.plateIds.single(), app.prepare.draftQueuePlateId(app.prepare.plateIds.single()),
+                "Fixture plate", "Snapmaker U1", "0.4 mm", "Textured PEI",
+            )
             app.prepare.slice = SliceState.Done(
                 SliceOutcome.Done(source, SliceStats(1, 10.0, 1.0, 1.0, 0), emptyList()),
-                preview, targetProfileId = "fixture")
+                preview, targetProfileId = "fixture", plateContext = plate)
             app.prepare.showPreview = true
             compose.setContent { NozzleTheme("dark") { App(app) } }
             compose.onNodeWithTag("open-send").performSemanticsAction(SemanticsActions.OnClick)
@@ -396,11 +406,12 @@ class SimulatedSendMonitorUiTest {
                     compose.onAllNodes(hasTestTag("print-plate-review") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithTag("print-plate-review").performSemanticsAction(SemanticsActions.OnClick)
-                awaitText("Continue to Start")
+                awaitText("Start printing?")
+                awaitText("Fixture plate")
+                awaitText("Printer: Simulated printer")
                 compose.onNodeWithText("I checked that this file, printer profile, and loaded materials are compatible.")
                     .performSemanticsAction(SemanticsActions.OnClick)
-                compose.onNodeWithTag("confirm-action").performSemanticsAction(SemanticsActions.OnClick)
-                awaitText("Start printing on Simulated printer?")
+                compose.onNodeWithText("Continue to Start").assertDoesNotExist()
                 assertEquals(Destination.PREPARE, app.destination)
                 assertEquals(0, session.starts)
             }
@@ -408,6 +419,7 @@ class SimulatedSendMonitorUiTest {
             compose.onNodeWithText("Don't start").performSemanticsAction(SemanticsActions.OnClick)
             compose.waitUntil(15_000) { app.fleet.queue.value.isEmpty() }
             assertEquals(0, session.starts)
+            assertEquals(0, session.uploads)
             review()
             compose.runOnIdle {
                 val slice = app.prepare.slice as SliceState.Done
@@ -423,6 +435,17 @@ class SimulatedSendMonitorUiTest {
             if (accepted) {
                 assertEquals(MonitorHandoffState.STARTED, app.monitorHandoff?.state)
                 assertTrue(app.fleet.queue.value.isEmpty())
+                assertEquals(1, session.uploads)
+                val remotePath = requireNotNull(app.monitorHandoff?.remotePath)
+                compose.runOnIdle {
+                    entry.status.value = session.reading.copy(state = PrinterState.PRINTING,
+                        job = JobProgress(remotePath, 0.1f, 30.0))
+                }
+                awaitText("Fixture project · Fixture plate")
+                compose.onNodeWithTag("monitor-back-preview").assertExists()
+                compose.onNodeWithTag("monitor-back-project").assertDoesNotExist()
+                compose.onNodeWithText("Job details").performSemanticsAction(SemanticsActions.OnClick)
+                awaitText("File: $remotePath")
             } else {
                 val held = app.fleet.queue.value.single()
                 assertTrue(held.startUncertain)

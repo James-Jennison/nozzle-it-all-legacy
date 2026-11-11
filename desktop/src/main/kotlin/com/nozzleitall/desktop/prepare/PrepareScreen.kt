@@ -3501,7 +3501,7 @@ private fun SendPanel(state: AppState) {
     val items = state.fleet.queue.value
     val staged = stagedItem?.takeIf { expected -> items.any { it.id == expected.id } }
     if (staged != null) {
-        DirectPrintStart(state, staged, ::stillCurrent, { problem = it }) { remotePath, handoff ->
+        DirectPrintStart(state, staged, ::stillCurrent, done.plateContext, { problem = it }) { remotePath, handoff ->
             state.openJobMonitor(com.nozzleitall.desktop.MonitorHandoff(
                 printerId, staged.name, remotePath.substringAfterLast('/').substringAfterLast('\\'),
                 handoff, done.plateContext, remotePath))
@@ -3536,7 +3536,7 @@ private fun SendPanel(state: AppState) {
         Banner("A matching prepared print or unresolved Start needs attention in Queue & history.", BannerKind.WARNING)
         NzButton("Open queue", { state.destination = Destination.JOBS }, kind = ButtonKind.SECONDARY)
     }
-    NzButton("Review and Start", {
+    NzButton("Review print", {
         val digest = preparedDigest ?: return@NzButton
         if (!stillCurrent() || entry.session !== session || entry.guard !== guard || entry.capabilities.value != caps ||
             entry.status.value.toolheads.map { it.preflightObservation() } != reviewedTools ||

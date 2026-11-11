@@ -149,12 +149,17 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     var destination: Destination
         get() = destinationState
         set(value) {
-            if (value != Destination.MONITOR) monitorHandoff = null
+            if (value != Destination.MONITOR) {
+                monitorHandoff = null
+                monitorJobContext = null
+            }
             destinationState = value
         }
     var selectedPrinter by mutableStateOf<String?>(null)
     /** The current workspace job handed to Monitor before the printer reports it as active. */
     var monitorHandoff by mutableStateOf<MonitorHandoff?>(null)
+    internal var monitorJobContext by mutableStateOf<MonitorHandoff?>(null)
+        private set
     /** A return from Monitor can request Send without coupling Monitor to Prepare's drawer implementation. */
     var workspaceSendRequested by mutableStateOf(false)
         private set
@@ -350,6 +355,7 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
 
     fun selectPrinter(id: String) {
         monitorHandoff = null
+        if (monitorJobContext?.printerId != id) monitorJobContext = null
         selectedPrinter = id
     }
     /** Opening Monitor outside a Send handoff must not reuse an older job card for the same printer. */
@@ -360,6 +366,8 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     }
     fun openJobMonitor(handoff: MonitorHandoff) {
         monitorHandoff = handoff
+        if (handoff.state in setOf(MonitorHandoffState.STARTED, MonitorHandoffState.STARTED_RECORD_PENDING, MonitorHandoffState.START_UNCERTAIN)
+            && handoff.remotePath != null) monitorJobContext = handoff
         selectedPrinter = handoff.printerId
         workspaceSendOpen = false
         destination = Destination.MONITOR
@@ -388,6 +396,10 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
         workspaceToolRequest = tool
     }
     fun consumeWorkspaceToolRequest() { workspaceToolRequest = null }
+    internal fun clearMonitorJobContext(expected: MonitorHandoff) {
+        if (monitorJobContext == expected) monitorJobContext = null
+    }
+
     fun clearMonitorHandoff(expected: MonitorHandoff) {
         if (monitorHandoff == expected) monitorHandoff = null
     }

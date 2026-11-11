@@ -93,7 +93,8 @@ fun ActionFlowUi(flow: ActionFlow, entry: PrinterEntry, onDismiss: () -> Unit = 
                  beforeExecute: suspend (PreparedAction) -> Unit = {},
                  onResult: (PreparedAction, ActionOutcome) -> Unit = { _, _ -> },
                  executionGate: suspend (suspend () -> ActionOutcome) -> ActionOutcome = { it() },
-                 executionScope: CoroutineScope? = null) {
+                 executionScope: CoroutineScope? = null,
+                 reviewedStart: PreparedAction? = null) {
     val localScope = rememberCoroutineScope()
     val scope = executionScope ?: localScope
     flow.message?.let { (text, kind) ->
@@ -101,15 +102,31 @@ fun ActionFlowUi(flow: ActionFlow, entry: PrinterEntry, onDismiss: () -> Unit = 
         Banner(text, kind, if (guard?.needsReconcile == true) "Check printer" to { scope.launch(Dispatchers.Main) { flow.reconcile() } } else "Dismiss" to { flow.message = null })
     }
     flow.pending?.let { p ->
+        val execute: () -> Unit = {
+            scope.launch(Dispatchers.Main) {
+                if (flow.pending === p) {
+                    val outcome = flow.confirm(beforeExecute, executionGate)
+                    if (outcome != null) onResult(p, outcome)
+                    else if (reviewedStart === p && flow.pending === p) {
+                        flow.pending = null
+                        flow.message = "The printer disconnected. Review the print again." to BannerKind.WARNING
+                        onDismiss()
+                    }
+                }
+            }
+        }
+        if (reviewedStart === p && (p.action is PrinterAction.StartJob || p.action is PrinterAction.UploadAndStart)) {
+            // The Print plate dialog already confirmed this exact Start. ActionGuard
+            // still prepares and validates the command immediately before dispatch.
+            LaunchedEffect(p) { execute() }
+            return@let
+        }
         val term = Glossary.term(p.action.glossaryId)
         ConfirmDialog(title = "${term.confirm.ifBlank { term.label }} on ${entry.config.identity.displayName}?", body = p.summary,
             confirmLabel = term.confirm.ifBlank { term.label }, destructive = term.destructive,
             detail = "Nozzle checks the printer is still ${p.reviewedState.label.lowercase()} before sending, and never repeats a command on its own.",
             cancelLabel = if (p.action is PrinterAction.StartJob || p.action is PrinterAction.UploadAndStart)
                 "Don't start" else "Don't send",
-            onConfirm = { scope.launch(Dispatchers.Main) {
-                val outcome = flow.confirm(beforeExecute, executionGate)
-                if (outcome != null) onResult(p, outcome)
-            } }, onDismiss = { flow.pending = null; onDismiss() })
+            onConfirm = execute, onDismiss = { flow.pending = null; onDismiss() })
     }
 }
