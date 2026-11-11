@@ -94,7 +94,10 @@ private fun defaultAppMenus(state: AppState, onQuit: () -> Unit): List<AppMenu> 
                     chooseSaveFile("Export project", p.name + ".3mf")?.let { f ->
                         runCatching {
                             if (p.conversionLosses.isEmpty()) ThreeMf.writeAtomically(p.toProject(), f)
-                            else ThreeMf.writeAtomicallyNew(p.toProject(), f)
+                            else {
+                                check(!f.exists()) { "Choose a new filename for the converted copy." }
+                                ThreeMf.writeAtomicallyNew(p.toProject(), f)
+                            }
                         }.onFailure(::report)
                     }
                 }

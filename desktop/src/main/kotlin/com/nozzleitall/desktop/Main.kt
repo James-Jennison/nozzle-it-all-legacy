@@ -2,6 +2,8 @@ package com.nozzleitall.desktop
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -256,6 +258,7 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     internal fun reviewConversion(losses: List<String>, onCancel: () -> Unit = {}, action: () -> Unit) {
         if (conversionReview != null) {
             prepare.notice = "Finish the current 3MF conversion review before starting another."
+            onCancel()
             return
         }
         if (losses.isEmpty()) action() else conversionReview = ConversionReview(losses, action, onCancel)
@@ -270,8 +273,9 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     internal fun reviewCurrentConversion(onStale: () -> Unit = {}, action: () -> Unit) {
         val generation = prepare.editorGeneration
         val file = prepare.file
-        reviewConversion(prepare.conversionLosses) {
-            if (prepare.editorGeneration == generation && prepare.file == file) action()
+        val losses = prepare.conversionLosses
+        reviewConversion(losses) {
+            if (prepare.editorGeneration == generation && prepare.file == file && prepare.conversionLosses == losses) action()
             else {
                 onStale()
                 prepare.notice = "The project changed. Review the conversion again."
@@ -596,9 +600,17 @@ private fun runApp(open: List<File>) = application {
                     destructive = true, onConfirm = state::confirmPlateEdit, onDismiss = state::cancelPlateEdit)
             }
             state.conversionReview?.let { review ->
-                ConfirmDialog("Save a converted copy?", "The original 3MF will stay as it is.", "Save converted copy",
-                    destructive = false, detail = review.losses.joinToString("\n\n"),
-                    onConfirm = { state.resolveConversion(true) }, onDismiss = { state.resolveConversion(false) })
+                ConfirmDialog("Save a converted copy?",
+                    "The original 3MF will stay as it is. If asked for a filename, choose a new one.",
+                    "Save converted copy", destructive = false,
+                    onConfirm = { state.resolveConversion(true) }, onDismiss = { state.resolveConversion(false) },
+                    extraContent = {
+                        Txt("Changes in the copy", Nz.type.bodySmall)
+                        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 230.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(review.losses) { loss -> Txt(loss, Nz.type.bodySmall, Nz.colors.textMuted) }
+                        }
+                    })
             }
             if (state.pendingProjectAction != null && state.conversionReview == null) {
                 ConfirmDialog("Save changes?", "${state.prepare.name} has unsaved changes.", "Discard changes",
