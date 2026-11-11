@@ -11,6 +11,7 @@ import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
 import org.jetbrains.skia.Rect
+import org.jetbrains.skia.SamplingMode
 
 /** Draw recorded extrusion widths and layer heights with per-pixel depth so interior paths
  * cannot overwrite nearer paths. The selected range and move limit come from [plan].
@@ -22,13 +23,45 @@ internal fun DrawScope.drawFilamentPreview(
     palette: List<Color>,
     fallback: Color,
     hiddenTools: Set<Int>,
-    cache: DepthSurfaceCache,
+    cache: FilamentPreviewFrame,
 ) {
-    val surface = cache.frame(size.width, size.height)
-    rasterFilamentPreview(projector, preview, plan, palette, fallback, hiddenTools, surface)
-    val info = ImageInfo(surface.width, surface.height, ColorType.BGRA_8888, ColorAlphaType.PREMUL)
-    Image.makeRaster(info, surface.pixels, surface.width * 4).use { image ->
-        drawIntoCanvas { it.nativeCanvas.drawImageRect(image, Rect.makeWH(size.width, size.height)) }
+    val image = cache.image(projector, preview, plan, palette, fallback, hiddenTools)
+    val source = Rect.makeWH(image.width.toFloat(), image.height.toFloat())
+    drawIntoCanvas { it.nativeCanvas.drawImageRect(image, source, Rect.makeWH(size.width, size.height), SamplingMode.LINEAR, null, true) }
+}
+
+/** Reuses the last raster when only UI outside the toolpath changes. */
+internal class FilamentPreviewFrame : AutoCloseable {
+    private data class Key(
+        val camera: CameraPose, val width: Float, val height: Float, val centreX: Float, val centreY: Float,
+        val plan: PreviewRenderPlan, val palette: List<Color>, val fallback: Color, val hiddenTools: Set<Int>,
+    )
+    private val depth = DepthSurfaceCache(useTiles = false)
+    private var key: Key? = null
+    private var image: Image? = null
+
+    fun image(projector: Projector, preview: GcodePreview, plan: PreviewRenderPlan,
+              palette: List<Color>, fallback: Color, hiddenTools: Set<Int>): Image {
+        val next = Key(projector.cam, projector.w, projector.h, projector.cx, projector.cy, plan, palette, fallback, hiddenTools)
+        image?.takeIf { key == next }?.let { return it }
+        val sample = 2f
+        val supersampled = Projector(projector.w * sample, projector.h * sample,
+            projector.cam.copy(pan = projector.cam.pan * sample), projector.cx, projector.cy)
+        val surface = depth.frame(supersampled.w, supersampled.h)
+        rasterFilamentPreview(supersampled, preview, plan, palette, fallback, hiddenTools, surface)
+        val info = ImageInfo(surface.width, surface.height, ColorType.BGRA_8888, ColorAlphaType.PREMUL)
+        return Image.makeRaster(info, surface.pixels, surface.width * 4).also {
+            image?.close()
+            image = it
+            key = next
+        }
+    }
+
+    override fun close() {
+        image?.close()
+        image = null
+        key = null
+        depth.release()
     }
 }
 

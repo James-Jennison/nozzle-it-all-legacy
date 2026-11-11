@@ -1335,7 +1335,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                         }()
                     }
                     PreviewView.TOOL -> {
-                        Txt("Estimated filament usage for the plate", Nz.type.bodySmall, c.textMuted)
+                        Txt("Est. filament use · Length / mass", Nz.type.bodySmall, c.textMuted)
                         preview.toolsUsed.forEach { t ->
                             val slot = slots.getOrNull(t)
                             val profileName = slot?.filamentProfile?.let { id -> p.filamentLibrary().firstOrNull { it.id == id }?.name }
@@ -1344,14 +1344,16 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(parseHex(slot?.colorHex) ?: c.accent))
                                 Column(Modifier.weight(1f)) {
-                                    Txt(label, Nz.type.bodySmall, maxLines = 2)
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        val length = stats.filamentMetres.getOrNull(t)?.let { "%.2f m".format(it) } ?: "unavailable"
-                                        val mass = stats.filamentGrams.getOrNull(t)?.let { "%.2f g".format(it) } ?: "unavailable"
-                                        Txt("Length $length", Nz.type.bodySmall, c.textMuted)
-                                        Txt("Mass $mass", Nz.type.bodySmall, c.textMuted)
+                                        Txt(label, Nz.type.bodySmall, maxLines = 2)
+                                        usage?.byTool?.get(t)?.let { Txt(formatDuration(it.seconds, includeSeconds = true), Nz.type.bodySmall, c.textMuted) }
                                     }
-                                    usage?.byTool?.get(t)?.let { Txt(formatDuration(it.seconds, includeSeconds = true), Nz.type.bodySmall, c.textMuted) }
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        val length = stats.filamentMetres.getOrNull(t)?.let { "%.2f m".format(it) } ?: "Length unavailable"
+                                        val mass = stats.filamentGrams.getOrNull(t)?.let { "%.2f g".format(it) } ?: "Mass unavailable"
+                                        Txt(length, Nz.type.bodySmall, c.textMuted, modifier = Modifier.semantics { contentDescription = "Filament length: $length" })
+                                        Txt(mass, Nz.type.bodySmall, c.textMuted, modifier = Modifier.semantics { contentDescription = "Filament mass: $mass" })
+                                    }
                                 }
                                 Txt(if (visible) "●" else "○", Nz.type.label, if (visible) c.accent else c.textMuted,
                                     modifier = Modifier.clip(CircleShape).clickable(onClickLabel = if (visible) "Hide $label" else "Show $label") {

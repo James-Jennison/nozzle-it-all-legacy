@@ -193,7 +193,7 @@ fun simplifyForDisplay(mesh: Mesh, budget: Int, checkCancelled: () -> Unit = {},
     return best
 }
 
-internal class Projector(val w: Float, val h: Float, cam: CameraPose, val cx: Float, val cy: Float) {
+internal class Projector(val w: Float, val h: Float, internal val cam: CameraPose, val cx: Float, val cy: Float) {
     constructor(w: Float, h: Float, cam: ViewCamera, cx: Float, cy: Float): this(w,h,cam.snapshot(),cx,cy)
     internal val orientation = cam.yaw to cam.pitch
     private val yaw = Math.toRadians(cam.yaw.toDouble()); private val pitch = Math.toRadians(cam.pitch.toDouble())
@@ -244,16 +244,16 @@ fun PlateViewer(bedW: Float, bedD: Float, objects: List<PlateObject>, camera: Vi
                 onContextMenu: ((Offset, Int?) -> Unit)? = null) {
     val keys = if (preview == null) displayKeys(objects) else emptyList()
     val realistic = previewRealistic && preview?.supportsRealisticView == true
-    val previewPlan = remember(preview, previewFirstLayer, previewLayer, previewMove, realistic) {
+    val filamentBeads = !realistic && previewView == PreviewView.TOOL && preview?.supportsRealisticView == true
+    val previewPlan = remember(preview, previewFirstLayer, previewLayer, previewMove, realistic, filamentBeads) {
         preview?.let {
             val budget = if (realistic) MAX_PRIOR_REALISTIC_SEGMENTS else MAX_PRIOR_PREVIEW_SEGMENTS
-            previewRenderPlan(it, previewLayer, budget, moveLimit = previewMove, firstLayer = previewFirstLayer)
+            previewRenderPlan(it, previewLayer, budget, moveLimit = previewMove, firstLayer = previewFirstLayer,
+                preferStructural = filamentBeads)
         }
     }
-    val filamentDepth = remember(preview, previewView, realistic) {
-        if (!realistic && previewView == PreviewView.TOOL && preview?.supportsRealisticView == true)
-            DepthSurfaceCache(useTiles = false) else null
-    }
+    val filamentDepth = remember(preview, filamentBeads) { if (filamentBeads) FilamentPreviewFrame() else null }
+    DisposableEffect(filamentDepth) { onDispose { filamentDepth?.close() } }
     var completed by remember { mutableStateOf<PreparedDisplays?>(null) }
     var failedKeys by remember { mutableStateOf<List<DisplayKey>?>(null) }
     var retry by remember { mutableStateOf(0) }
@@ -615,12 +615,15 @@ private const val MAX_PRIOR_REALISTIC_SEGMENTS = 40_000
  * the prior-layer budget.
  */
 internal fun previewRenderPlan(preview: GcodePreview, layer: Int, priorBudget: Int = MAX_PRIOR_PREVIEW_SEGMENTS,
-                               moveLimit: Int = Int.MAX_VALUE, firstLayer: Int = 0): PreviewRenderPlan {
+                               moveLimit: Int = Int.MAX_VALUE, firstLayer: Int = 0, preferStructural: Boolean = false): PreviewRenderPlan {
     if (preview.layers.isEmpty()) return PreviewRenderPlan(-1, emptyList())
     val upTo = layer.coerceIn(0, preview.layers.lastIndex)
     val from = firstLayer.coerceIn(0, upTo)
     val outer = GcodePreview.featureIndex("Outer wall")
     val tower = GcodePreview.featureIndex("Prime tower")
+    val overhang = GcodePreview.featureIndex("Overhang wall")
+    fun isStructural(kind: Byte): Boolean = kind.toInt() == outer || kind.toInt() == tower ||
+        (preferStructural && kind.toInt() == overhang)
     val budget = priorBudget.coerceAtLeast(0)
     val selected = Array(upTo - from) { linkedSetOf<Int>() }
     var remaining = budget
@@ -630,8 +633,8 @@ internal fun previewRenderPlan(preview: GcodePreview, layer: Int, priorBudget: I
         if (remaining == 0) break
         val kinds = preview.layers[li].kinds
         if (kinds.isEmpty()) continue
-        val structural = kinds.indexOfFirst { it.toInt() == outer || it.toInt() == tower }
-        selected[li - from] += structural.takeIf { it >= 0 } ?: 0
+        val firstStructural = kinds.indexOfFirst(::isStructural)
+        selected[li - from] += firstStructural.takeIf { it >= 0 } ?: 0
         remaining--
     }
 
@@ -640,13 +643,14 @@ internal fun previewRenderPlan(preview: GcodePreview, layer: Int, priorBudget: I
     val interior = ArrayList<SegmentRef>()
     for (li in from until upTo) preview.layers[li].kinds.forEachIndexed { index, kind ->
         if (index in selected[li - from]) return@forEachIndexed
-        val target = if (kind.toInt() == outer || kind.toInt() == tower) structural else interior
+        val target = if (isStructural(kind)) structural else interior
         target += SegmentRef(li, index)
     }
 
     val take = minOf(remaining, structural.size + interior.size)
     var structuralTake = when {
         structural.isEmpty() -> 0
+        preferStructural -> minOf(take, structural.size)
         interior.isEmpty() -> take
         take < 2 -> take
         else -> ((take.toLong() * structural.size) / (structural.size + interior.size)).toInt().coerceIn(1, take - 1)
