@@ -84,20 +84,32 @@ class ThreeMfTest {
         val original = ThreeMf.readEntries(ByteArrayInputStream(ThreeMf.write(base))) + vendorParts
         val opened = ThreeMf.read(ByteArrayInputStream(zip(*original.toList().toTypedArray())))
 
-        assertEquals(3, opened.conversionLosses.size)
+        assertEquals(4, opened.conversionLosses.size)
         vendorParts.keys.forEach { path ->
             assertTrue(opened.conversionLosses.any { path in it })
             assertFalse(path in opened.passthrough)
         }
-        assertTrue(opened.foreignSettingsNotice.orEmpty().contains("layer commands"))
-        assertTrue(opened.foreignSettingsNotice.orEmpty().contains("PrusaSlicer"))
+        assertTrue("Layer commands" in opened.foreignLayerSettings)
+        assertTrue(opened.foreignPresetNotice.orEmpty().contains("PrusaSlicer"))
         val saved = ThreeMf.write(opened.copy(manifest = manifest(), passthrough = opened.passthrough + vendorParts))
         val entries = ThreeMf.readEntries(ByteArrayInputStream(saved))
         assertArrayEquals(original.getValue(preset), entries.getValue(preset))
         assertTrue(vendorParts.keys.none { it in entries })
         val reopened = ThreeMf.read(ByteArrayInputStream(saved))
         assertTrue(reopened.conversionLosses.isEmpty())
-        assertNull(reopened.foreignSettingsNotice)
+        assertTrue(reopened.foreignLayerSettings.isEmpty())
+        assertTrue(reopened.foreignPresetNotice.orEmpty().contains("PrusaSlicer"))
+
+        val legacy = ThreeMf.read(ByteArrayInputStream(zip(*(entries + vendorParts).toList().toTypedArray())))
+        assertNotNull(legacy.manifest)
+        assertEquals(3, legacy.conversionLosses.size)
+        assertTrue("Layer commands" in legacy.foreignLayerSettings)
+
+        val curaPreset = "Cura/global_Fine.inst.cfg"
+        val cura = sample(null).copy(passthrough = mapOf(curaPreset to "profile".toByteArray()))
+        val curaOpened = ThreeMf.read(ByteArrayInputStream(ThreeMf.write(cura)))
+        assertTrue(curaOpened.conversionLosses.single().contains("Cura preset files"))
+        assertTrue(curaPreset in curaOpened.passthrough)
     }
 
     @Test fun unknownManifestFieldsSurviveAnOlderReader() {
