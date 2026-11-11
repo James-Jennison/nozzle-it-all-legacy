@@ -116,10 +116,16 @@ fun MonitorScreen(state: AppState) {
         val cameraAvailable = entry.cameras.value.isNotEmpty()
         val jobContext = state.monitorJobContext?.takeIf { it.printerId == entry.config.identity.id }
         val reportedActivePath = reportedJobPath(status.job?.fileName)
-        LaunchedEffect(jobContext, status.state, reportedActivePath) {
-            if (jobContext != null && (status.state in setOf(PrinterState.FINISHED, PrinterState.CANCELLED, PrinterState.ERROR) ||
-                (status.state.isActiveJob && reportedActivePath != null &&
-                    reportedActivePath != reportedJobPath(jobContext.remotePath)))) {
+        val completionPath = reportedJobPath(status.completedFileName)
+        var observedContextJob by remember(jobContext) { mutableStateOf(false) }
+        LaunchedEffect(jobContext, status.state, reportedActivePath, completionPath) {
+            val contextPath = reportedJobPath(jobContext?.remotePath)
+            if (jobContext == null || contextPath == null) return@LaunchedEffect
+            if (status.state.isActiveJob && reportedActivePath != null) {
+                if (reportedActivePath == contextPath) observedContextJob = true
+                else state.clearMonitorJobContext(jobContext)
+            } else if (status.state in setOf(PrinterState.FINISHED, PrinterState.CANCELLED, PrinterState.ERROR) &&
+                (observedContextJob || completionPath == contextPath)) {
                 state.clearMonitorJobContext(jobContext)
             }
         }
