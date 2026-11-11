@@ -766,6 +766,25 @@ class PrepareState(private val app: AppState) {
         }
     }
 
+    internal fun moveOverviewSelectionTo(plateId: String) {
+        val target = plateIds.indexOf(plateId)
+        if (target < 0 || toolBusy != null || overviewSelection.isEmpty()) return
+        val moving = items.filter { it.id in overviewSelection && it.plate != target }
+        if (moving.isEmpty()) return
+        if (plateLocked(target) || moving.any { plateLocked(it.plate) }) {
+            notice = "Unlock all affected plates before moving the selection."
+            return
+        }
+        editSelection {
+            moving.forEach { it.plate = target }
+            selected = null
+            clearOverviewSelection()
+            changed()
+        }
+        showPlate(target)
+        notice = "Moved ${moving.size} selected objects to ${plateNames[target]}. Check their placement before slicing."
+    }
+
     fun printer(): PrinterEntry? = printerId?.let { app.fleet.printers[it] }
 
     /** Choosing a physical destination never changes the independently installed slicing configuration. */

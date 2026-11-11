@@ -1003,6 +1003,13 @@ fun PrepareScreen(state: AppState) {
                             Nz.type.bodySmall, c.textMuted, modifier = Modifier.weight(1f))
                         if (count > 0) NzButton("Clear selection", p::clearOverviewSelection, kind = ButtonKind.QUIET)
                     }
+                    if (p.overviewSelection.isNotEmpty()) {
+                        val destinations = p.plateIds.mapIndexedNotNull { index, id ->
+                            if (p.plateLocked(index)) null else com.nozzleitall.desktop.settings.Choice(id, "${index + 1}. ${p.plateNames[index]}")
+                        }
+                        com.nozzleitall.desktop.settings.DenseSelect("Move selected objects", destinations, "Move to plate",
+                            Modifier.width(210.dp), enabled = destinations.isNotEmpty() && p.toolBusy == null, onSelect = p::moveOverviewSelectionTo)
+                    }
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         p.plateNames.forEachIndexed { i, plateName ->
                             val plateId = p.plateIds[i]

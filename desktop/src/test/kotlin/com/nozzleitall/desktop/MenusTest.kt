@@ -171,6 +171,33 @@ class MenusTest {
         assertEquals(1, p.plateItems(0).size)
     }
 
+    @Test fun crossPlateMoveIsAtomicAndSkipsLockedSourcesAndDestinations() {
+        val p = app().prepare
+        p.items += PrepItem(1, "first", cube, 40f, 60f)
+        p.addPlate()
+        p.items += PrepItem(2, "second", cube, 90f, 70f, plate = 1)
+        p.addPlate()
+        p.history.reset()
+        val destination = p.plateIds.last()
+        p.setOverviewSelected(1, true)
+        p.setOverviewSelected(2, true)
+        p.togglePlateLock(p.plateIds.first())
+        p.moveOverviewSelectionTo(destination)
+        assertEquals(listOf(0, 1), p.items.map { it.plate })
+        p.togglePlateLock(p.plateIds.first())
+        p.togglePlateLock(destination)
+        p.moveOverviewSelectionTo(destination)
+        assertEquals(listOf(0, 1), p.items.map { it.plate })
+        p.togglePlateLock(destination)
+        p.moveOverviewSelectionTo(destination)
+        assertEquals(listOf(2, 2), p.items.map { it.plate })
+        assertEquals(listOf(40f, 90f), p.items.map { it.x })
+        p.history.undo()
+        assertEquals(listOf(0, 1), p.items.map { it.plate })
+        p.history.redo()
+        assertEquals(listOf(2, 2), p.items.map { it.plate })
+    }
+
     @Test fun commandShortcutPersistsRejectsConflictsAndRestoresDefault() {
         val a = app()
         val file = File(a.paths.config, "test-shortcuts.json")
