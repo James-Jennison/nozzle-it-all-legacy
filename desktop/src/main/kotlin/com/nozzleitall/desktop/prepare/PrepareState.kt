@@ -1341,7 +1341,7 @@ class PrepareState(private val app: AppState) {
         }
         val readerProblem = "A reader tag was assigned to more than one slot. Review those spool mappings."
             .takeIf { conflictingReaderTags.isNotEmpty() }
-        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem, importedProcess?.notice, layerActionProblem,
+        notice = listOfNotNull(p.manifestProblem, presetSnapshotProblem, readerProblem, importedProcess?.notice, p.foreignSettingsNotice, layerActionProblem,
             "Review the saved layer actions before slicing.".takeIf { !layerActionsReviewed }).joinToString(" ").ifBlank { null }
         dirty = false
         history.reset()

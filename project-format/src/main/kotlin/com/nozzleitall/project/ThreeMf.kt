@@ -106,6 +106,8 @@ data class Project3mf(
     /** The bed the file was laid out on (its printable_area), for placing another slicer's plates. */
     val sourceBed: Pair<Double, Double>? = null,
     val conversionLosses: List<String> = emptyList(),
+    /** A warning shown before slicing when foreign layer data or preset dependencies were found. */
+    val foreignSettingsNotice: String? = null,
 )
 
 /** Resource limits for reading untrusted archives. */
@@ -127,6 +129,17 @@ object ThreeMf {
     private val owned = setOf("[Content_Types].xml", "_rels/.rels", MODEL_PATH, ProjectManifest.ARCHIVE_PATH)
     /** Per-part settings from other slicers. Their part filaments are folded into the paint on read, so they're not kept. */
     private val partSettings = setOf("Metadata/model_settings.config", "Metadata/Slic3r_PE_model.config")
+    // These paths are interpreted as active settings by the originating slicers. NIA stores
+    // reviewed layer actions and per-object layer settings separately in its manifest.
+    private val foreignLayerParts = mapOf(
+        "metadata/custom_gcode_per_layer.xml" to "Layer commands",
+        "metadata/prusa_slicer_custom_gcode_per_print_z.xml" to "Layer commands",
+        "metadata/layer_config_ranges.xml" to "Layer setting ranges",
+        "metadata/prusa_slicer_layer_config_ranges.xml" to "Layer setting ranges",
+        "metadata/layer_heights_profile.txt" to "Variable layer heights",
+        "metadata/slic3r_pe_layer_heights_profile.txt" to "Variable layer heights",
+    )
+
     /** Longest paint string accepted for one triangle. Orca's brush strokes subdivide a triangle deeply, so real files carry strings of several thousand characters. */
     private const val MAX_PAINT_CHARS = 65536
     const val PAINT_ATTR = "paint_color"
@@ -292,7 +305,10 @@ object ThreeMf {
             catch (e: Exception) { problem = "The project's Nozzle details are damaged (${e.message}). The models opened; check materials and printer." }
         }
         // Geometry parts (3D/...) are flattened into the canonical model on save, so they are not carried forward.
-        val passthrough = entries.filterKeys { it !in owned && it != root && !it.startsWith("3D/") && it !in partSettings }
+        val passthrough = entries.filterKeys {
+            it !in owned && it != root && !it.startsWith("3D/") && it !in partSettings &&
+                it.lowercase() !in foreignLayerParts
+        }
         val sourceLinks = rootLinks(entries[ROOT_RELS])
         val covers = coverLinks(sourceLinks, passthrough)
         val losses = buildList {
@@ -303,7 +319,11 @@ object ThreeMf {
             if (omittedParts.any { it.endsWith(".model", ignoreCase = true) }) {
                 add("Separate component files are flattened into the main model.")
             }
-            omittedParts.forEach { add("Archive entry omitted: $it") }
+            omittedParts.forEach { path ->
+                val layerFeature = foreignLayerParts[path.lowercase()]
+                add(if (layerFeature == null) "Archive entry omitted: $path"
+                    else "$layerFeature from the source slicer are not applied in NIA and will be omitted from the copy ($path).")
+            }
             sourceLinks.filter { it.getAttribute("Type") != MODEL_REL && it !in covers }.forEach { link ->
                 val type = link.getAttribute("Type")
                 val label = if (type in coverTypes) "Cover image link" else "Unsupported archive link"
@@ -316,8 +336,26 @@ object ThreeMf {
         val carried = if (covers.isEmpty()) passthrough else passthrough +
             (ROOT_RELS to writeRootLinks(covers))
         return Project3mf(objects, metadata, manifest, carried, problem, sourceFilaments(entries),
-            parts.plateNames, sourceBed(entries), losses)
+            parts.plateNames, sourceBed(entries), losses, foreignSettingsNotice(entries, manifest == null))
     }
+
+    private fun foreignSettingsNotice(entries: Map<String, ByteArray>, foreignProject: Boolean): String? =
+        buildList {
+            val layers = entries.keys.mapNotNull { foreignLayerParts[it.lowercase()] }.distinct()
+            if (layers.isNotEmpty()) {
+                add("This project contains settings NIA does not apply: ${layers.joinToString { it.lowercase() }}. Review the project before slicing.")
+            }
+            if (foreignProject) {
+                val source = when {
+                    "Metadata/Slic3r_PE.config" in entries -> "PrusaSlicer"
+                    entries.keys.any { it.startsWith("Cura/") && it.endsWith(".inst.cfg") } -> "Cura"
+                    else -> null
+                }
+                if (source != null) {
+                    add("$source preset data was retained in the archive. NIA does not apply those presets or resolve their dependencies. Review the printer, filament and Process before slicing.")
+                }
+            }
+        }.joinToString(" ").ifEmpty { null }
 
     /**
      * Writes a canonical 3MF: every object inline in 3D/3dmodel.model, one build item per object with its placement,
@@ -364,7 +402,9 @@ object ThreeMf {
             put(MODEL_PATH, sb.toString().toByteArray())
             project.manifest?.let { put(ProjectManifest.ARCHIVE_PATH, it.toJson().toString(2).toByteArray()) }
             modelSettings(project)?.let { put("Metadata/model_settings.config", it.toByteArray()) }
-            project.passthrough.forEach { (name, bytes) -> if (validEntryName(name) && name !in owned) put(name, bytes) }
+            project.passthrough.forEach { (name, bytes) ->
+                if (validEntryName(name) && name !in owned && name.lowercase() !in foreignLayerParts) put(name, bytes)
+            }
         }
         return out.toByteArray()
     }

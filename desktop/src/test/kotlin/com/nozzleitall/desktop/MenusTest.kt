@@ -249,6 +249,38 @@ class MenusTest {
         assertEquals(3, ThreeMf.read(saved).manifest!!.plates.size)
     }
 
+    @Test fun foreignLayerCommandsAreVisibleBeforeConversionAndExcludedFromTheCopy() {
+        val a = app()
+        val source = File(a.paths.config, "Foreign layer commands.3mf")
+        val commandPath = "Metadata/custom_gcode_per_layer.xml"
+        val model = ThreeMf.write(Project3mf(listOf(ModelObject(1, "cube", cube))))
+        val entries = ThreeMf.readEntries(model.inputStream()) + (commandPath to "<commands/>".toByteArray())
+        java.util.zip.ZipOutputStream(source.outputStream()).use { zip ->
+            entries.forEach { (path, bytes) ->
+                zip.putNextEntry(java.util.zip.ZipEntry(path))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        val original = source.readBytes()
+        a.prepare.open(source)
+        assertTrue(a.prepare.notice.orEmpty().contains("layer commands"))
+        assertTrue(a.prepare.layerActions.isEmpty())
+
+        a.item("File", "Save").run()
+        assertTrue(a.conversionReview!!.losses.single().contains(commandPath))
+        a.resolveConversion(false)
+        assertArrayEquals(original, source.readBytes())
+        assertTrue(a.library.dir.listFiles().orEmpty().none { it.extension == "3mf" })
+
+        a.item("File", "Save").run()
+        a.resolveConversion(true)
+        val saved = a.library.dir.listFiles()!!.single { it.extension == "3mf" }
+        assertArrayEquals(original, source.readBytes())
+        assertFalse(commandPath in saved.inputStream().use { ThreeMf.readEntries(it) })
+        assertTrue(ThreeMf.read(saved).conversionLosses.isEmpty())
+    }
+
     @Test fun savingEditedExternalProjectLeavesItsSourceIntact() {
         val a = app()
         val external = File(a.paths.config, "Foreign.3mf")

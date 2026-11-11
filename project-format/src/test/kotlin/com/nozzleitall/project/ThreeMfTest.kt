@@ -74,6 +74,32 @@ class ThreeMfTest {
         assertTrue(ThreeMf.read(ByteArrayInputStream(saved)).conversionLosses.isEmpty())
     }
 
+    @Test fun foreignLayerSettingsAreDisclosedAndNeverWrittenAsActiveMetadata() {
+        val command = "Metadata/CUSTOM_GCODE_PER_LAYER.XML"
+        val range = "Metadata/Prusa_Slicer_layer_config_ranges.xml"
+        val variable = "Metadata/Slic3r_PE_layer_heights_profile.txt"
+        val preset = "Metadata/Slic3r_PE.config"
+        val vendorParts = listOf(command, range, variable).associateWith { "foreign setting".toByteArray() }
+        val base = sample(null).copy(passthrough = mapOf(preset to "print_settings_id = Custom".toByteArray()))
+        val original = ThreeMf.readEntries(ByteArrayInputStream(ThreeMf.write(base))) + vendorParts
+        val opened = ThreeMf.read(ByteArrayInputStream(zip(*original.toList().toTypedArray())))
+
+        assertEquals(3, opened.conversionLosses.size)
+        vendorParts.keys.forEach { path ->
+            assertTrue(opened.conversionLosses.any { path in it })
+            assertFalse(path in opened.passthrough)
+        }
+        assertTrue(opened.foreignSettingsNotice.orEmpty().contains("layer commands"))
+        assertTrue(opened.foreignSettingsNotice.orEmpty().contains("PrusaSlicer"))
+        val saved = ThreeMf.write(opened.copy(manifest = manifest(), passthrough = opened.passthrough + vendorParts))
+        val entries = ThreeMf.readEntries(ByteArrayInputStream(saved))
+        assertArrayEquals(original.getValue(preset), entries.getValue(preset))
+        assertTrue(vendorParts.keys.none { it in entries })
+        val reopened = ThreeMf.read(ByteArrayInputStream(saved))
+        assertTrue(reopened.conversionLosses.isEmpty())
+        assertNull(reopened.foreignSettingsNotice)
+    }
+
     @Test fun unknownManifestFieldsSurviveAnOlderReader() {
         val newer = manifest {
             put("version", org.json.JSONArray().put(1).put(3))
