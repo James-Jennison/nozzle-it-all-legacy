@@ -1574,6 +1574,30 @@ class PrepareState(private val app: AppState) {
             items.addAll(copies); setSelection(copies.map { it.id }.toSet()); changed()
         } finally { history.endEdit() }
     }
+    internal fun centerOnPlate(item: PrepItem) {
+        if (toolBusy != null || plateItems().none { it === item }) return
+        val (width, depth) = bed
+        if (item.x == width / 2 && item.y == depth / 2) return
+        editSelection {
+            item.x = width / 2
+            item.y = depth / 2
+            changed()
+        }
+    }
+
+    internal fun resetObjectTransform(item: PrepItem) {
+        if (toolBusy != null || plateItems().none { it === item }) return
+        if (item.rotZ == 0f && item.scale == 1f && item.sx == 1f && item.sy == 1f && item.sz == 1f) return
+        editSelection {
+            item.rotZ = 0f
+            item.scale = 1f
+            item.sx = 1f
+            item.sy = 1f
+            item.sz = 1f
+            changed()
+        }
+    }
+
     fun removeSelected() {
         if (selectedIds.isEmpty()) return
         history.beginEdit()

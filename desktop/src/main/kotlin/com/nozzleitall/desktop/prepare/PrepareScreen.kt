@@ -2655,6 +2655,14 @@ private fun objectContextActions(p: PrepareState, item: PrepItem): List<ContextM
         ContextMenuItem(if (p.objectVisible(item.id)) "Hide object" else "Show object") {
             if (p.plateItems().any { it === item }) p.toggleObjectVisibility(item.id)
         },
+        ContextMenuItem("Center on plate") { p.centerOnPlate(item) },
+        ContextMenuItem("Reset rotation and scale") { p.resetObjectTransform(item) },
+        ContextMenuItem("Auto orient object") {
+            if (p.toolBusy == null && selectTarget()) p.orient()
+        },
+        ContextMenuItem("Split into objects") {
+            if (p.toolBusy == null && selectTarget()) p.splitSelected()
+        },
         ContextMenuItem("Duplicate object") {
             if (p.toolBusy == null && selectTarget()) p.duplicateSelected()
         },
