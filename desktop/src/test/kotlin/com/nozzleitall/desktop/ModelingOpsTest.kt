@@ -351,6 +351,40 @@ class ModelingOpsTest {
         }
     }
 
+    @Test fun sourceReplacementIsUndoableAndLeavesTheSourceFileUntouched() = runBlocking {
+        val app = app()
+        val p = app.prepare
+        val source = File(app.paths.cache, "replacement.stl")
+        val bigger = Mesh(cube.vertices.map { it * 2 }.toFloatArray(), cube.triangles)
+        val sourceBytes = MeshIO.stlBytes(bigger)
+        source.writeBytes(sourceBytes)
+        val item = PrepItem(1, "positioned cube", cube, 48f, 52f, rotZ = 20f, slot = 2)
+        withContext(Dispatchers.Main) {
+            p.items += item
+            p.history.reset()
+            p.replaceSourceGeometry(item, source)
+        }
+        withTimeout(10_000) { while (p.toolBusy != null) delay(20) }
+        withContext(Dispatchers.Main) {
+            val replaced = p.items.single()
+            assertEquals(item.id, replaced.id)
+            assertEquals(item.name, replaced.name)
+            assertEquals(item.x, replaced.x, 0f)
+            assertEquals(item.y, replaced.y, 0f)
+            assertEquals(item.rotZ, replaced.rotZ, 0f)
+            assertEquals(item.slot, replaced.slot)
+            assertEquals(item.height * 2, replaced.height, 0.001f)
+            assertEquals(source, replaced.sourceGeometry)
+            assertTrue(sourceBytes.contentEquals(source.readBytes()))
+            p.history.undo()
+            assertEquals(item.height, p.items.single().height, 0.001f)
+            assertNull(p.items.single().sourceGeometry)
+            p.history.redo()
+            assertEquals(source, p.items.single().sourceGeometry)
+            assertEquals(item.height * 2, p.items.single().height, 0.001f)
+        }
+    }
+
     @Test fun raisedAndEngravedTextAreAtomicUndoableOperations() = runBlocking {
         engineReady()
         val app = app(); val p = app.prepare

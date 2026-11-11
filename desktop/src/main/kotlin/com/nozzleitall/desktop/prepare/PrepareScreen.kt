@@ -2653,7 +2653,7 @@ private fun objectContextActions(p: PrepareState, item: PrepItem): List<ContextM
         p.selectObject(item.id)
         return true
     }
-    return listOf(
+    return listOfNotNull(
         ContextMenuItem("Select ${item.name}") { selectTarget() },
         ContextMenuItem(if (p.objectVisible(item.id)) "Hide object" else "Show object") {
             if (p.plateItems().any { it === item }) p.toggleObjectVisibility(item.id)
@@ -2665,6 +2665,14 @@ private fun objectContextActions(p: PrepareState, item: PrepItem): List<ContextM
         },
         ContextMenuItem("Split into objects") {
             if (p.toolBusy == null && selectTarget()) p.splitSelected()
+        },
+        item.sourceGeometry?.let { source ->
+            ContextMenuItem("Reload source geometry") { p.replaceSourceGeometry(item, source) }
+        },
+        ContextMenuItem("Replace geometry from file…") {
+            if (p.toolBusy == null && p.plateItems().any { it === item })
+                chooseFiles("Replace geometry", geometryExtensions, multiple = false).firstOrNull()
+                    ?.let { p.replaceSourceGeometry(item, it) }
         },
         ContextMenuItem("Duplicate object") {
             if (p.toolBusy == null && selectTarget()) p.duplicateSelected()

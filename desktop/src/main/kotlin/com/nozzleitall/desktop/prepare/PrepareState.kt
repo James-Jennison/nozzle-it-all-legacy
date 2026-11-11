@@ -42,6 +42,8 @@ private data class SliceInputSnapshot(
     val layerActionMachine: String?,
 )
 
+internal val geometryExtensions = listOf("stl", "obj")
+
 /**
  * An object on the plate. [slot] is what it prints with where it isn't painted. A painted model keeps the file's own
  * filament numbers in its paint; [paintSlots] (entry N-1 for the file's filament N) says which slot each one prints with,
@@ -75,6 +77,8 @@ class PrepItem(val id: Int, name: String, val mesh: Mesh, x: Float, y: Float, ro
     val paintSlots = androidx.compose.runtime.mutableStateListOf<Int>().apply { addAll(paintSlots) }
     /** The file's filament for unpainted areas, when the file said (a model from another slicer). */
     var ownFilament: Int? = null
+    /** Session-only reference. A saved 3MF never embeds a workstation path. */
+    internal var sourceGeometry by mutableStateOf<File?>(null)
     /** The object this is an instance of (Orca's instances), or null for an object in its own right. */
     var instanceOf by mutableStateOf<Int?>(null)
     /** The file's filament numbers this model's paint uses, in order. */
@@ -1509,6 +1513,7 @@ class PrepareState(private val app: AppState) {
         val prepared = loaded.mapIndexed { index, (file, model) ->
             PrepItem(index + 1, file.nameWithoutExtension, model.mesh, bw / 2, bd / 2,
                 sources = model.filaments, plate = 0).also { item ->
+                item.sourceGeometry = file.takeIf { it.extension.lowercase() in geometryExtensions }?.absoluteFile
                 if (item.painted.isNotEmpty() || model.filament != null) matchColours(item, model.filament)
             }
         }
@@ -1526,6 +1531,7 @@ class PrepareState(private val app: AppState) {
     fun importLoadedModel(f: File, loaded: MeshIO.Loaded) {
         val (bw, bd) = bed
         val item = PrepItem(nextId++, f.nameWithoutExtension, loaded.mesh, bw / 2, bd / 2, sources = loaded.filaments, plate = currentPlate)
+        item.sourceGeometry = f.takeIf { it.extension.lowercase() in geometryExtensions }?.absoluteFile
         if (item.painted.isNotEmpty() || loaded.filament != null) matchColours(item, loaded.filament)
         items += item
         dirty = true; invalidateSlice(); arrange()
@@ -1574,6 +1580,42 @@ class PrepareState(private val app: AppState) {
             items.addAll(copies); setSelection(copies.map { it.id }.toSet()); changed()
         } finally { history.endEdit() }
     }
+    internal fun replaceSourceGeometry(item: PrepItem, file: File) {
+        if (toolBusy != null || plateItems().none { it === item }) return
+        if (file.extension.lowercase() !in geometryExtensions) {
+            notice = "Choose an STL or OBJ for the replacement geometry."
+            return
+        }
+        val generation = sliceGeneration
+        val target = file.absoluteFile
+        runTool("Replace source geometry") {
+            val mesh = modelingIo { MeshIO.read(target) }
+            if (generation != sliceGeneration || plateItems().none { it === item }) {
+                notice = "The workspace changed while reading the geometry. Try again."
+                return@runTool
+            }
+            val changedMesh = !item.mesh.vertices.contentEquals(mesh.vertices) ||
+                !item.mesh.triangles.contentEquals(mesh.triangles)
+            if (!changedMesh) {
+                item.sourceGeometry = target
+                notice = "The source geometry is unchanged."
+                return@runTool
+            }
+            if (item.mesh.paint != null || item.mesh.supportPaint != null || item.mesh.seamPaint != null ||
+                item.mesh.fuzzyPaint != null || item.parts.isNotEmpty() || item.ranges.isNotEmpty() ||
+                item.layerProfile.isNotEmpty() || item.instanceOf != null || items.any { it.instanceOf == item.id }) {
+                notice = "This object has paint, parts, layer edits, or linked instances. Import the new geometry as another object to keep those edits."
+                return@runTool
+            }
+            val replacement = withMesh(item, mesh).also { it.sourceGeometry = target }
+            editSelection {
+                replace(item, replacement)
+                changed()
+            }
+            notice = "Geometry replaced. Slice again to see the updated toolpath."
+        }
+    }
+
     internal fun centerOnPlate(item: PrepItem) {
         if (toolBusy != null || plateItems().none { it === item }) return
         val (width, depth) = bed

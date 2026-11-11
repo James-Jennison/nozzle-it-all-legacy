@@ -18,7 +18,7 @@ class PlateHistory(private val p: PrepareState) {
         val id: Int, val name: String, val mesh: Mesh, val x: Float, val y: Float, val rotZ: Float, val scale: Float, val slot: Int,
         val paintSlots: List<Int>, val sources: List<SourceFilament>, val settings: Map<String, String>, val plate: Int,
         val sx: Float, val sy: Float, val sz: Float, val parts: List<ProjectManifest.ObjectPart>, val ranges: List<ProjectManifest.HeightRange>,
-        val layerProfile: List<Double>, val ownFilament: Int?, val instanceOf: Int?,
+        val layerProfile: List<Double>, val ownFilament: Int?, val instanceOf: Int?, val sourceGeometry: java.io.File?,
     )
     private class Snapshot(val items: List<ItemRecord>, val overrides: Map<String, String>, val plateNames: List<String>, val plateIds: List<String>,
                            val currentPlate: Int, var selected: Int?, val nextId: Int, var selectedIds: Set<Int>,
@@ -46,7 +46,7 @@ class PlateHistory(private val p: PrepareState) {
 
     private fun capture() = Snapshot(
         p.items.map { i -> ItemRecord(i.id, i.name, i.mesh, i.x, i.y, i.rotZ, i.scale, i.slot, i.paintSlots.toList(), i.sources, i.settings.toMap(), i.plate, i.sx, i.sy, i.sz,
-            i.parts.toList(), i.ranges.toList(), i.layerProfile.toList(), i.ownFilament, i.instanceOf) },
+            i.parts.toList(), i.ranges.toList(), i.layerProfile.toList(), i.ownFilament, i.instanceOf, i.sourceGeometry) },
         p.overrides.toMap(), p.plateNames.toList(), p.plateIds.toList(), p.currentPlate, p.selected, p.nextItemId, p.selectedIds.toSet(),
         p.mixed.toList(), p.mixedSettings, p.mixSublayers, p.layerActions.toMap(), p.reviewedLayerActionTarget, p.unreadableLayerActions, p.lockedPlateIds)
 
@@ -76,7 +76,7 @@ class PlateHistory(private val p: PrepareState) {
             p.restorePlate(s.items.map { r ->
                 PrepItem(r.id, r.name, r.mesh, r.x, r.y, r.rotZ, r.scale, r.slot, r.paintSlots, r.sources, r.settings, r.plate).also {
                     it.sx = r.sx; it.sy = r.sy; it.sz = r.sz; it.parts.addAll(r.parts); it.ranges.addAll(r.ranges); it.layerProfile.addAll(r.layerProfile)
-                    it.ownFilament = r.ownFilament; it.instanceOf = r.instanceOf
+                    it.ownFilament = r.ownFilament; it.instanceOf = r.instanceOf; it.sourceGeometry = r.sourceGeometry
                 }
             }, s.overrides, s.plateNames, s.plateIds, s.currentPlate, s.selected, s.nextId, s.selectedIds)
             p.restorePlateLocks(s.lockedPlateIds)
