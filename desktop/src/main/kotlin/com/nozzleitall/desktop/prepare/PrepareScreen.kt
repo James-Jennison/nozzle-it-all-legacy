@@ -1277,7 +1277,7 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
         Box(detailSize.fillMaxWidth()) {
             val scrollable = if (overlayHeight == null) Modifier else Modifier.padding(end = 8.dp).verticalScroll(scroll)
             Column(scrollable.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val usage = if (showsTimeBreakdown || view == PreviewView.TOOL) preview.usage else null
+                val usage = if (showsTimeBreakdown) preview.usage else null
                 if (showsTimeBreakdown && !stackedRows) Row(
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -1336,26 +1336,26 @@ private fun PreviewLegend(p: PrepareState, preview: GcodePreview, view: PreviewV
                         }()
                     }
                     PreviewView.TOOL -> {
-                        Txt("Est. filament use · Length / mass", Nz.type.bodySmall, c.textMuted)
+                        val compactFilament = narrowLegend || stackedRows
+                        val missingUse = preview.toolsUsed.any {
+                            stats.filamentMetres.getOrNull(it) == null || stats.filamentGrams.getOrNull(it) == null
+                        }
+                        Txt(if (missingUse) "— = unavailable" else "Est. filament use", Nz.type.bodySmall, c.textMuted, maxLines = 1)
                         preview.toolsUsed.forEach { t ->
                             val slot = slots.getOrNull(t)
                             val profileName = slot?.filamentProfile?.let { id -> p.filamentLibrary().firstOrNull { it.id == id }?.name }
                             val label = "${t + 1} · " + (profileName ?: slot?.type ?: "Filament")
                             val visible = t !in p.previewHiddenTools
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val length = stats.filamentMetres.getOrNull(t)?.let { "%.2f m".format(it) }
+                            val mass = stats.filamentGrams.getOrNull(t)?.let { "%.2f g".format(it) }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(parseHex(slot?.colorHex) ?: c.accent))
-                                Column(Modifier.weight(1f)) {
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Txt(label, Nz.type.bodySmall, maxLines = 2)
-                                        usage?.byTool?.get(t)?.let { Txt(formatDuration(it.seconds, includeSeconds = true), Nz.type.bodySmall, c.textMuted) }
-                                    }
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        val length = stats.filamentMetres.getOrNull(t)?.let { "%.2f m".format(it) } ?: "Length unavailable"
-                                        val mass = stats.filamentGrams.getOrNull(t)?.let { "%.2f g".format(it) } ?: "Mass unavailable"
-                                        Txt(length, Nz.type.bodySmall, c.textMuted, modifier = Modifier.semantics { contentDescription = "Filament length: $length" })
-                                        Txt(mass, Nz.type.bodySmall, c.textMuted, modifier = Modifier.semantics { contentDescription = "Filament mass: $mass" })
-                                    }
-                                }
+                                Txt(if (compactFilament) "${t + 1}" else label, Nz.type.bodySmall,
+                                    modifier = Modifier.weight(1f).semantics { contentDescription = label }, maxLines = 1)
+                                Txt(length ?: if (compactFilament) "— m" else "Length unavailable", Nz.type.bodySmall, c.textMuted,
+                                    modifier = Modifier.semantics { contentDescription = "Filament length: ${length ?: "unavailable"}" }, maxLines = 1)
+                                Txt(mass ?: if (compactFilament) "— g" else "Mass unavailable", Nz.type.bodySmall, c.textMuted,
+                                    modifier = Modifier.semantics { contentDescription = "Filament mass: ${mass ?: "unavailable"}" }, maxLines = 1)
                                 Txt(if (visible) "●" else "○", Nz.type.label, if (visible) c.accent else c.textMuted,
                                     modifier = Modifier.clip(CircleShape).clickable(onClickLabel = if (visible) "Hide $label" else "Show $label") {
                                         if (visible) p.previewHiddenTools.add(t) else p.previewHiddenTools.remove(t)

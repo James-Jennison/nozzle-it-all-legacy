@@ -52,8 +52,8 @@ internal fun rasterFilamentPreview(
     val triangle = FloatArray(9)
     val colours = IntArray(3)
     val shades = (palette + fallback).map { colour ->
-        intArrayOf(lerpColor(colour, Color.Black, 0.32f).toArgb(), colour.toArgb(),
-            lerpColor(colour, Color.Black, 0.46f).toArgb())
+        intArrayOf(lerpColor(colour, Color.Black, 0.18f).toArgb(), colour.toArgb(),
+            lerpColor(colour, Color.Black, 0.25f).toArgb())
     }
     fun face(a: Int, b: Int, c: Int, colourA: Int, colourB: Int, colourC: Int) {
         vertices.copyInto(triangle, 0, a * 3, a * 3 + 3)

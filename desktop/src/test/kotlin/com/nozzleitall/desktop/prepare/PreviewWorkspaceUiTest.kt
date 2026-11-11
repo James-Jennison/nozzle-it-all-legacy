@@ -128,7 +128,7 @@ class PreviewWorkspaceUiTest {
             val selector = compose.onNodeWithTag("preview-view-selector").assertIsDisplayed()
             assertTrue(action.fetchSemanticsNode().boundsInRoot.right <= selector.fetchSemanticsNode().boundsInRoot.left)
             compose.onNodeWithText("0.20 m").assertIsDisplayed()
-            compose.onNodeWithText("Mass unavailable").assertIsDisplayed()
+            compose.onNodeWithText("— = unavailable").assertIsDisplayed()
             compose.onNodeWithText("Path").assertDoesNotExist()
             action.performClick()
             compose.onNodeWithText("Layer 1 action").assertIsDisplayed()
