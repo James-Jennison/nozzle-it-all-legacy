@@ -157,6 +157,10 @@ sealed class SliceState {
     object Cancelled : SliceState()
 }
 
+internal enum class ObjectListOrder(val label: String) {
+    PROJECT("Project order"), NAME("Name"), MATERIAL("Filament"), HEIGHT("Tallest first"),
+}
+
 /** Everything the Prepare workflow edits. Saved as a canonical 3MF + manifest, so Android and the Web App open it. */
 class PrepareState(private val app: AppState) {
     val items = mutableStateListOf<PrepItem>()
@@ -170,6 +174,7 @@ class PrepareState(private val app: AppState) {
         get() = primarySelection
         set(value) { setSelection(value?.let { setOf(it) }.orEmpty(), value) }
     private var selectionAnchor: Int? = null
+    internal var objectListOrder by mutableStateOf(ObjectListOrder.PROJECT)
 
     private fun setSelection(ids: Set<Int>, primary: Int? = ids.lastOrNull()) {
         val previousPrimary = primarySelection
@@ -201,7 +206,7 @@ class PrepareState(private val app: AppState) {
     fun selectObject(id: Int?, toggle: Boolean = false, range: Boolean = false, listRange: Boolean = false) {
         selectedPart = -1
         if (id == null) { if (!toggle && !range) deselect(); return }
-        val order = plateItems().map { it.id }
+        val order = (if (listRange) orderedPlateItems() else plateItems()).map { it.id }
         if (id !in order) return
         val anchor = selectionAnchor
         val ids = when {
@@ -648,6 +653,15 @@ class PrepareState(private val app: AppState) {
     }
 
     fun plateItems(plate: Int = currentPlate): List<PrepItem> = items.filter { it.plate == plate }
+
+    internal fun orderedPlateItems(): List<PrepItem> = plateItems().let { objects ->
+        when (objectListOrder) {
+            ObjectListOrder.PROJECT -> objects
+            ObjectListOrder.NAME -> objects.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+            ObjectListOrder.MATERIAL -> objects.sortedBy { it.slot }
+            ObjectListOrder.HEIGHT -> objects.sortedByDescending { it.height }
+        }
+    }
 
     /** Shows plate [i]; a slice result belongs to the plate it was made for. */
     fun showPlate(i: Int) { if (i in plateNames.indices) {

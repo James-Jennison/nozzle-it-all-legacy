@@ -33,6 +33,18 @@ class MultiSelectionTest {
         p.showPlate(1); assertTrue(p.selectedIds.isEmpty()); p.selectAll(); assertEquals(setOf(4), p.selectedIds)
         p.selected = 1; assertTrue(p.selectedIds.isEmpty())
     }
+    @Test fun nameOrderChangesOnlyTheListAndShiftSelectionFollowsTheVisibleRows() {
+        val p = app().prepare
+        p.objectListOrder = ObjectListOrder.NAME
+        assertEquals(listOf(1, 3, 2), p.orderedPlateItems().map { it.id })
+        p.selectObject(1)
+        p.selectObject(3, range = true, listRange = true)
+        assertEquals(setOf(1, 3), p.selectedIds)
+        assertEquals(listOf(1, 2, 3), p.plateItems().map { it.id })
+        assertFalse(p.dirty)
+        assertFalse(p.history.canUndo)
+    }
+
     @Test fun groupMoveUsesBaselineAndOneUndoRestoresSelection() {
         val p = app().prepare; p.selectObject(1); p.selectObject(2, toggle = true)
         p.beginSelectionTransform(1)

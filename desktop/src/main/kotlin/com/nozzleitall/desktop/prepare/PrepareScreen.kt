@@ -2668,7 +2668,7 @@ internal fun StepObjects(state: AppState, showList: Boolean = true, showInspecto
     val p = state.prepare
     val c = Nz.colors
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
-    val onPlate = p.plateItems()
+    val onPlate = p.orderedPlateItems()
     val slots = p.materials()
     val expandedParts = remember { mutableStateMapOf<Int, Boolean>() }
     // The tab is already called Objects, and Arrange is on the plate's toolbar, so this page has no card heading of its own.
@@ -2680,7 +2680,13 @@ internal fun StepObjects(state: AppState, showList: Boolean = true, showInspecto
                 if (onPlate.size > 1) com.nozzleitall.desktop.settings.IconToggle(NzIcon.MOVE, "Arrange the plate", false) { p.arrange() }
             }
             if (onPlate.isEmpty()) { Txt("Nothing on this plate yet.", Nz.type.bodySmall, c.textMuted); return@Section }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (onPlate.size > 1) {
+                    val choices = ObjectListOrder.entries.map { com.nozzleitall.desktop.settings.Choice(it.name, it.label) }
+                    com.nozzleitall.desktop.settings.DenseSelect("Order objects by", choices, p.objectListOrder.name, Modifier.width(118.dp)) { value ->
+                        p.objectListOrder = ObjectListOrder.valueOf(value)
+                    }
+                }
                 Txt("Select all", Nz.type.label, c.accent, modifier = Modifier.clickable { focus.clearFocus(); p.selectAll() }.padding(4.dp))
                 if (p.selectedIds.isNotEmpty()) Txt("Deselect", Nz.type.label, c.accent, modifier = Modifier.clickable { focus.clearFocus(); p.deselect() }.padding(4.dp))
             }
