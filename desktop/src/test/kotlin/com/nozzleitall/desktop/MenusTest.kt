@@ -263,6 +263,11 @@ class MenusTest {
             }
         }
         val original = source.readBytes()
+        val migration = assertThrows(IllegalStateException::class.java) {
+            a.library.importLegacy(source, "test", "layer-commands")
+        }
+        assertTrue(migration.message.orEmpty().contains("needs conversion review"))
+        assertTrue(a.library.dir.listFiles().orEmpty().none { it.extension == "3mf" })
         a.prepare.open(source)
         assertTrue(a.prepare.notice.orEmpty().contains("layer commands"))
         assertTrue(a.prepare.layerActions.isEmpty())

@@ -28,14 +28,14 @@ class LegacyProcessPresetStore(private val file: File) : PrinterLibrary.CustomPr
         records().firstOrNull { it.profileId == profileId && it.id == id }
 
     fun import(sourceLabel: String, profiles: List<LegacySettingsMigration.Profile>): Imported {
-        val machines = profiles.filter { it.category == "machine" }.associateBy { it.json.optString("name") }
+        val machines = profiles.filter { it.category == "machine" }.groupBy { it.json.optString("name") }
         val existing = records().associateByTo(linkedMapOf()) { it.id }
         val unresolved = mutableListOf<String>()
         var imported = 0
         profiles.filter { it.category == "process" }.forEach { profile ->
             val process = profile.json
             val compatible = strings(process.opt("compatible_printers"))
-            val customMatches = compatible.mapNotNull(machines::get).distinctBy { it.relativePath }
+            val customMatches = compatible.flatMap { machines[it].orEmpty() }.distinctBy { it.relativePath }
             if (customMatches.size > 1) {
                 unresolved += "${profile.relativePath} — compatible printers identify multiple custom machines"
                 return@forEach

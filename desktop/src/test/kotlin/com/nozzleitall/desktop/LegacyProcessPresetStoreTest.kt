@@ -69,6 +69,28 @@ class LegacyProcessPresetStoreTest {
         assertFalse(root.resolve("legacy-processes.json").exists())
     }
 
+    @Test fun `duplicate custom machine names are never resolved by archive order`() {
+        val root = Files.createTempDirectory("nia-legacy-process-ambiguous").toFile()
+        try {
+            val store = LegacyProcessPresetStore(root.resolve("legacy-processes.json"))
+            val machines = listOf("0.4", "0.6").map { nozzle ->
+                LegacySettingsMigration.Profile("machine", "machine/$nozzle.json", JSONObject()
+                    .put("name", "My U1").put("inherits", "Snapmaker U1 ($nozzle nozzle)"), false)
+            }
+            val process = LegacySettingsMigration.Profile("process", "process/My Fine.json", JSONObject()
+                .put("name", "My Fine").put("inherits", "0.20mm Standard @Snapmaker U1 (0.4 nozzle)")
+                .put("compatible_printers", JSONArray(listOf("My U1"))).put("layer_height", "0.16"), false)
+            for (order in listOf(machines, machines.reversed())) {
+                val result = store.import("Hybrid Orca", order + process)
+                assertEquals(0, result.imported)
+                assertTrue(result.unresolved.single().contains("multiple custom machines"))
+            }
+            assertFalse(root.resolve("legacy-processes.json").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun `a preserved unresolved process can link to a selected bundled base`() {
         val root = Files.createTempDirectory("nia-legacy-process-link").toFile()
         val paths = AppPaths(root.resolve("config"), root.resolve("data"), root.resolve("cache")).ensure()

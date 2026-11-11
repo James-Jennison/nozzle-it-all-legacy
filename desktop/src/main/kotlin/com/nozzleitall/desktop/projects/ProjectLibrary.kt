@@ -273,6 +273,9 @@ class ProjectLibrary(private val paths: AppPaths) {
             check(p.manifestProblem == null) {
                 "${p.manifestProblem} The original file was left unchanged."
             }
+            check(reviewed != null || p.conversionLosses.isEmpty()) {
+                "This project needs conversion review. Open it in Prepare to review what would change before saving a copy."
+            }
             check(p.manifest != null || p.metadata.keys.none { it.startsWith("nozzle:", ignoreCase = true) }) {
                 "This 3MF contains Nozzle project identity but its project details are missing. The original file was left unchanged."
             }
