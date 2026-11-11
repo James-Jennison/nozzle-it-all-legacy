@@ -232,6 +232,8 @@ class PrepareState(private val app: AppState) {
         set(v) { dirtyFlag = v; editorGeneration++; if (v) history.recordChange() }
     val history = PlateHistory(this)
     var conversionLosses by mutableStateOf<List<String>>(emptyList())
+        private set
+
     internal var unreviewedForeignLayerSettings by mutableStateOf<List<String>>(emptyList())
         private set
     internal fun acknowledgeForeignLayerSettings() {
@@ -239,7 +241,6 @@ class PrepareState(private val app: AppState) {
         if (slice is SliceState.Failed) invalidateSlice()
     }
 
-        private set
     var passthrough: Map<String, ByteArray> = emptyMap()
     var metadata: Map<String, String> = emptyMap()
     var printerId by mutableStateOf<String?>(null)
