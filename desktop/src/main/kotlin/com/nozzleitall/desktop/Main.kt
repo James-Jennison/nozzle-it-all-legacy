@@ -155,6 +155,8 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     var selectedPrinter by mutableStateOf<String?>(null)
     /** The current workspace job handed to Monitor before the printer reports it as active. */
     var monitorHandoff by mutableStateOf<MonitorHandoff?>(null)
+    internal var monitorJobContext by mutableStateOf<MonitorHandoff?>(null)
+        private set
     /** A return from Monitor can request Send without coupling Monitor to Prepare's drawer implementation. */
     var workspaceSendRequested by mutableStateOf(false)
         private set
@@ -360,6 +362,8 @@ class AppState(val paths: AppPaths, val scope: CoroutineScope) {
     }
     fun openJobMonitor(handoff: MonitorHandoff) {
         monitorHandoff = handoff
+        if (handoff.state in setOf(MonitorHandoffState.STARTED, MonitorHandoffState.STARTED_RECORD_PENDING, MonitorHandoffState.START_UNCERTAIN)
+            && handoff.remotePath != null) monitorJobContext = handoff
         selectedPrinter = handoff.printerId
         workspaceSendOpen = false
         destination = Destination.MONITOR

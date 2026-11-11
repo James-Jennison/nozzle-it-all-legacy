@@ -16,6 +16,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import com.nozzleitall.desktop.AppState
+import com.nozzleitall.desktop.Destination
+import com.nozzleitall.desktop.MonitorHandoff
+import com.nozzleitall.desktop.prepare.SliceState
+import com.nozzleitall.desktop.settings.Choice
+import com.nozzleitall.desktop.settings.DenseSelect
 import com.nozzleitall.desktop.PrinterEntry
 import com.nozzleitall.desktop.ui.*
 import com.nozzleitall.printer.*
@@ -65,19 +70,34 @@ fun NoPrinterYet(state: AppState, what: String) = Card(Modifier.fillMaxWidth()) 
 
 @Composable
 fun MonitorScreen(state: AppState) {
-    Column(Modifier.fillMaxSize().padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        NzButton("Queue & history", { state.destination = com.nozzleitall.desktop.Destination.JOBS },
-            kind = ButtonKind.SECONDARY, testTag = "monitor-queue-history")
-        val entry = PrinterHeader(state, com.nozzleitall.desktop.Destination.MONITOR, "Watch a job and control the printer. Every command asks first.") ?: run { NoPrinterYet(state, "live status, cameras and controls"); return@Column }
-        val sameWorkspacePrinter = state.prepare.printer()?.config?.identity?.id == entry.config.identity.id
-        val status = entry.status.value
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            NzButton("Back to project", { state.returnToWorkspace(preview = false) },
-                kind = ButtonKind.SECONDARY, icon = NzIcon.PREPARE, testTag = "monitor-back-project")
-            if (sameWorkspacePrinter && state.prepare.slice is com.nozzleitall.desktop.prepare.SliceState.Done)
-                NzButton("Back to preview", { state.returnToWorkspace(preview = true) },
-                    kind = ButtonKind.QUIET, icon = NzIcon.LAYERS, testTag = "monitor-back-preview")
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val ids = state.fleet.order.value
+        val current = state.selectedPrinter?.takeIf { it in ids } ?: ids.firstOrNull()
+        val entry = current?.let { state.fleet.printers[it] }
+        val hasPreview = state.prepare.slice is SliceState.Done
+        FlowRow(Modifier.fillMaxWidth().semantics { testTag = "monitor-toolbar" },
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (entry != null) {
+                val choices = ids.mapNotNull { id -> state.fleet.printers[id]?.let { printer ->
+                    Choice(id, printer.config.identity.displayName)
+                } }
+                DenseSelect("Monitor printer", choices, entry.config.identity.id, Modifier.width(174.dp),
+                    enabled = choices.size > 1, onSelect = state::openPrinter)
+            }
+            listOf(Destination.MONITOR to "Monitor", Destination.PRINTER_MATERIALS to "Materials & toolheads",
+                Destination.HISTORY to "History").forEach { (destination, label) ->
+                NzButton(label, { state.destination = destination },
+                    kind = if (destination == Destination.MONITOR) ButtonKind.PRIMARY else ButtonKind.QUIET,
+                    testTag = "printer-tab-${destination.name.lowercase()}")
+            }
+            NzButton("Queue & history", { state.destination = Destination.JOBS },
+                kind = ButtonKind.SECONDARY, testTag = "monitor-queue-history")
+            NzButton(if (hasPreview) "Back to Preview" else "Back to Prepare", { state.returnToWorkspace(preview = hasPreview) },
+                kind = ButtonKind.QUIET, icon = NzIcon.PREPARE, testTag = if (hasPreview) "monitor-back-preview" else "monitor-back-project")
         }
+        if (entry == null) { NoPrinterYet(state, "live status, cameras and controls"); return@Column }
+        val status = entry.status.value
         val handoff = state.monitorHandoff?.takeIf { it.printerId == entry.config.identity.id }
         val handoffSuperseded = if (handoff?.state in recoveryHandoffs)
             state.fleet.queue.value.none {
@@ -88,6 +108,31 @@ fun MonitorScreen(state: AppState) {
         val showHandoff = handoff != null && !handoffSuperseded
         LaunchedEffect(handoff, handoffSuperseded) {
             if (handoff != null) state.reconcileMonitorHandoff(handoff, handoffSuperseded)
+        }
+        val caps = entry.capabilities.value
+        val flow = rememberActionFlow(entry)
+        ActionFlowUi(flow, entry)
+        entry.problem.value?.let { Banner(it, BannerKind.WARNING) }
+        val cameraAvailable = entry.cameras.value.isNotEmpty()
+        val jobContext = state.monitorJobContext?.takeIf { it.printerId == entry.config.identity.id }
+        if (cameraAvailable) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 900.dp) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Column(Modifier.weight(1.5f)) { CameraPanel(entry) }
+                        Column(Modifier.weight(1f)) { JobHero(entry, status, caps, flow, jobContext) }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                        CameraPanel(entry)
+                        JobHero(entry, status, caps, flow, jobContext)
+                    }
+                }
+            }
+        } else {
+            JobHero(entry, status, caps, flow, jobContext)
+            Txt(if (caps?.camera == false) "No supported camera for this printer." else "No camera found on this printer.",
+                Nz.type.bodySmall, Nz.colors.textMuted)
         }
         handoff?.takeIf { showHandoff }?.let {
             Card(Modifier.fillMaxWidth(), raised = true) {
@@ -103,45 +148,7 @@ fun MonitorScreen(state: AppState) {
                     if (it.state in recoveryHandoffs)
                         NzButton("Open queue", { state.destination = com.nozzleitall.desktop.Destination.JOBS }, kind = ButtonKind.PRIMARY)
                 }
-                Txt("Live printer status below remains authoritative.", Nz.type.bodySmall, Nz.colors.textMuted)
             }
-        }
-        val activeJobs = state.fleet.order.value.mapNotNull { id -> state.fleet.printers[id]?.let { id to it } }
-            .filter { (_, printer) -> printer.status.value.job != null && printer.status.value.state in setOf(PrinterState.PRINTING, PrinterState.PAUSED) }
-        if (activeJobs.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Txt("Active jobs", Nz.type.label, modifier = Modifier.padding(end = 4.dp))
-            activeJobs.forEach { (id, printer) ->
-                val job = printer.status.value.job ?: return@forEach
-                NzButton("${printer.config.identity.displayName} · ${job.fileName.substringAfterLast('/').substringAfterLast('\\')}",
-                    { state.openPrinter(id) }, kind = if (id == entry.config.identity.id) ButtonKind.PRIMARY else ButtonKind.SECONDARY,
-                    testTag = "active-job-$id")
-            }
-        }
-        if (!sameWorkspacePrinter) Txt("Prepare opens the current workspace; this printer's active job may be separate from it.", Nz.type.bodySmall, Nz.colors.textMuted)
-        val caps = entry.capabilities.value
-        val flow = rememberActionFlow(entry)
-        ActionFlowUi(flow, entry)
-        entry.problem.value?.let { Banner(it, BannerKind.WARNING) }
-        val cameraAvailable = entry.cameras.value.isNotEmpty()
-        if (cameraAvailable) {
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                if (maxWidth >= 900.dp) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                        Column(Modifier.weight(1.5f)) { CameraPanel(entry) }
-                        Column(Modifier.weight(1f)) { JobHero(entry, status, caps, flow) }
-                    }
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                        CameraPanel(entry)
-                        JobHero(entry, status, caps, flow)
-                    }
-                }
-            }
-        } else {
-            JobHero(entry, status, caps, flow)
-            Txt(if (caps?.camera == false) "No supported camera for this printer." else "No camera found on this printer.",
-                Nz.type.bodySmall, Nz.colors.textMuted)
         }
         if (caps != null) ControlsPanel(entry, status, caps, flow)
         TemperaturePanel(status)
@@ -163,7 +170,7 @@ internal fun monitorHandoffSuperseded(status: PrinterStatus): Boolean =
  * should end; Pause, Resume and Cancel sit beside it, and only the ones the printer can do right now appear.
  */
 @Composable
-fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flow: ActionFlow) {
+fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flow: ActionFlow, context: MonitorHandoff? = null) {
     val c = Nz.colors
     val blocked = entry.guard?.needsReconcile == true || flow.busy
     val reconnecting = status.state in com.nozzleitall.desktop.history.MonitorPrintProgress.reconnectingStates
@@ -200,7 +207,14 @@ fun JobHero(entry: PrinterEntry, status: PrinterStatus, caps: Capabilities?, flo
         else {
             val reported = job.remainingSeconds?.takeIf { it.isFinite() && it >= 0 }
             val left = if (reconnecting) null else reported ?: JobEta.remainingSeconds(job.fraction, job.elapsedSeconds)
-            Txt(displayJobPath(job.fileName), Nz.type.headline)
+            val matching = context?.takeIf { reportedJobPath(it.remotePath) == reportedJobPath(job.fileName) }
+            if (matching == null) Txt(displayJobPath(job.fileName), Nz.type.headline)
+            else {
+                Txt(listOfNotNull(matching.projectName, matching.plate?.plateName).joinToString(" · "), Nz.type.headline)
+                var showFile by remember(job.fileName) { mutableStateOf(false) }
+                NzButton(if (showFile) "Hide job details" else "Job details", { showFile = !showFile }, kind = ButtonKind.QUIET)
+                if (showFile) Txt("File: ${displayJobPath(job.fileName)}", Nz.type.bodySmall, c.textMuted)
+            }
             ProgressBar(job.fraction, Nz.status.forState(status.state.glossaryId), label = "Print progress ${(job.fraction * 100).toInt()} percent")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Metric(if (reconnecting) "Last reported" else "Done", "${(job.fraction * 100).toInt()}%")
